@@ -1,0 +1,319 @@
+// Dialogs: export, import an SVG icon, help.
+
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { addCustomIcon, addIcon } from '../actions'
+import { extractColors, parseSvgFile, prefixIds, type ParsedSvg } from '../icons/svg'
+import { attributionLines, attributionText, download, exportRect, fileBase, renderPng, renderSvg, type ExportOptions } from '../io/export'
+import { serializeDoc } from '../io/files'
+import { uid } from '../model/doc'
+import { toast, useEditor } from '../store'
+import { Icon } from './Icon'
+import { TOOLS } from './ToolRail'
+
+export function Modal({ title, children, onClose, wide }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
+  const ref = useRef<HTMLDivElement>(null)
+  // The latest onClose is kept in a ref so the effect below runs once: re-running it would
+  // pull keyboard focus out of whatever field the user is typing in.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  useEffect(() => {
+    ref.current?.focus()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCloseRef.current()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  return (
+    <div className="modal-backdrop" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className={`modal${wide ? ' wide' : ''}`} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={ref}>
+        <header className="modal-head">
+          <h1>{title}</h1>
+          <button className="icon-only" aria-label="Close" onClick={onClose}>
+            <Icon name="close" size={18} />
+          </button>
+        </header>
+        <div className="modal-body">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+const close = () => useEditor.setState({ dialog: null })
+
+// ---------- export ----------
+
+export function ExportDialog() {
+  const doc = useEditor((s) => s.doc)
+  const showSketch = useEditor((s) => s.showSketch)
+  const hasSketch = doc.nodes.some((n) => n.type === 'stroke')
+  const [opts, setOpts] = useState<ExportOptions>({ area: 'page', transparent: false, includeSketch: showSketch && hasSketch })
+  const [scale, setScale] = useState(2)
+  const [busy, setBusy] = useState(false)
+
+  const rect = exportRect(doc, opts.area, opts.includeSketch)
+  const credits = attributionLines(doc)
+  const creditText = attributionText(doc)
+  const preview = useMemo(() => {
+    const { svg } = renderSvg(doc, opts)
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+  }, [doc, opts])
+
+  const saveSvg = () => {
+    download(renderSvg(doc, opts).svg, `${fileBase(doc)}.svg`, 'image/svg+xml')
+    toast('SVG downloaded')
+  }
+  const savePng = async () => {
+    setBusy(true)
+    try {
+      download(await renderPng(doc, opts, scale), `${fileBase(doc)}.png`)
+      toast('PNG downloaded')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'The image could not be created.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const copyCredits = async () => {
+    try {
+      await navigator.clipboard.writeText(creditText)
+      toast('Attribution copied')
+    } catch {
+      toast('Could not copy. Select the text and copy it by hand.')
+    }
+  }
+
+  return (
+    <Modal title="Export figure" onClose={close} wide>
+      <div className="export-grid">
+        <div className={`export-preview${opts.transparent ? ' checker' : ''}`}>
+          <img src={preview} alt="Preview of the exported figure" />
+        </div>
+        <div className="export-options">
+          <label className="check">
+            <input type="checkbox" checked={opts.area === 'content'} onChange={(e) => setOpts({ ...opts, area: e.target.checked ? 'content' : 'page' })} />
+            <span>Crop to the drawing</span>
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={opts.transparent} onChange={(e) => setOpts({ ...opts, transparent: e.target.checked })} />
+            <span>Transparent background</span>
+          </label>
+          {hasSketch && (
+            <label className="check">
+              <input type="checkbox" checked={opts.includeSketch} onChange={(e) => setOpts({ ...opts, includeSketch: e.target.checked })} />
+              <span>Include sketch strokes</span>
+            </label>
+          )}
+          <div className="export-actions">
+            <button className="btn primary" onClick={saveSvg}>
+              <Icon name="export" size={16} /> SVG (vector)
+            </button>
+            <p className="hint">Best for journals and for further editing in Inkscape or Illustrator.</p>
+            <div className="row">
+              <button className="btn primary" onClick={savePng} disabled={busy}>
+                <Icon name="export" size={16} /> {busy ? 'Rendering…' : 'PNG (image)'}
+              </button>
+              <select aria-label="PNG resolution" value={scale} onChange={(e) => setScale(Number(e.target.value))}>
+                {[1, 2, 3, 4].map((s) => (
+                  <option key={s} value={s}>
+                    {s}× · {Math.round(rect.w * s)} × {Math.round(rect.h * s)} px
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              className="btn"
+              onClick={() => {
+                download(serializeDoc(doc), `${fileBase(doc)}.biosketch.json`, 'application/json')
+                toast('Figure file downloaded')
+              }}
+            >
+              <Icon name="save" size={16} /> Figure file (to edit later)
+            </button>
+          </div>
+        </div>
+      </div>
+      <section className="credits">
+        <h2>Attribution</h2>
+        {credits.length ? (
+          <>
+            <p className="hint">These icons require credit. Add this text to your figure legend or acknowledgements. It is also stored inside the SVG.</p>
+            <textarea readOnly rows={Math.min(6, credits.length + 1)} value={creditText} aria-label="Attribution text" />
+            <button className="btn small" onClick={copyCredits}>
+              <Icon name="copy" size={14} /> Copy
+            </button>
+          </>
+        ) : (
+          <p className="hint">Nothing to credit: every icon in this figure is from the built-in library, which is public domain (CC0).</p>
+        )}
+      </section>
+    </Modal>
+  )
+}
+
+// ---------- import an SVG icon ----------
+
+const LICENCES = ['CC0-1.0', 'CC BY 4.0', 'CC BY-SA 4.0', 'CC BY-NC 4.0', 'MIT', 'Other']
+
+export function ImportIconDialog() {
+  const [parsed, setParsed] = useState<ParsedSvg | null>(null)
+  const [error, setError] = useState('')
+  const [name, setName] = useState('')
+  const [author, setAuthor] = useState('')
+  const [licence, setLicence] = useState('CC BY 4.0')
+  const [otherLicence, setOtherLicence] = useState('')
+  const [source, setSource] = useState('')
+
+  const onFile = async (file: File | undefined) => {
+    if (!file) return
+    setError('')
+    setParsed(null)
+    try {
+      if (file.size > 2_000_000) throw new Error('This file is larger than 2 MB. Simplify the SVG before importing it.')
+      const result = parseSvgFile(await file.text())
+      setParsed(result)
+      setName(file.name.replace(/\.svg$/i, '').replace(/[-_]+/g, ' '))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'This file could not be imported.')
+    }
+  }
+
+  const add = () => {
+    if (!parsed) return
+    const id = `custom-${uid()}`
+    addCustomIcon({
+      id,
+      name: name.trim() || 'Imported icon',
+      category: 'Imported',
+      tags: [],
+      viewBox: parsed.viewBox,
+      body: parsed.body,
+      license: licence === 'Other' ? otherLicence.trim() : licence,
+      author: author.trim(),
+      source: source.trim(),
+    })
+    addIcon(id)
+    close()
+    toast('Icon imported and placed on the page')
+  }
+
+  return (
+    <Modal title="Import an SVG icon" onClose={close}>
+      <p className="hint">
+        Use icons from open collections such as Bioicons, NIH BioArt or Servier Medical Art, or your own drawings. The licence you enter here is used to
+        build the attribution text when you export.
+      </p>
+      <input type="file" accept=".svg,image/svg+xml" aria-label="Choose an SVG file" onChange={(e) => onFile(e.target.files?.[0])} />
+      {error && <p className="error">{error}</p>}
+      {parsed && (
+        <div className="import-form">
+          <svg className="import-preview" viewBox={`0 0 ${parsed.viewBox[0]} ${parsed.viewBox[1]}`} dangerouslySetInnerHTML={{ __html: prefixIds(parsed.body, 'preview') }} />
+          <div className="import-fields">
+            <label className="field">
+              <span className="field-label">Name</span>
+              <input type="text" className="text-line" value={name} onChange={(e) => setName(e.target.value)} />
+            </label>
+            <label className="field">
+              <span className="field-label">Author or collection</span>
+              <input type="text" className="text-line" value={author} placeholder="e.g. Servier Medical Art" onChange={(e) => setAuthor(e.target.value)} />
+            </label>
+            <label className="field">
+              <span className="field-label">Licence</span>
+              <select value={licence} onChange={(e) => setLicence(e.target.value)}>
+                {LICENCES.map((l) => (
+                  <option key={l}>{l}</option>
+                ))}
+              </select>
+            </label>
+            {licence === 'Other' && (
+              <label className="field">
+                <span className="field-label">Licence name</span>
+                <input type="text" className="text-line" value={otherLicence} onChange={(e) => setOtherLicence(e.target.value)} />
+              </label>
+            )}
+            <label className="field">
+              <span className="field-label">Source (web address)</span>
+              <input type="url" className="text-line" value={source} placeholder="https://…" onChange={(e) => setSource(e.target.value)} />
+            </label>
+            <p className="hint">{extractColors(parsed.body).length} recolourable colours found. Scripts, links and embedded images were removed.</p>
+            <button className="btn primary" onClick={add}>
+              <Icon name="plus" size={16} /> Add to this figure
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+// ---------- help ----------
+
+const SHORTCUTS: [string, string][] = [
+  ['Ctrl/⌘ Z', 'Undo'],
+  ['Ctrl/⌘ Shift Z', 'Redo'],
+  ['Ctrl/⌘ C / V / X', 'Copy, paste, cut'],
+  ['Ctrl/⌘ D', 'Duplicate'],
+  ['Ctrl/⌘ G / Shift G', 'Group, ungroup'],
+  ['Ctrl/⌘ A', 'Select everything'],
+  ['Ctrl/⌘ S', 'Save figure file'],
+  ['Delete', 'Delete selection'],
+  ['Arrow keys', 'Nudge (Shift: 10 px)'],
+  ['Space + drag', 'Move the view'],
+  ['Ctrl/⌘ + scroll, or pinch', 'Zoom'],
+  ['Ctrl/⌘ 0', 'Fit page to window'],
+  ['] and [', 'Bring to front, send to back'],
+]
+
+export function HelpDialog() {
+  return (
+    <Modal title="How to use BioSketch" onClose={close} wide>
+      <div className="help-grid">
+        <section>
+          <h2>Basics</h2>
+          <ul className="help-list">
+            <li>Tap an icon in the library to place it, or drag it onto the page.</li>
+            <li>Drag the corner handles to resize, the round handle to rotate. Hold Shift to change proportions or snap rotation.</li>
+            <li>Double-tap a label to edit it.</li>
+            <li>With the arrow tool, drag from one icon to another. Attached arrows follow their icons.</li>
+            <li>With the membrane brush, draw a line. Finish near the start to close it into a cell.</li>
+            <li>Sketch with the pen, then use “AI” to turn the sketch into a clean figure.</li>
+          </ul>
+          <h2>Touch and Apple Pencil</h2>
+          <ul className="help-list">
+            <li>Two fingers: move and pinch-zoom the page.</li>
+            <li>After you use the Pencil, one finger moves the page while a drawing tool is active.</li>
+            <li>Your palm is ignored while the Pencil is drawing.</li>
+          </ul>
+        </section>
+        <section>
+          <h2>Tools</h2>
+          <table className="keys">
+            <tbody>
+              {TOOLS.map((t) => (
+                <tr key={t.tool}>
+                  <td>
+                    <kbd>{t.key}</kbd>
+                  </td>
+                  <td>{t.label}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <h2>Shortcuts</h2>
+          <table className="keys">
+            <tbody>
+              {SHORTCUTS.map(([k, v]) => (
+                <tr key={k}>
+                  <td>
+                    <kbd>{k}</kbd>
+                  </td>
+                  <td>{v}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      </div>
+    </Modal>
+  )
+}

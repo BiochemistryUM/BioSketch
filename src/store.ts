@@ -1,0 +1,187 @@
+// Editor state: the figure, the selection, the active tool, the view and the undo history.
+
+import { create } from 'zustand'
+import { emptyDoc } from './model/doc'
+import type { ConnectorKind, FigDoc, FigNode, IconDef, ShapeKind } from './model/types'
+
+export type Tool = 'select' | 'pan' | 'text' | 'shape' | 'connector' | 'membrane' | 'pen' | 'eraser'
+
+/** screen = world * zoom + (x, y) */
+export interface View {
+  x: number
+  y: number
+  zoom: number
+}
+
+export type Dialog = null | 'export' | 'ai' | 'import-icon' | 'help'
+
+const HISTORY_LIMIT = 100
+const MERGE_WINDOW_MS = 1000
+
+export interface EditorState {
+  doc: FigDoc
+  selection: string[]
+  tool: Tool
+  view: View
+  past: FigDoc[]
+  future: FigDoc[]
+  /** Document as it was when the current drag started; null when no drag is in progress. */
+  gestureStart: FigDoc | null
+  mergeKey: string | null
+  mergeTime: number
+
+  connectorKind: ConnectorKind
+  connectorDashed: boolean
+  shapeKind: ShapeKind
+  penColor: string
+  penSize: number
+  membraneThickness: number
+  gridSnap: boolean
+  showSketch: boolean
+  editingTextId: string | null
+  clipboard: FigNode[]
+  clipboardIcons: Record<string, IconDef>
+  /** Size of the canvas area on screen, in CSS pixels. */
+  canvasSize: { w: number; h: number }
+  dialog: Dialog
+  toast: string | null
+  /** Bumped to ask the canvas to zoom so the whole page is visible. */
+  fitRequest: number
+
+  /** Change the figure and record one undo step. Changes sharing a `merge` key in quick succession become one step. */
+  commit: (fn: (doc: FigDoc) => FigDoc, opts?: { merge?: string; select?: string[] }) => void
+  beginGesture: () => void
+  /** Change the figure during a drag, computed from the document as it was when the drag started. */
+  transient: (fn: (start: FigDoc) => FigDoc) => void
+  endGesture: () => void
+  cancelGesture: () => void
+  undo: () => void
+  redo: () => void
+  loadDoc: (doc: FigDoc) => void
+  set: (patch: Partial<EditorState>) => void
+}
+
+export const useEditor = create<EditorState>((set, get) => ({
+  doc: emptyDoc(),
+  selection: [],
+  tool: 'select',
+  view: { x: 0, y: 0, zoom: 1 },
+  past: [],
+  future: [],
+  gestureStart: null,
+  mergeKey: null,
+  mergeTime: 0,
+
+  connectorKind: 'arrow',
+  connectorDashed: false,
+  shapeKind: 'roundrect',
+  penColor: '#3b4252',
+  penSize: 4,
+  membraneThickness: 26,
+  gridSnap: false,
+  showSketch: true,
+  editingTextId: null,
+  clipboard: [],
+  clipboardIcons: {},
+  canvasSize: { w: 800, h: 600 },
+  dialog: null,
+  toast: null,
+  fitRequest: 0,
+
+  commit: (fn, opts) => {
+    const s = get()
+    const next = fn(s.doc)
+    const select = opts?.select
+    if (next === s.doc) {
+      if (select) set({ selection: select })
+      return
+    }
+    const now = Date.now()
+    const merging = !!opts?.merge && opts.merge === s.mergeKey && now - s.mergeTime < MERGE_WINDOW_MS
+    set({
+      doc: next,
+      past: merging ? s.past : [...s.past, s.doc].slice(-HISTORY_LIMIT),
+      future: [],
+      mergeKey: opts?.merge ?? null,
+      mergeTime: now,
+      ...(select ? { selection: select } : {}),
+    })
+  },
+
+  beginGesture: () => {
+    if (!get().gestureStart) set({ gestureStart: get().doc })
+  },
+
+  transient: (fn) => {
+    const start = get().gestureStart
+    if (start) set({ doc: fn(start) })
+  },
+
+  endGesture: () => {
+    const s = get()
+    if (!s.gestureStart) return
+    if (s.gestureStart === s.doc) {
+      set({ gestureStart: null })
+      return
+    }
+    set({ past: [...s.past, s.gestureStart].slice(-HISTORY_LIMIT), future: [], gestureStart: null, mergeKey: null })
+  },
+
+  cancelGesture: () => {
+    const start = get().gestureStart
+    if (start) set({ doc: start, gestureStart: null })
+  },
+
+  undo: () => {
+    const s = get()
+    if (s.gestureStart || !s.past.length) return
+    const prev = s.past[s.past.length - 1]
+    const ids = new Set(prev.nodes.map((n) => n.id))
+    set({
+      doc: prev,
+      past: s.past.slice(0, -1),
+      future: [s.doc, ...s.future],
+      selection: s.selection.filter((id) => ids.has(id)),
+      editingTextId: null,
+      mergeKey: null,
+    })
+  },
+
+  redo: () => {
+    const s = get()
+    if (s.gestureStart || !s.future.length) return
+    const next = s.future[0]
+    const ids = new Set(next.nodes.map((n) => n.id))
+    set({
+      doc: next,
+      past: [...s.past, s.doc],
+      future: s.future.slice(1),
+      selection: s.selection.filter((id) => ids.has(id)),
+      editingTextId: null,
+      mergeKey: null,
+    })
+  },
+
+  loadDoc: (doc) =>
+    set((s) => ({
+      doc,
+      selection: [],
+      past: [],
+      future: [],
+      gestureStart: null,
+      editingTextId: null,
+      mergeKey: null,
+      tool: 'select',
+      fitRequest: s.fitRequest + 1,
+    })),
+
+  set: (patch) => set(patch),
+}))
+
+let toastTimer: ReturnType<typeof setTimeout> | undefined
+
+export function toast(message: string): void {
+  useEditor.setState({ toast: message })
+  clearTimeout(toastTimer)
+  toastTimer = setTimeout(() => useEditor.setState({ toast: null }), 3200)
+}
