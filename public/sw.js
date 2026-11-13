@@ -1,6 +1,6 @@
 // Offline support: keeps the app's own files so BioSketch opens without a connection.
 // Figures are stored separately (IndexedDB) and are never touched here.
-const CACHE = 'biosketch-v1'
+const CACHE = 'biosketch-v2'
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg']
 
 self.addEventListener('install', (event) => {
@@ -39,12 +39,14 @@ self.addEventListener('fetch', (event) => {
     return response
   }
 
-  if (request.mode === 'navigate') {
-    // The page itself: prefer the network so updates arrive, fall back to the saved copy offline.
+  // The page itself and the icon-pack files can change on the server: ask the network first.
+  const fresh = request.mode === 'navigate' || new URL(request.url).pathname.includes('/icon-packs/')
+  if (fresh) {
+    // Prefer the network so updates arrive, fall back to the saved copy offline.
     event.respondWith(
       fetch(request)
         .then(store)
-        .catch(() => saved(request).then((hit) => hit || saved('./index.html'))),
+        .catch(() => saved(request).then((hit) => hit || (request.mode === 'navigate' ? saved('./index.html') : Response.error()))),
     )
     return
   }

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   alignNodes, cloneNodes, distributeNodes, duplicateNodes, emptyDoc, expandGroups, freezeEndpoints, groupNodes, nodesInRect,
-  removeNodes, reorder, selectionRect, ungroupNodes, updateNodes, usedIconIds,
+  removeNodes, reorder, selectionRect, selectionUnits, stepSelection, ungroupNodes, updateNodes, usedIconIds,
 } from '../src/model/doc'
+import { nodeKind, nodeLabel } from '../src/model/describe'
 import { getRect } from '../src/model/nodes'
 import type { ConnectorNode, FigDoc, FigNode, IconNode, ShapeNode } from '../src/model/types'
 
@@ -124,5 +125,54 @@ describe('document operations', () => {
   it('lists each used icon once', () => {
     const icon = (id: string, iconId: string): IconNode => ({ id, type: 'icon', iconId, x: 0, y: 0, w: 10, h: 10, rotation: 0 })
     expect(usedIconIds(docOf(icon('1', 'cell'), icon('2', 'cell'), icon('3', 'dna')))).toEqual(['cell', 'dna'])
+  })
+})
+
+describe('stepping through objects (keyboard, objects list)', () => {
+  // Drawing order: a (group g), b, c (group g), d locked, e pen stroke.
+  const d = docOf(
+    box('a', 0, 0, 50, 50, { groupId: 'g' }),
+    box('b', 100, 0),
+    box('c', 200, 0, 50, 50, { groupId: 'g' }),
+    box('d', 300, 0, 50, 50, { locked: true }),
+    { id: 'e', type: 'stroke', points: [[0, 0, 0.5], [5, 5, 0.5]], color: '#000', size: 2 },
+  )
+
+  it('treats a group as one step and leaves locked objects out', () => {
+    expect(selectionUnits(d)).toEqual([['a', 'c'], ['b'], ['e']])
+    expect(selectionUnits(d, false)).toEqual([['a', 'c'], ['b']])
+  })
+
+  it('walks forwards and backwards, and stops at either end', () => {
+    expect(stepSelection(d, [], 1)).toEqual(['a', 'c'])
+    expect(stepSelection(d, ['a', 'c'], 1)).toEqual(['b'])
+    expect(stepSelection(d, ['b'], 1)).toEqual(['e'])
+    expect(stepSelection(d, ['e'], 1)).toBeNull()
+    expect(stepSelection(d, [], -1)).toEqual(['e'])
+    expect(stepSelection(d, ['b'], -1)).toEqual(['a', 'c'])
+    expect(stepSelection(d, ['a'], -1)).toBeNull()
+    // One member selected alone (after a double-tap) still counts as being on its group.
+    expect(stepSelection(d, ['c'], 1)).toEqual(['b'])
+    expect(stepSelection(docOf(), [], 1)).toBeNull()
+  })
+})
+
+describe('naming objects in words', () => {
+  const text = (t: string): FigNode => ({ id: 't', type: 'text', x: 0, y: 0, text: t, fontSize: 16, fill: '#000', align: 'left', rotation: 0 })
+
+  it('names each kind of object', () => {
+    expect(nodeKind(box('a', 0, 0))).toBe('Rectangle')
+    expect(nodeKind({ ...box('a', 0, 0), shape: 'ellipse' })).toBe('Ellipse')
+    expect(nodeKind({ id: 'i', type: 'icon', iconId: 'x', x: 0, y: 0, w: 1, h: 1, rotation: 0 }, 'Mitochondrion')).toBe('Mitochondrion')
+    expect(nodeKind({ id: 'i', type: 'icon', iconId: 'x', x: 0, y: 0, w: 1, h: 1, rotation: 0 })).toBe('Icon')
+    expect(nodeKind({ id: 'm', type: 'membrane', points: [], closed: true, thickness: 20, headColor: '#000', tailColor: '#000' })).toBe('Closed membrane')
+    expect(nodeLabel({ ...arrow('k', 'a', 'b'), kind: 'inhibit', label: 'blocks' })).toBe('Inhibition arrow “blocks”')
+    expect(nodeLabel(arrow('k', 'a', 'b'))).toBe('Arrow')
+  })
+
+  it('quotes text as it reads, without formatting marks, and shortens long text', () => {
+    expect(nodeLabel(text('Ca^{2+} in *vivo*\nlevel'))).toBe('Text “Ca2+ in vivo level”')
+    expect(nodeLabel(text('A very long sentence that would not fit in a list'))).toBe('Text “A very long sentence that w…”')
+    expect(nodeLabel(text('   '))).toBe('Text')
   })
 })

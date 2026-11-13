@@ -5,7 +5,10 @@
 
 import { isHexColor, normalizeHex, sanitizeBody } from '../icons/svg'
 import { uid } from '../model/doc'
-import type { ConnectorKind, Endpoint, FigDoc, FigNode, IconDef, Point, ShapeKind, TextAlign } from '../model/types'
+import { DASH_SCALE_MAX, DASH_SCALE_MIN, DASH_STYLES } from '../model/dash'
+import { MAX_BRACKETS, MAX_GROUPS, MAX_VALUES, usable, usableEnds } from '../model/chart'
+import { SHAPE_KINDS } from '../model/shapes'
+import type { ChartBracket, ChartGroup, ChartKind, ConnectorKind, DashStyle, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign } from '../model/types'
 
 const num = (v: unknown, fallback: number, min = -1e6, max = 1e6): number =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
@@ -15,9 +18,43 @@ const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === '
 /** Colours end up in SVG attributes; keep them short and free of markup. */
 const color = (v: unknown, fallback: string): string => (typeof v === 'string' && /^[#\w(),.%\s-]{1,40}$/.test(v) ? v : fallback)
 
-const SHAPES: ShapeKind[] = ['rect', 'roundrect', 'ellipse']
-const KINDS: ConnectorKind[] = ['arrow', 'inhibit', 'line', 'double']
+const SHAPES: ShapeKind[] = SHAPE_KINDS
+const CHART_KINDS: ChartKind[] = ['bar', 'dot', 'line', 'box', 'violin', 'scatter']
+const KINDS: ConnectorKind[] = ['arrow', 'inhibit', 'dot', 'line', 'double']
 const ALIGNS: TextAlign[] = ['left', 'center', 'right']
+const FONTS: FontFamily[] = ['sans', 'serif', 'mono']
+
+/** Pictures are stored as data URLs; only plain bitmap formats are accepted (never SVG or a web address). */
+export const isImageDataUrl = (v: unknown): v is string => typeof v === 'string' && /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(v)
+/** The line style of an arrow or outline. A pattern or size without `dashed` means nothing, so it is dropped. */
+function dashes(o: Record<string, unknown>): { dashed?: true; dashStyle?: DashStyle; dashScale?: number } {
+  if (!bool(o.dashed)) return {}
+  const scale = typeof o.dashScale === 'number' ? num(o.dashScale, 1, DASH_SCALE_MIN, DASH_SCALE_MAX) : 1
+  return {
+    dashed: true,
+    ...(DASH_STYLES.includes(o.dashStyle as DashStyle) ? { dashStyle: o.dashStyle as DashStyle } : {}),
+    ...(scale !== 1 ? { dashScale: scale } : {}),
+  }
+}
+
+/** The words inside a shape, rebuilt field by field; nothing when there are none. */
+function shapeLabel(v: unknown): { label?: ShapeLabel } {
+  if (!v || typeof v !== 'object') return {}
+  const o = v as Record<string, unknown>
+  if (typeof o.text !== 'string' || !o.text.trim()) return {}
+  return {
+    label: {
+      text: o.text.slice(0, 2000),
+      fontSize: num(o.fontSize, 16, 4, 400),
+      fill: color(o.fill, '#2b2f36'),
+      ...(bool(o.bold) ? { bold: true } : {}),
+      ...(bool(o.italic) ? { italic: true } : {}),
+      ...(o.fontFamily === 'serif' || o.fontFamily === 'mono' ? { fontFamily: o.fontFamily } : {}),
+      ...(o.align === 'left' || o.align === 'right' ? { align: o.align } : {}),
+    },
+  }
+}
+
 const oneOf = <T extends string>(v: unknown, list: T[], fallback: T): T => (list.includes(v as T) ? (v as T) : fallback)
 
 const safeId = (v: unknown): string | null => (typeof v === 'string' && /^[\w-]{1,64}$/.test(v) ? v : null)
@@ -43,6 +80,10 @@ function node(raw: unknown): FigNode | null {
     id: safeId(o.id) ?? uid(),
     ...(safeId(o.groupId) ? { groupId: safeId(o.groupId)! } : {}),
     ...(typeof o.opacity === 'number' ? { opacity: num(o.opacity, 1, 0, 1) } : {}),
+    ...(bool(o.locked) ? { locked: true as const } : {}),
+    ...(bool(o.hidden) ? { hidden: true as const } : {}),
+    ...(bool(o.guide) ? { guide: true as const } : {}),
+    ...(typeof o.name === 'string' && o.name.trim() ? { name: o.name.trim().slice(0, 60) } : {}),
   }
   switch (o.type) {
     case 'icon': {
@@ -63,6 +104,7 @@ function node(raw: unknown): FigNode | null {
         ...(bool(o.flipX) ? { flipX: true } : {}),
         ...(bool(o.flipY) ? { flipY: true } : {}),
         ...(Object.keys(colors).length ? { colors } : {}),
+        ...(typeof o.strokeScale === 'number' && o.strokeScale !== 1 ? { strokeScale: num(o.strokeScale, 1, 0.1, 10) } : {}),
       }
     }
     case 'shape':
@@ -78,7 +120,8 @@ function node(raw: unknown): FigNode | null {
         fill: color(o.fill, '#ffffff'),
         stroke: color(o.stroke, '#000000'),
         strokeWidth: num(o.strokeWidth, 2, 0, 100),
-        ...(bool(o.dashed) ? { dashed: true } : {}),
+        ...dashes(o),
+        ...shapeLabel(o.label),
       }
     case 'text':
       return {
@@ -93,12 +136,14 @@ function node(raw: unknown): FigNode | null {
         rotation: num(o.rotation, 0),
         ...(bool(o.bold) ? { bold: true } : {}),
         ...(bool(o.italic) ? { italic: true } : {}),
+        ...(FONTS.includes(o.fontFamily as FontFamily) && o.fontFamily !== 'sans' ? { fontFamily: o.fontFamily as FontFamily } : {}),
       }
     case 'connector': {
       const from = endpoint(o.from)
       const to = endpoint(o.to)
       if (!from || !to) return null
       const bend = point(o.bend)
+      const labelOffset = point(o.labelOffset)
       return {
         ...base,
         type: 'connector',
@@ -108,8 +153,82 @@ function node(raw: unknown): FigNode | null {
         stroke: color(o.stroke, '#000000'),
         strokeWidth: num(o.strokeWidth, 2, 0.25, 40),
         ...(bend ? { bend } : {}),
-        ...(bool(o.dashed) ? { dashed: true } : {}),
+        ...dashes(o),
+        ...(o.fade === 'in' || o.fade === 'out' ? { fade: o.fade } : {}),
         ...(typeof o.label === 'string' && o.label ? { label: o.label.slice(0, 200) } : {}),
+        ...(o.route === 'elbow' ? { route: 'elbow' as const } : {}),
+        ...(labelOffset ? { labelOffset } : {}),
+      }
+    }
+    case 'image':
+      if (!isImageDataUrl(o.src)) return null
+      return {
+        ...base,
+        type: 'image',
+        src: o.src,
+        x: num(o.x, 0),
+        y: num(o.y, 0),
+        w: num(o.w, 100, 1),
+        h: num(o.h, 100, 1),
+        rotation: num(o.rotation, 0),
+      }
+    case 'chart': {
+      // The numbers are rebuilt one by one: a chart never holds anything but numbers it can draw
+      // (finite, and neither absurdly large nor absurdly close to zero) and short names.
+      const finite = usable
+      const kind = oneOf(o.kind, CHART_KINDS, 'bar')
+      const groups: ChartGroup[] = []
+      for (const raw of Array.isArray(o.groups) ? o.groups.slice(0, MAX_GROUPS) : []) {
+        if (!raw || typeof raw !== 'object') continue
+        const g = raw as Record<string, unknown>
+        const name = typeof g.name === 'string' ? g.name.slice(0, 60) : ''
+        const shared = { name: name || `Group ${groups.length + 1}`, ...(isHexColor(g.color) ? { color: normalizeHex(g.color) } : {}) }
+        const list = (Array.isArray(g.values) ? g.values : []).slice(0, MAX_VALUES)
+        if (kind === 'scatter') {
+          // A point is kept only when both of its numbers are good, so x and y can never drift apart.
+          const xs = Array.isArray(g.xs) ? g.xs : []
+          const pairs = list.map((v, k) => [xs[k], v]).filter((p): p is [number, number] => finite(p[0]) && finite(p[1]))
+          groups.push({ ...shared, values: pairs.map((p) => p[1]), xs: pairs.map((p) => p[0]) })
+        } else {
+          const category = typeof g.category === 'string' && g.category.trim() ? { category: g.category.slice(0, 60) } : {}
+          groups.push({ ...shared, values: list.filter(finite), ...category })
+        }
+      }
+      // The ends of an axis are kept by the same rule the chart is drawn by, so reopening changes nothing.
+      const { min: yMin, max: yMax } = usableEnds(o.yMin, o.yMax, o.yLog === true)
+      const { min: xMin, max: xMax } = kind === 'scatter' ? usableEnds(o.xMin, o.xMax, o.xLog === true) : { min: undefined, max: undefined }
+      const brackets: ChartBracket[] = []
+      for (const raw of kind !== 'scatter' && Array.isArray(o.brackets) ? o.brackets.slice(0, MAX_BRACKETS) : []) {
+        if (!raw || typeof raw !== 'object') continue
+        const b = raw as Record<string, unknown>
+        const inTable = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) < groups.length
+        if (!inTable(b.from) || !inTable(b.to) || b.from === b.to) continue
+        brackets.push({ from: b.from, to: b.to, label: typeof b.label === 'string' ? b.label.slice(0, 40) : '' })
+      }
+      return {
+        ...base,
+        type: 'chart',
+        x: num(o.x, 0),
+        y: num(o.y, 0),
+        w: num(o.w, 360, 40),
+        h: num(o.h, 260, 40),
+        rotation: num(o.rotation, 0),
+        kind,
+        groups,
+        ...(o.error === 'sd' || o.error === 'sem' ? { error: o.error } : {}),
+        ...(bool(o.points) ? { points: true } : {}),
+        ...(typeof o.title === 'string' && o.title.trim() ? { title: o.title.slice(0, 120) } : {}),
+        ...(typeof o.yLabel === 'string' && o.yLabel.trim() ? { yLabel: o.yLabel.slice(0, 120) } : {}),
+        ...(typeof o.xLabel === 'string' && o.xLabel.trim() ? { xLabel: o.xLabel.slice(0, 120) } : {}),
+        ...(typeof o.fontSize === 'number' ? { fontSize: num(o.fontSize, 13, 6, 60) } : {}),
+        ...(yMin !== undefined ? { yMin } : {}),
+        ...(yMax !== undefined ? { yMax } : {}),
+        ...(bool(o.yLog) ? { yLog: true } : {}),
+        ...(xMin !== undefined ? { xMin } : {}),
+        ...(xMax !== undefined ? { xMax } : {}),
+        ...(kind === 'scatter' && bool(o.xLog) ? { xLog: true } : {}),
+        ...(kind === 'scatter' && bool(o.fit) ? { fit: true } : {}),
+        ...(brackets.length ? { brackets } : {}),
       }
     }
     case 'membrane': {
@@ -150,7 +269,8 @@ function customIcon(id: string, raw: unknown): IconDef | null {
   return {
     id,
     name: str(o.name, 'Imported icon'),
-    category: 'Imported',
+    // Pieces of a split icon are kept apart from icons the user imported, so they stay out of the library.
+    category: o.category === 'Part' ? 'Part' : 'Imported',
     tags: [],
     viewBox: [num(vb[0], 100, 1, 1e5), num(vb[1], 100, 1, 1e5)],
     body,
@@ -184,6 +304,8 @@ export function validateDoc(data: unknown): FigDoc {
     name: str(o.name, 'Untitled figure', 120),
     width: num(o.width, 1200, 50, 20000),
     height: num(o.height, 800, 50, 20000),
+    ...(typeof o.widthMm === 'number' && o.widthMm > 0 ? { widthMm: num(o.widthMm, 85, 10, 2000) } : {}),
+    ...(o.iconStyle === 'flat' ? { iconStyle: 'flat' as const } : {}),
     background: color(o.background, '#ffffff'),
     nodes,
     customIcons,

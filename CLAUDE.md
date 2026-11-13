@@ -44,8 +44,24 @@ A change is done when all of these hold:
 | The figure is SVG, rendered by React as real SVG elements | Icons are SVG; export is exact and stays editable in Inkscape/Illustrator. |
 | One renderer (`src/render/DocNodes.tsx`) for canvas and export | Guarantees what you see is what you export. |
 | The document is plain JSON (`src/model/types.ts`), all edits are pure functions | Easy to test, save, undo, and to generate with AI. |
-| No server, no accounts. Figures autosave in the browser (IndexedDB) | Zero hosting cost, private by default, works offline. |
+| No server, no accounts. Figures autosave in the browser (IndexedDB), several at a time (File › My figures) | Zero hosting cost, private by default, works offline. |
+| Label formatting is a few typed marks (`^{}`, `_{}`, `*…*`, `**…**`) parsed in `src/model/richtext.ts` | Works in any text box, on any keyboard, and in AI answers. Lone stars stay literal because significance marks (`*`, `***`) are everywhere in biology. |
+| PDF export uses the browser's print window, not a PDF library | Exact rendering and embedded fonts with no extra code to ship. |
+| An icon is taken apart by splitting it into pieces (`src/icons/split.ts`), each a small icon of its own | Reuses move, resize, recolour and delete; no path editor to build or maintain. |
+| Reshaping moves the points of an icon's paths (`src/icons/path.ts`, `reshape.ts`); the icon is first copied into the figure with shapes turned into paths and arcs into curves | The library icon and other copies stay as they were. Point positions are read from the drawn icon (`getScreenCTM`), so size, turn, flip and inner groups need no maths of our own. Curve handles follow their point; there is no handle editing and no adding or removing points. |
+| Panel frames are "guides" (`guide: true`): drawn on the page, skipped by the renderer for exports | The only deliberate difference between page and export, besides selection handles. Hidden objects (`hidden: true`) are skipped everywhere. |
+| PowerPoint export writes the .pptx by hand (`src/io/pptx.ts`: a stored ZIP and a dozen XML parts) with the figure as SVG plus PNG fallback | No library to ship; the picture stays vector in PowerPoint 2016+. Checked by opening a generated file in PowerPoint. |
+| Icon packs carry every icon's name in `public/icon-packs/index.json` | One search finds icons in packs that are not fetched yet; a pack is fetched when opened or when a search hits it. |
+| The "Flat cartoon" look is chosen per figure (`iconStyle`). Eight icons are composed by hand for it (`src/icons/flat.ts`: cell, nucleus, mitochondrion, bacterium, virus, receptor, antibody, DNA); every other built-in icon is redrawn by rule from its outlined drawing (`redrawFlat` in `src/icons/style.ts`): each filled shape becomes three flat tones of one vivid colour cut by two clip paths (`solid`), each thick line a shaded tube (`tubeOf`), outlines go, white and grey parts keep an edge | One set of drawings gives both looks, and the rules are the same ones the hand-composed icons use, so they match. `getIcon` returns the styled icon, so recolour, split and reshape work on it. No gradients, masks or opacity: plain hex colours only. All drawings are original: a reference video was looked at for general traits only; never copy a studio's characters or artwork. |
+| An arrow's end is part of its `kind` (`arrow`, `inhibit`, `dot`, `line`, `double`); a fading line (`fade: 'in' \| 'out'`) is one SVG linear gradient per arrow, set between its two end points, used by the line and its end mark alike (`fadeStops`, `connectorShape` in `src/model/connector.ts`) | One list of arrow types in the panel, the file format and AI answers. The gradient is the only one BioSketch draws (icons stay plain colours); it is plain SVG, so exports keep it. A fading line stops where its head, bar or dot begins (`flush`), because two see-through shapes on top of each other show as a darker patch. AI answers can ask for a `dot` end but not for fading. |
+| Text inside a shape is part of the shape (`label` on a shape node), drawn by the label renderer through `shapeLabelNode` (`src/model/nodes.ts`) and typed in place with the same editor as a text label. Lines are broken to fit the shape when it is drawn (`wrapText`); the figure stores the text as typed | One object to move, resize and turn, and the words stay in place. It reuses label formatting, measuring and export, so there is no second text engine. Boxes built by the AI and the example figures are made this way too. Figures from before have a box grouped with a separate label: that still works, a double-tap on such a box types in its label (`labelPartner`), and both kinds are read as the box's label when a figure is shown to the AI. |
+| Rectangles, rounded rectangles and ellipses are SVG's own elements; every other shape kind (triangle, diamond, hexagon, cylinder, callout, bracket) is one path from `shapePath` in `src/model/shapes.ts`, which also says where an arrow meets the outline (`outlineAlong`) and where the words inside go (`shapeTextArea`) | Old figures and exports are unchanged, and a new kind is added in one file: its path, and its corners if arrows should follow slanted sides. A bracket is an open line and is never filled. |
+| A chart is an object of its own (`chart` node) that keeps its numbers; `src/model/chart.ts` reads the pasted table (plain, grouped with a second row of names, or scatter with x in the first column), builds the axes (range set by hand, logarithmic) and lays out every bar, box, violin, point, tick, legend entry, bracket and word, and the renderer only draws that list | The chart stays editable and looks the same on the page and in every export, with real text. Its words go through the label renderer, so the usual marks work. No charting library. The AI neither sees nor makes charts. |
+| Chart statistics live in `src/model/chartStats.ts` and follow stated, common defaults: quartiles by linear interpolation (R `quantile` type 7), Tukey whiskers at 1.5 × IQR with outliers as rings, a Gaussian kernel density with Silverman's rule-of-thumb bandwidth (R `bw.nrd0`) for violins, ordinary least squares for fitted lines. Tests pin each to values from R | Scientists publish these plots, so a definition must be one they can name in their methods, and a wrong number is worse than a missing feature. BioSketch draws significance brackets with the label the scientist types; it runs no statistical test. Any test added later must be pinned to a reference in the same way. |
+| A line that is not solid keeps `dashed: true`, with `dashStyle` (dotted, long, dash-and-dot; absent = plain dashes) and `dashScale` beside it (`src/model/dash.ts`) | Figures saved before the styles existed open unchanged, and AI answers keep their simple `dashed` yes/no. Dots are near-zero dashes that only show with round line ends, so the renderer rounds the ends whenever a pattern has dots. |
 | AI returns a structured "scene" (icon ids, positions, arrows), never images or SVG | Output stays editable, uses attributed library icons, and avoids journal bans on AI-generated images. |
+| The AI complements the request in three ways, none of which costs an extra request: "Plan first" (the request asks Claude to describe its plan and ask questions in the chat before it answers with the figure; Claude app route only), `notes` in the scene (assumptions, stand-ins for missing icons, open questions, shown after building), and a layout check done by BioSketch itself (`tidyScene` in `src/ai/layout.ts`: plain geometry that moves elements back onto the page and apart) | Looked at how other tools do it (planning agents, self-checking renderers) and kept what fits a tool with no server and no paid requests. The layout check runs for new figures only: when a figure is changed, the scientist placed those things. |
+| A scene has a `frame` element (empty dashed rectangle, any size) besides `box` | A box holds a label and is capped in height; zoomed-in views and marked regions need a container. An empty rectangle on the page is described back to the AI as a frame. |
 | AI works two ways: copy-paste through the user's own Claude app (default, no key, no cost), or the user's Claude API key called from the browser | No backend to run or pay for. The owner does not want to pay for API credit, so the copy-paste route (`src/ai/bridge.ts`) must keep working and stay the default. Both routes share one prompt and one scene format. |
 | Built-in icons are original and CC0 | A figure made with them needs no attribution. Imported icons carry their licence, and export builds the credit text. |
 | Not built on tldraw or Excalidraw | tldraw is not open-source licensed; Excalidraw is hand-drawn style and treats SVG as flat images. |
@@ -60,42 +76,104 @@ A change is done when all of these hold:
 
 ## Map of the code
 
-- `src/model/` figure data and geometry (no React, no browser APIs): `types`, `geometry`, `nodes`
-  (boxes, resize, connectors), `doc` (group, align, reorder, copy), `connector`, `membrane`.
+- `src/model/` figure data and geometry (no React, no browser APIs): `types`, `geometry`, `nodes`,
+  `describe` (names of objects in words), `panels` (panel layouts),
+  (boxes, resize, connectors), `doc` (group, align, reorder, copy), `connector`, `dash` (line
+  styles), `shapes` (outlines of the shape kinds), `richtext` (label marks, symbols), `chart`
+  (charts from pasted numbers: tables, axes, layout), `chartStats` (quartiles, density, fitted
+  line), `membrane`.
 - `src/render/DocNodes.tsx` draws nodes as SVG, for both canvas and export.
 - `src/canvas/` pointer input (mouse, touch, pen), selection handles, in-place text editing.
-- `src/ui/` panels, top bar, dialogs. `src/actions.ts` commands. `src/store.ts` state and undo.
-- `src/icons/` built-in library (`library.ts` core set, `pack-*.ts` themed packs, `draw.ts` shared
-  palette and helpers) and SVG import/recolour/sanitise (`svg.ts`).
-- `src/io/` export (SVG/PNG/attribution), file validation, autosave.
-- `src/ai/` scene format, prompt, and the Claude API call.
+- `src/ui/` panels, top bar, dialogs, the objects list (`ObjectsList.tsx`). `src/actions.ts` commands. `src/store.ts` state and undo.
+- `src/icons/` built-in library (`library.ts` core set, `pack-*.ts` themed packs, of which
+  `pack-extra.ts` holds pathogens, immune and medical subjects, `pack-organs.ts` organs and
+  `pack-organisms.ts` plants and animals, `draw.ts` shared palette and helpers), SVG import/recolour/sanitise (`svg.ts`), splitting an icon into pieces
+  (`split.ts`), reshaping point by point (`path.ts` path data, `reshape.ts`) and lazily loaded icon
+  packs (`packs.ts`, files in `public/icon-packs/`), and the flat cartoon look (`flat.ts` hand-composed
+  icons and the layer helpers, `style.ts` redrawing the other icons by rule).
+- `src/io/` export (SVG/PNG/PDF/attribution), PowerPoint files (`pptx.ts`), file validation, saved figures (`storage.ts`),
+  autosave, placing pictures (`images.ts`). `src/figures.ts` new/open/copy/delete a figure.
+- `src/ai/` scene format and prompt (`scene.ts`), the Claude API call (`client.ts`), the copy-paste
+  route (`bridge.ts`), changing an existing figure (`revise.ts`), and the layout check on a new
+  figure (`layout.ts`).
+- `scripts/import-icons.mjs` builds an icon pack from a folder of SVG files. `scripts/bioicons.mjs`
+  builds the Bioicons (CC0) and Servier (CC BY 3.0) packs in `public/icon-packs/` from a copy of
+  the Bioicons repository.
 - `tests/` unit tests (vitest + jsdom). `public/` web manifest, service worker, app icons.
 
 ## Conventions
 
 - British/neutral scientific English in the interface; sentence case; plain words over jargon.
 - Touch targets at least 40 px on touch devices; nothing may depend on hover, right-click or a keyboard.
-- New icons follow the style notes at the top of `src/icons/library.ts`.
+- New icons follow the style notes at the top of `src/icons/library.ts`: plain hex colours, an outline
+  on every filled shape, tubes as two lines on one path. The flat style relies on exactly that.
 - Prefer a small pure function plus a test over logic inside a React component.
 - When using the Claude API, check current model names and request shapes before editing
   `src/ai/client.ts`; they change between model generations.
 
 ## Known gaps (good next tasks)
 
-- Icon library has about 280 icons. Every subject marked "Draw" in the wish list is done; what remains
-  there is marked "Import" (organs, animals, complex instruments), which needs the open collections. `docs/icon-wishlist.md` lists what to draw next,
-  group by group; new groups go in their own pack file like `src/icons/pack-proteins.ts`. Draw from
-  the biology, never from another collection's artwork. The other lever is a script that imports
-  open collections (Bioicons, NIH BioArt, Servier Medical Art, Reactome) with their licence metadata.
-- No multi-select resize/rotate, no smart alignment guides, no multi-page documents.
-- No PDF export (SVG converts to PDF in any vector tool).
-- AI: the API-key route was tested with recorded answers only, never against the live API. The
-  copy-paste route was tested end to end in the browser with hand-written answers, not yet with a
-  real reply from the Claude app.
+- Icon packs (53 MB in `public/icon-packs/`): the CC0 folder of Bioicons (438 icons) and its
+  CC BY 3.0 folder, which is Servier Medical Art (1,298 icons, files over 200 kB left out), both
+  from commit d29e766 (June 2026). Not imported: Bioicons CC BY 4.0 (885 files, 313 MB) and
+  share-alike (39), NIH BioArt, Reactome. Downloading more needs the owner's go-ahead and a
+  licence check per collection.
+- Loading a pack offline (after it was opened once online) was not tested.
 - Not yet tested on a physical iPad; touch and pen were tested with simulated pointer events.
-- No real-time collaboration (Yjs is the planned route if needed).
-- Objects on the canvas cannot be selected or moved with the keyboard alone (panels and dialogs can).
-- Grouped objects cannot be resized together; ungroup first.
+- AI: the API-key route was tested with recorded answers only, never against the live API. The
+  copy-paste route works with a real reply from the Claude app for a new figure; changing an
+  existing figure was tested with hand-written answers only.
+- AI, newer parts: "Plan first", notes and frames were tried with hand-written answers only, not
+  with a real reply from the Claude app, so how well Claude follows the two-step wording is not
+  known. The API-key route has no "Plan first" (it would take a second paid request). The layout
+  check moves whole elements only: it does not resize, re-route arrows, or keep a moved element
+  inside its cell or frame, and arrow labels can still sit on something.
+- PDF export and the "Copy sketch image" button were not clicked through in testing (they open
+  system windows); their page content and data are unit-tested.
+- Flat cartoon look: all 353 built-in icons have it, but only eight are composed by hand; the
+  rest follow their outlined drawing shape for shape. Thin dark detail lines and scale bars are
+  hard to see on a dark page (the phylogenetic tree and pedigree most of all). The owner has not
+  yet reviewed the full set, nor the 52 icons drawn from the second survey (organs, plants and
+  animals, medical kit).
+- A few older icons draw up to 3 units past their frame (receptor dimer, intestinal villus,
+  nuclear pore, actin filament, cilium); `tests/library.test.ts` checks the frame only for
+  `pack-extra`, `pack-organs` and `pack-organisms`.
+- Fading arrows: seen on the page only. The exported SVG is unit-tested, but no exported file
+  (SVG in Inkscape or Illustrator, PNG, PDF, PowerPoint) was opened to look at the fade. On a
+  curved or right-angled arrow the fade follows the straight line between the two ends, not the
+  path. An arrow has one end type: separate marks for the start and the end are not offered
+  (only "double" has heads at both ends).
+- Text inside a shape: the shape does not grow when the words need more lines than fit, so they
+  can run past its top and bottom until it is made taller. A single word wider than the shape is
+  not split. Typing in place on a turned shape happens in an upright box, and the box breaks
+  lines by the browser's rules, which can differ by a word from the drawn result. Line styles
+  were seen on the page only; no exported file was opened to look at dotted or dash-and-dot lines.
+- Shapes: arrows meet a cylinder and a bracket at their box, not their curved outline; the
+  callout's pointer and the bracket's direction are fixed (turn the shape to change them); the
+  AI can only ask for boxes, ovals and frames. The symbol picker is in the side panel only, not
+  beside a label being typed in place, and arrow labels have none.
+- Charts: no statistical tests (brackets carry a label the scientist types). No two-way layouts
+  beyond category × series, no stacked bars, no curve fitting other than a straight line, no
+  confidence band on the fitted line. Choices a reviewer questioned and that stand as stated
+  behaviour: on a logarithmic axis the box plot's quartiles and fences, and a bar's mean and SD,
+  are worked out on the plain values (the violin's density and the fitted line on logarithms);
+  an error bar that would reach zero stops at the bottom of a logarithmic axis; a range set by
+  the scientist cuts data off at the plot's edge without a note. A lone comma in a table is a
+  decimal comma unless the table writes decimals with a point elsewhere (a notice says when that
+  is a guess). An independent review (four reviewers, each finding cross-checked) ran once and
+  its confirmed findings are fixed and tested in `tests/chart-review.test.ts`; the fixes
+  themselves were not reviewed again, and no exported file with a chart was opened.
+- Next stages of the analysis tool, agreed in outline but not started: built-in tests for the
+  common designs (two groups; one factor with several groups; paired or not; parametric or
+  rank-based) pinned to R, then a guided choice of analysis from the scientist's description
+  through the copy-paste AI route, where the AI proposes a plan and BioSketch does the arithmetic.
+- Reshaping an icon: curve handles cannot be set separately, points cannot be added or removed,
+  and the handles were dragged with simulated pointer events only.
+- PowerPoint export was opened in PowerPoint for Mac only; Keynote and Google Slides (which use
+  the PNG fallback) were not tried.
+- No multi-page documents, no real-time collaboration (Yjs is the planned route if needed).
+- Keyboard: objects can be selected (Tab), moved, edited and deleted, but not resized, rotated or
+  connected with arrows from the keyboard.
 
 ## Things that bit us once (keep them fixed)
 
@@ -107,3 +185,37 @@ A change is done when all of these hold:
 - React StrictMode runs effect clean-ups early in development: clean-up code must be safe to run twice
   (see `save` in `src/canvas/TextEditor.tsx`).
 - Node ids end up inside icon markup; `validateDoc` only accepts plain identifiers. Keep it that way.
+- Ids stored in a figure are at most 64 characters. Anything that creates icon ids (packs, split
+  pieces) must stay under that, or the icon vanishes when the figure is reopened.
+- Autosave must drop its pending write when the figure returns to the stored state (Undo),
+  otherwise the browser keeps a newer version than the one on screen.
+- Autosave keeps a change that could not be written and retries it; never clear the pending change
+  before the write has succeeded (`src/io/autosave.ts`).
+- Leaving a figure deletes it only when it is still exactly a new, empty one. A named or sized page
+  with nothing on it yet is the user's work.
+- A locked object must not be picked up through its group (`expandGroups` in `src/model/doc.ts`).
+- In the dev server, a module imported by hand in the browser console can be a second copy of
+  the one the app uses (Vite adds `?t=` after a hot update). Test through `window.__editor` and
+  the page, or import the exact URL the app loaded.
+- A chart must draw whatever numbers a figure can hold. `niceScale` and `axisFor` always return at
+  least two finite ticks, numbers beyond 1e±100 are refused where they enter (`usable`), and the
+  renderer catches a failing layout: once, one tiny value blanked the editor and the figure could
+  not be reopened.
+- Reading a pasted table: digits are never joined across a space, a row of numbers at the top is
+  a row of names when the panel says so (`header`), and what was not read or was cut off is
+  reported (`readTable`). Guessing silently gave wrong means.
+- What belongs to a group of a chart (its colour, its brackets) follows the group by name when
+  the table is edited (`carryOver`), never its place in the table: a bracket once moved to a
+  different pair of groups when a column was inserted.
+- Anything the chart panel can store must survive `validateDoc` unchanged, and be drawn by the
+  same rule (`usableEnds`), or the chart changes when the figure is reopened.
+- An arc in a path cannot follow a dragged end point (its radius stops fitting); reshaping turns
+  arcs into curves first (`curvesOnly`).
+- A pack icon used in a figure is stored in the figure too; lists that show both must not show
+  it twice (`LibraryPanel`).
+- A flat icon draws each shape several times (three tones and two clip paths). Anything that
+  edits shapes must treat those copies as one: Reshape shows one set of points per shape and moves
+  every copy (`reshapablePaths`, `movePoint`), and each shape sits in one group so that Split gives
+  one piece per shape.
+- Pieces split or reshaped while a figure is in the flat style keep the flat colours when the
+  figure is switched back to outlined (they are copies stored with the figure).

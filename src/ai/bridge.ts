@@ -12,25 +12,45 @@ const EXAMPLE = `{
   ],
   "connectors": [
     { "from": "mito", "to": "atp", "kind": "arrow", "dashed": false, "label": "produces" }
-  ]
+  ],
+  "notes": []
 }`
 
-/** The full text to paste into a Claude chat. */
-export function buildChatRequest(hasSketch: boolean, description: string): string {
+const SHAPE_RULES =
+  'Every element needs all eight fields and every connector all five. "kind" of an element is one of: icon, box, ellipse, text, membrane, cell, frame. "kind" of a connector is one of: arrow, inhibit, dot, line, double. Use "" where there is no icon or label. Connectors refer to elements by "id". "notes" is a list of short sentences for me, or [].'
+
+/** How the answer should come back: at once, or after Claude has said what it plans to draw. */
+function answerFormat(planFirst: boolean): string {
+  const json = 'one JSON object in a single code block, and nothing else, so I can paste it back into BioSketch. Use exactly this shape:'
+  if (!planFirst) return `Answer format: reply with ${json}`
+  return [
+    'Work in two steps.',
+    'Step 1, your first reply: no JSON yet. In plain words for a biologist, list what you would draw and how the parts connect (a few short lines), say which things have no icon in the catalogue and what you would use instead, and ask up to three questions if an answer would change the figure. Then stop and wait for me.',
+    `Step 2, after I answer or say "go ahead": reply with ${json}`,
+  ].join('\n')
+}
+
+/**
+ * The full text to paste into a Claude chat. `task` replaces the usual "draw this" wording (used
+ * when revising a figure). With `planFirst`, Claude first describes its plan and asks its
+ * questions in the chat, and only builds the figure once the scientist agrees.
+ */
+export function buildChatRequest(hasSketch: boolean, description: string, task?: string, planFirst = false): string {
   return [
     SYSTEM_PROMPT,
     '---',
-    hasSketch ? taskText(true, description).replace('The image is', 'The attached image is') : taskText(false, description),
-    'Answer format: reply with one JSON object in a single code block, and nothing else, so I can paste it back into BioSketch. Use exactly this shape:',
+    task ?? (hasSketch ? taskText(true, description).replace('The image is', 'The attached image is') : taskText(false, description)),
+    answerFormat(planFirst),
     EXAMPLE,
-    'Every element needs all eight fields and every connector all five. "kind" of an element is one of: icon, box, ellipse, text, membrane, cell. "kind" of a connector is one of: arrow, inhibit, line, double. Use "" where there is no icon or label. Connectors refer to elements by "id".',
+    SHAPE_RULES,
   ].join('\n\n')
 }
 
 /** Read the scene out of whatever was pasted back: the bare JSON, a code block, or a whole reply. */
 export function readChatAnswer(text: string): Scene {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)
-  const candidate = fenced ? fenced[1] : text
+  // After a conversation the paste may hold several code blocks: the figure is the last one that holds JSON.
+  const blocks = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((m) => m[1]).filter((block) => block.includes('{'))
+  const candidate = blocks.length ? blocks[blocks.length - 1] : text
   const start = candidate.indexOf('{')
   const end = candidate.lastIndexOf('}')
   if (start < 0 || end <= start) {

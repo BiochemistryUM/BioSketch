@@ -42,6 +42,14 @@ export function recolor(body: string, colors: Record<string, string> | undefined
   })
 }
 
+/** Make every outline in icon markup thicker or thinner by `factor` (1 or absent leaves it as drawn). */
+export function scaleStrokes(body: string, factor: number | undefined): string {
+  if (!factor || factor === 1 || !(factor > 0) || !Number.isFinite(factor)) return body
+  const scaled = body.replace(/(stroke-width\s*[=:]\s*["']?\s*)(\d*\.?\d+(?:e[-+]?\d+)?)/gi, (_, lead: string, n: string) => `${lead}${Math.round(Number(n) * factor * 1000) / 1000}`)
+  // An outline that states no width is drawn 1 unit wide; the wrapper gives those the new width.
+  return `<g stroke-width="${factor}">${scaled}</g>`
+}
+
 /** Make the ids inside icon markup unique to one figure node, so gradients of two icons never clash. */
 export function prefixIds(body: string, prefix: string): string {
   if (!/\sid="/.test(body)) return body
@@ -62,8 +70,56 @@ export function prefixIds(body: string, prefix: string): string {
 
 const ALLOWED_TAGS = new Set([
   'svg', 'g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'tspan',
-  'defs', 'lineargradient', 'radialgradient', 'stop', 'clippath', 'mask', 'use', 'symbol', 'pattern',
+  'defs', 'lineargradient', 'radialgradient', 'stop', 'clippath', 'mask', 'use', 'symbol', 'pattern', 'marker',
 ])
+
+/** Wrappers that drawing programs add around artwork: the wrapper goes, the artwork stays. */
+function unwrap(root: Element): void {
+  // <switch> offers alternatives; the first one that is plain SVG is the drawing.
+  for (const el of Array.from(root.querySelectorAll('switch'))) {
+    const keep = Array.from(el.children).find((c) => ALLOWED_TAGS.has(c.tagName.toLowerCase()))
+    if (keep) el.replaceWith(keep)
+  }
+  for (const el of Array.from(root.querySelectorAll('a'))) el.replaceWith(...Array.from(el.childNodes))
+}
+
+const EFFECTS = ['filter', 'clip-path', 'mask', 'marker-start', 'marker-mid', 'marker-end']
+const LOCAL_REF = /url\(\s*['"]?#([^)'"\s]+)['"]?\s*\)/
+
+/**
+ * Drop effects that point at something the cleaning removed (blur filters, for instance). A shape
+ * whose filter or clip is missing is not drawn at all by some browsers.
+ */
+function dropDanglingEffects(root: Element): void {
+  const ids = new Set(Array.from(root.querySelectorAll('[id]')).map((el) => el.getAttribute('id')))
+  const dangling = (value: string): boolean => {
+    const ref = LOCAL_REF.exec(value)
+    return !!ref && !ids.has(ref[1])
+  }
+  for (const el of Array.from(root.querySelectorAll('*'))) {
+    for (const name of EFFECTS) {
+      const value = el.getAttribute(name)
+      if (value && dangling(value)) el.removeAttribute(name)
+    }
+    const style = el.getAttribute('style')
+    if (style && style.includes('url(')) {
+      const kept = style.split(';').filter((decl) => {
+        const [prop, ...rest] = decl.split(':')
+        return !(EFFECTS.includes(prop.trim().toLowerCase()) && dangling(rest.join(':')))
+      })
+      el.setAttribute('style', kept.join(';'))
+    }
+  }
+}
+
+const UNIT_PX: Record<string, number> = { px: 1, '': 1, mm: 96 / 25.4, cm: 96 / 2.54, in: 96, pt: 96 / 72, pc: 16 }
+
+/** A width or height such as "210mm" in the units shapes are drawn in. NaN when it cannot be read. */
+function lengthPx(value: string | null): number {
+  const m = /^\s*([\d.]+(?:e[-+]?\d+)?)\s*([a-z]*)\s*$/i.exec(value ?? '')
+  const unit = m ? UNIT_PX[m[2].toLowerCase()] : undefined
+  return m && unit ? parseFloat(m[1]) * unit : NaN
+}
 
 const UNSAFE_VALUE = /javascript:|expression\(|@import|url\(\s*['"]?(?!#)/i
 
@@ -124,7 +180,7 @@ function clean(el: Element): void {
   }
 }
 
-function parseRoot(text: string): Element | null {
+export function parseRoot(text: string): Element | null {
   if (typeof DOMParser === 'undefined') return null
   const doc = new DOMParser().parseFromString(text, 'image/svg+xml')
   const root = doc.documentElement
@@ -132,7 +188,7 @@ function parseRoot(text: string): Element | null {
   return root
 }
 
-function serializeChildren(root: Element): string {
+export function serializeChildren(root: Element): string {
   const s = new XMLSerializer()
   return Array.from(root.childNodes)
     .map((n) => s.serializeToString(n))
@@ -144,7 +200,9 @@ function serializeChildren(root: Element): string {
 export function sanitizeBody(body: string): string {
   const root = parseRoot(`<svg xmlns="http://www.w3.org/2000/svg">${body}</svg>`)
   if (!root) return ''
+  unwrap(root)
   clean(root)
+  dropDanglingEffects(root)
   return serializeChildren(root)
 }
 
@@ -158,15 +216,18 @@ export function parseSvgFile(text: string): ParsedSvg {
   const root = parseRoot(text)
   if (!root) throw new Error('This file is not a valid SVG image.')
   inlineStyles(root)
+  unwrap(root)
   clean(root)
+  dropDanglingEffects(root)
   const vb = (root.getAttribute('viewBox') ?? '')
     .split(/[\s,]+/)
     .map(Number)
     .filter((n) => Number.isFinite(n))
   let minX = 0
   let minY = 0
-  let w = parseFloat(root.getAttribute('width') ?? '')
-  let h = parseFloat(root.getAttribute('height') ?? '')
+  // Without a viewBox, shapes are drawn in pixels whatever unit the page size is given in.
+  let w = lengthPx(root.getAttribute('width'))
+  let h = lengthPx(root.getAttribute('height'))
   if (vb.length === 4 && vb[2] > 0 && vb[3] > 0) [minX, minY, w, h] = vb
   if (!(w > 0) || !(h > 0)) {
     w = 100
@@ -179,7 +240,7 @@ export function parseSvgFile(text: string): ParsedSvg {
 }
 
 /** Markup for one icon instance, recoloured and with ids made unique to that node. */
-export function iconMarkup(def: IconDef, colors: Record<string, string> | undefined, nodeId: string): string {
+export function iconMarkup(def: IconDef, colors: Record<string, string> | undefined, nodeId: string, strokeScale?: number): string {
   // The prefix becomes part of the markup, so it is reduced to plain characters whatever the node id is.
-  return prefixIds(recolor(def.body, colors), `i${nodeId.replace(/[^\w-]/g, '')}`)
+  return prefixIds(scaleStrokes(recolor(def.body, colors), strokeScale), `i${nodeId.replace(/[^\w-]/g, '')}`)
 }

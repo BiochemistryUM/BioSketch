@@ -3,7 +3,7 @@
 import { getIcon } from './icons/library'
 import { INK, outlinePoints, textLabel } from './model/build'
 import { emptyDoc, uid } from './model/doc'
-import type { ConnectorKind, ConnectorNode, FigDoc, FigNode, IconNode, MembraneNode, Point, ShapeNode, TextNode } from './model/types'
+import type { ConnectorKind, ConnectorNode, FigDoc, FigNode, IconNode, MembraneNode, Point, ShapeNode } from './model/types'
 
 function icon(iconId: string, cx: number, cy: number, scale = 1, extra: Partial<IconNode> = {}): IconNode {
   const [w, h] = getIcon(null, iconId)?.viewBox ?? [80, 80]
@@ -12,11 +12,9 @@ function icon(iconId: string, cx: number, cy: number, scale = 1, extra: Partial<
 
 const label = textLabel
 
-/** A labelled, rounded box. Returns [box, text]; connectors should attach to the box. */
-function pill(text: string, cx: number, cy: number, fill: string, stroke: string, w = 120, h = 44): [ShapeNode, TextNode] {
-  const groupId = uid()
-  const box: ShapeNode = { id: uid(), groupId, type: 'shape', shape: 'roundrect', x: cx - w / 2, y: cy - h / 2, w, h, rotation: 0, fill, stroke, strokeWidth: 2 }
-  return [box, { ...label(text, cx, cy - 10, { bold: true }), groupId }]
+/** A rounded box with its name written inside. */
+function pill(text: string, cx: number, cy: number, fill: string, stroke: string, w = 120, h = 44): ShapeNode {
+  return { id: uid(), type: 'shape', shape: 'roundrect', x: cx - w / 2, y: cy - h / 2, w, h, rotation: 0, fill, stroke, strokeWidth: 2, label: { text, fontSize: 16, fill: INK, bold: true } }
 }
 
 function link(from: FigNode, to: FigNode, kind: ConnectorKind = 'arrow', extra: Partial<ConnectorNode> = {}): ConnectorNode {
@@ -47,10 +45,10 @@ function signalling(): FigDoc {
   const ligand = icon('ligand', 430, 100)
   const ligandLabel = label('Growth factor', 520, 90)
   const receptor = icon('receptor-dimer', 430, 232, 1.2)
-  const [ras, rasT] = pill('RAS', 430, 380, '#e3f3ef', '#1f8f84')
-  const [raf, rafT] = pill('RAF', 430, 460, '#e3f3ef', '#1f8f84')
-  const [mek, mekT] = pill('MEK', 430, 540, '#e3f3ef', '#1f8f84')
-  const [erk, erkT] = pill('ERK', 430, 620, '#e3f3ef', '#1f8f84')
+  const ras = pill('RAS', 430, 380, '#e3f3ef', '#1f8f84')
+  const raf = pill('RAF', 430, 460, '#e3f3ef', '#1f8f84')
+  const mek = pill('MEK', 430, 540, '#e3f3ef', '#1f8f84')
+  const erk = pill('ERK', 430, 620, '#e3f3ef', '#1f8f84')
   const drug = icon('pill', 190, 460, 0.9)
   const drugLabel = label('RAF inhibitor', 190, 492)
   const tf = icon('transcription-factor', 840, 530, 1.1)
@@ -61,7 +59,7 @@ function signalling(): FigDoc {
     ...emptyDoc('Receptor signalling (example)'),
     nodes: [
       plasma, nucleus, title, outside, inside, nucleusLabel,
-      ligand, ligandLabel, receptor, ras, rasT, raf, rafT, mek, mekT, erk, erkT, drug, drugLabel, tf, dna, genes,
+      ligand, ligandLabel, receptor, ras, raf, mek, erk, drug, drugLabel, tf, dna, genes,
       link(ligand, receptor),
       link(receptor, ras),
       link(ras, raf),
@@ -79,26 +77,26 @@ function ferroptosis(): FigDoc {
 
   const transporter = icon('transporter', 340, 144)
   const transporterLabel = label('System xc⁻', 444, 100, { fontSize: 14 })
-  const [cystine, cystineT] = pill('Cystine', 340, 44, '#fff3d6', '#d39a1c')
-  const [cysteine, cysteineT] = pill('Cysteine', 340, 270, '#fff3d6', '#d39a1c')
-  const [gsh, gshT] = pill('GSH', 340, 360, '#fff3d6', '#d39a1c')
-  const [gpx4, gpx4T] = pill('GPX4', 340, 450, '#e3f3ef', '#1f8f84')
-  const [erastin, erastinT] = pill('Erastin', 150, 104, '#fde8e8', '#c9403d', 110)
-  const [rsl3, rsl3T] = pill('RSL3', 180, 540, '#fde8e8', '#c9403d', 100)
+  const cystine = pill('Cystine', 340, 44, '#fff3d6', '#d39a1c')
+  const cysteine = pill('Cysteine', 340, 270, '#fff3d6', '#d39a1c')
+  const gsh = pill('GSH', 340, 360, '#fff3d6', '#d39a1c')
+  const gpx4 = pill('GPX4', 340, 450, '#e3f3ef', '#1f8f84')
+  const erastin = pill('Erastin', 150, 104, '#fde8e8', '#c9403d', 110)
+  const rsl3 = pill('RSL3', 180, 540, '#fde8e8', '#c9403d', 100)
 
   const iron = icon('iron', 640, 200, 1.1)
   const ros = icon('ros', 640, 332)
-  const [perox, peroxT] = pill('Lipid peroxidation', 640, 450, '#ffe8d9', '#d9623a', 190, 50)
+  const perox = pill('Lipid peroxidation', 640, 450, '#ffe8d9', '#d9623a', 190, 50)
   const lipid = icon('phospholipid', 640, 590, 0.9)
   const lipidLabel = label('PUFA phospholipids', 760, 590, { fontSize: 14 })
-  const [death, deathT] = pill('Ferroptosis', 920, 450, '#f8d0cf', '#c9403d', 140, 50)
+  const death = pill('Ferroptosis', 920, 450, '#f8d0cf', '#c9403d', 140, 50)
 
   return {
     ...emptyDoc('Ferroptosis (example)'),
     nodes: [
       cell, title,
-      transporter, transporterLabel, cystine, cystineT, cysteine, cysteineT, gsh, gshT, gpx4, gpx4T, erastin, erastinT, rsl3, rsl3T,
-      iron, ros, perox, peroxT, lipid, lipidLabel, death, deathT,
+      transporter, transporterLabel, cystine, cysteine, gsh, gpx4, erastin, rsl3,
+      iron, ros, perox, lipid, lipidLabel, death,
       link(cystine, transporter),
       link(transporter, cysteine),
       link(cysteine, gsh),

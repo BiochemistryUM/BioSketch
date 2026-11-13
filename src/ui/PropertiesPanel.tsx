@@ -1,22 +1,40 @@
 // The right-hand panel: settings for whatever is selected, or for the page and the active tool.
 
-import { useId, useState, type ReactNode } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
 import {
+  addChart,
+  addPanelLetter,
   alignSelection,
   deleteSelection,
   distributeSelection,
   duplicateSelection,
   groupSelection,
+  lockSelection,
   orderSelection,
   patchDoc,
   patchSelection,
   ungroupSelection,
+  unlockAll,
+  addPanels,
+  removeGuides,
 } from '../actions'
 import { getIcon } from '../icons/library'
 import { extractColors, isHexColor, normalizeHex } from '../icons/svg'
+import { finishReshape, startReshape } from '../icons/reshape'
+import { splitIcon } from '../icons/split'
+import { placeImageFile } from '../io/images'
 import { removeNodes } from '../model/doc'
-import type { ConnectorKind, ConnectorNode, FigNode, IconNode, MembraneNode, ShapeKind, ShapeNode, StrokeNode, TextAlign, TextNode } from '../model/types'
+import { SYMBOL_GROUPS, insertText, wrapSelection } from '../model/richtext'
+import { SHAPE_KINDS, shapePath } from '../model/shapes'
+import { carryOver, chartLayout, chartSeries, crossTable, headRows, isGrouped, readTable, scatterFits, shownValues, stats, tableText, type TableReport } from '../model/chart'
+import { boxStats } from '../model/chartStats'
+import { DASH_SCALE_MAX, DASH_SCALE_MIN, dashArray, hasDots, lineStyleOf, lineStylePatch, type Dashable, type LineStyle } from '../model/dash'
+import { SHAPE_LABEL_DEFAULT } from '../model/nodes'
+import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ConnectorFade, ConnectorKind, ConnectorNode, FigNode, FontFamily, IconNode, ImageNode, MembraneNode, ShapeKind, ShapeNode, StrokeNode, TextAlign, TextNode } from '../model/types'
 import { toast, useEditor } from '../store'
+import { PANEL_LAYOUTS, type PanelLayout } from '../model/panels'
+import { rememberStyle } from '../figures'
+import { ObjectsList } from './ObjectsList'
 import { Icon, type IconName } from './Icon'
 
 // ---------- small form parts ----------
@@ -88,6 +106,15 @@ function Range(props: { value: number; onChange: (v: number) => void; min: numbe
   )
 }
 
+/** A slider for the thickness of a line or outline, with the current value in its label. */
+function Thickness(props: { label: string; value: number; onChange: (v: number) => void; min?: number; max?: number }) {
+  return (
+    <Field label={`${props.label} ${props.value}`}>
+      <Range label={props.label} value={props.value} min={props.min ?? 0.5} max={props.max ?? 12} step={0.5} onChange={props.onChange} />
+    </Field>
+  )
+}
+
 function Check({ checked, onChange, children }: { checked: boolean; onChange: (v: boolean) => void; children: ReactNode }) {
   return (
     <label className="check">
@@ -112,9 +139,9 @@ function IconButton(props: { icon: IconName; label: string; onClick: () => void;
   )
 }
 
-function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: { value: T; label: string; title?: string }[]; onChange: (v: T) => void; label: string }) {
+function Segmented<T extends string>({ value, options, onChange, label, wrap }: { value: T; options: { value: T; label: string; title?: string }[]; onChange: (v: T) => void; label: string; wrap?: boolean }) {
   return (
-    <div className="segmented" role="group" aria-label={label}>
+    <div className={`segmented${wrap ? ' wrap' : ''}`} role="group" aria-label={label}>
       {options.map((o) => (
         <button key={o.value} className={value === o.value ? 'active' : ''} aria-pressed={value === o.value} title={o.title ?? o.label} onClick={() => onChange(o.value)}>
           {o.label}
@@ -137,26 +164,153 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 const KIND_OPTIONS: { value: ConnectorKind; label: string; title: string }[] = [
   { value: 'arrow', label: '→', title: 'Activation / leads to' },
   { value: 'inhibit', label: '⊣', title: 'Inhibition' },
+  { value: 'dot', label: '─●', title: 'Round end / binds or acts on' },
   { value: 'line', label: '—', title: 'Plain line / association' },
   { value: 'double', label: '↔', title: 'Reversible / binding' },
 ]
 
-const SHAPE_OPTIONS: { value: ShapeKind; label: string }[] = [
-  { value: 'roundrect', label: 'Rounded' },
-  { value: 'rect', label: 'Box' },
-  { value: 'ellipse', label: 'Ellipse' },
+const LINE_OPTIONS: { value: LineStyle; title: string }[] = [
+  { value: 'solid', title: 'Solid line' },
+  { value: 'dashed', title: 'Dashed (on an arrow: indirect effect or transport)' },
+  { value: 'dotted', title: 'Dotted' },
+  { value: 'long', title: 'Long dashes' },
+  { value: 'dashdot', title: 'Dash and dot' },
 ]
 
-/** Update every selected node of one type. */
+/** A short sample of a line style, drawn with the same dash pattern the figure uses. */
+function LineSample({ style }: { style: LineStyle }) {
+  const sample = { ...lineStylePatch(style), strokeWidth: 2, dashScale: 0.6 }
+  return (
+    <svg width="30" height="10" viewBox="0 0 30 10" aria-hidden="true">
+      <line x1="2" y1="5" x2="28" y2="5" stroke="currentColor" strokeWidth="2" strokeLinecap={hasDots(sample) ? 'round' : 'butt'} strokeDasharray={dashArray(sample)} />
+    </svg>
+  )
+}
+
+/** Line style of an arrow or an outline: the pattern, and for broken lines the size of the dashes. */
+function LineStyleControl({ label, value, onStyle, onScale }: { label: string; value: Dashable; onStyle: (style: LineStyle) => void; onScale?: (scale: number) => void }) {
+  const style = lineStyleOf(value)
+  const scale = value.dashScale ?? 1
+  return (
+    <>
+      <Field label={label}>
+        <div className="segmented line-styles" role="group" aria-label={label}>
+          {LINE_OPTIONS.map((o) => (
+            <button key={o.value} className={style === o.value ? 'active' : ''} aria-pressed={style === o.value} aria-label={o.title} title={o.title} onClick={() => onStyle(o.value)}>
+              <LineSample style={o.value} />
+            </button>
+          ))}
+        </div>
+      </Field>
+      {style !== 'solid' && onScale && (
+        <Field label={`${style === 'dotted' ? 'Dot spacing' : 'Dash size'} ${Math.round(scale * 100)}%`}>
+          <Range label={style === 'dotted' ? 'Dot spacing' : 'Dash size'} value={scale} min={DASH_SCALE_MIN} max={DASH_SCALE_MAX} step={0.25} onChange={onScale} />
+        </Field>
+      )}
+    </>
+  )
+}
+
+const FADE_OPTIONS: { value: 'none' | ConnectorFade; label: string; title: string }[] = [
+  { value: 'none', label: 'Solid', title: 'One solid colour along the whole line' },
+  { value: 'in', label: 'Fades in', title: 'Faint at the start, solid at the end' },
+  { value: 'out', label: 'Fades out', title: 'Solid at the start, faint at the end' },
+]
+
+const STYLE_OPTIONS: { value: 'outlined' | 'flat'; label: string; title: string }[] = [
+  { value: 'outlined', label: 'Outlined', title: 'Soft colours with a darker outline' },
+  { value: 'flat', label: 'Flat cartoon', title: 'Vivid colours, no dark outlines, soft light and shadow' },
+]
+
+const ROUTE_OPTIONS: { value: 'straight' | 'elbow'; label: string; title: string }[] = [
+  { value: 'straight', label: 'Straight', title: 'A straight line; drag the diamond to curve it' },
+  { value: 'elbow', label: 'Right-angled', title: 'Horizontal and vertical segments; drag the diamond to move the middle one' },
+]
+
+const SHAPE_NAMES: Record<ShapeKind, string> = {
+  roundrect: 'Rounded box',
+  rect: 'Box',
+  ellipse: 'Ellipse',
+  triangle: 'Triangle',
+  diamond: 'Diamond',
+  hexagon: 'Hexagon',
+  cylinder: 'Cylinder',
+  callout: 'Callout',
+  bracket: 'Bracket',
+}
+
+/** A small drawing of a shape kind, made from the same outline the figure uses. */
+function ShapeSample({ kind }: { kind: ShapeKind }) {
+  const [x, y, w, h] = kind === 'bracket' ? [10, 2, 8, 18] : [2, 2, 24, 18]
+  const line = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinejoin: 'round' as const, strokeLinecap: 'round' as const }
+  const path = shapePath(kind, x, y, w, h)
+  return (
+    <svg width="28" height="22" viewBox="0 0 28 22" aria-hidden="true">
+      {path ? <path d={path} {...line} /> : kind === 'ellipse' ? <ellipse cx={14} cy={11} rx={12} ry={9} {...line} /> : <rect x={x} y={y} width={w} height={h} rx={kind === 'roundrect' ? 5 : 0} {...line} />}
+    </svg>
+  )
+}
+
+/** Choose a kind of shape from small drawings of each. */
+function ShapePicker({ value, onChange }: { value: ShapeKind; onChange: (kind: ShapeKind) => void }) {
+  return (
+    <div className="shape-picker" role="group" aria-label="Shape type">
+      {SHAPE_KINDS.map((kind) => (
+        <button key={kind} className={value === kind ? 'active' : ''} aria-pressed={value === kind} aria-label={SHAPE_NAMES[kind]} title={SHAPE_NAMES[kind]} onClick={() => onChange(kind)}>
+          <ShapeSample kind={kind} />
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Symbols that are not on most keyboards (Greek letters, arrows, maths, marks), one tap each.
+ * `onPick` receives the symbol; where it goes is up to the text box that owns the picker.
+ */
+function SymbolPicker({ onPick }: { onPick: (symbol: string) => void }) {
+  return (
+    <details className="symbols">
+      <summary>Symbols (α, →, ±, °)</summary>
+      {SYMBOL_GROUPS.map((group) => (
+        <div key={group.title} className="symbol-group" role="group" aria-label={group.title}>
+          {group.symbols.map((symbol) => (
+            <button key={symbol} className="symbol" aria-label={`Insert ${symbol}`} title={`Insert ${symbol} (${group.title.toLowerCase()})`} onClick={() => onPick(symbol)}>
+              {symbol}
+            </button>
+          ))}
+        </div>
+      ))}
+    </details>
+  )
+}
+
+/**
+ * Put a symbol into a text box at the cursor (or at the end when the box was never used), hand
+ * the new text to `apply`, and leave the cursor after the symbol so the next one follows it.
+ */
+function insertSymbol(el: HTMLTextAreaElement | null, current: string, symbol: string, apply: (text: string) => void): void {
+  const start = el ? el.selectionStart : current.length
+  const end = el ? el.selectionEnd : current.length
+  const next = insertText(current, start, end, symbol)
+  apply(next.text)
+  requestAnimationFrame(() => {
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(next.caret, next.caret)
+  })
+}
+
 function patch<T extends FigNode>(type: T['type'], change: Partial<T>, merge?: string): void {
   patchSelection((n) => (n.type === type ? ({ ...n, ...change } as FigNode) : n), merge)
 }
 
 // ---------- per-type sections ----------
 
-function IconProps({ node }: { node: IconNode }) {
+function IconProps({ node, single }: { node: IconNode; single: boolean }) {
   const doc = useEditor((s) => s.doc)
   const def = getIcon(doc, node.iconId)
+  const reshaping = useEditor((s) => s.reshape?.nodeId === node.id)
   const colors = def ? extractColors(def.body).slice(0, 10) : []
   return (
     <Section title={def?.name ?? 'Icon'}>
@@ -181,6 +335,18 @@ function IconProps({ node }: { node: IconNode }) {
           </div>
         </Field>
       )}
+      {def && /stroke/.test(def.body) && (
+        <Field label={`Outline thickness ${Math.round((node.strokeScale ?? 1) * 100)}%`}>
+          <Range
+            label="Outline thickness of the icon"
+            value={Math.round((node.strokeScale ?? 1) * 100)}
+            min={25}
+            max={400}
+            step={25}
+            onChange={(v) => patch<IconNode>('icon', { strokeScale: v === 100 ? undefined : v / 100 }, 'icon-sw')}
+          />
+        </Field>
+      )}
       <div className="row">
         <IconButton icon="flipH" label="Flip horizontally" active={!!node.flipX} onClick={() => patch<IconNode>('icon', { flipX: !node.flipX || undefined })} />
         <IconButton icon="flipV" label="Flip vertically" active={!!node.flipY} onClick={() => patch<IconNode>('icon', { flipY: !node.flipY || undefined })} />
@@ -196,15 +362,51 @@ function IconProps({ node }: { node: IconNode }) {
           {def.author ? ` · ${def.author}` : ''}
         </p>
       )}
+      {single && reshaping && (
+        <>
+          <button className="btn small primary" onClick={finishReshape}>
+            Done reshaping
+          </button>
+          <p className="hint">Drag the points to change the outline. Curves next to a point follow it.</p>
+        </>
+      )}
+      {single && !reshaping && (
+        <>
+          <div className="row wrap">
+            <button className="btn small" onClick={() => splitIcon(node.id)}>
+              <Icon name="ungroup" size={14} /> Split into parts
+            </button>
+            <button className="btn small" onClick={() => startReshape(node.id)}>
+              <Icon name="pen" size={14} /> Reshape
+            </button>
+          </div>
+          <p className="hint">
+            Split turns the icon into separate pieces: double-tap a piece to select it alone, then move, stretch, turn, recolour or delete it. Reshape shows the points
+            of the outline so you can drag them.
+          </p>
+        </>
+      )}
     </Section>
   )
 }
 
-function ShapeProps({ node }: { node: ShapeNode }) {
+function ShapeProps({ node, single }: { node: ShapeNode; single: boolean }) {
+  const inside = useRef<HTMLTextAreaElement>(null)
   const noFill = node.fill === 'none'
+  const label = node.label
+  /** Change the words inside the shape; they are created on the first letter and removed with the last. */
+  const setText = (text: string) =>
+    patchSelection((n) => {
+      if (n.type !== 'shape') return n
+      const { label: old, ...rest } = n
+      return text ? { ...rest, label: { ...(old ?? SHAPE_LABEL_DEFAULT), text } } : rest
+    }, 'shape-text')
+  /** Change how the words look, on every selected shape that has some. */
+  const setLabel = (change: Partial<NonNullable<ShapeNode['label']>>, merge?: string) =>
+    patchSelection((n) => (n.type === 'shape' && n.label ? { ...n, label: { ...n.label, ...change } } : n), merge)
   return (
     <Section title="Shape">
-      <Segmented label="Shape type" value={node.shape} options={SHAPE_OPTIONS} onChange={(shape) => patch<ShapeNode>('shape', { shape })} />
+      <ShapePicker value={node.shape} onChange={(shape) => patch<ShapeNode>('shape', { shape })} />
       <div className="row">
         <Field label="Fill">
           <ColorInput label="Fill colour" value={noFill ? '#ffffff' : node.fill} onChange={(fill) => patch<ShapeNode>('shape', { fill }, 'shape-fill')} />
@@ -212,35 +414,140 @@ function ShapeProps({ node }: { node: ShapeNode }) {
         <Field label="Outline">
           <ColorInput label="Outline colour" value={node.stroke} onChange={(stroke) => patch<ShapeNode>('shape', { stroke }, 'shape-stroke')} />
         </Field>
-        <Field label="Width">
-          <NumberInput label="Outline width" value={node.strokeWidth} min={0} max={30} step={0.5} onChange={(strokeWidth) => patch<ShapeNode>('shape', { strokeWidth }, 'shape-sw')} />
-        </Field>
       </div>
+      <Thickness label="Outline thickness" value={node.strokeWidth} min={0} max={Math.max(12, node.strokeWidth)} onChange={(strokeWidth) => patch<ShapeNode>('shape', { strokeWidth }, 'shape-sw')} />
       <Check checked={noFill} onChange={(v) => patch<ShapeNode>('shape', { fill: v ? 'none' : '#eaf2fb' })}>
         No fill
       </Check>
-      <Check checked={!!node.dashed} onChange={(v) => patch<ShapeNode>('shape', { dashed: v || undefined })}>
-        Dashed outline
-      </Check>
+      <LineStyleControl
+        label="Outline style"
+        value={node}
+        onStyle={(style) => patch<ShapeNode>('shape', lineStylePatch(style))}
+        onScale={(dashScale) => patch<ShapeNode>('shape', { dashScale: dashScale === 1 ? undefined : dashScale }, 'shape-dash')}
+      />
+      {single && (
+        <Field label="Text inside">
+          <textarea
+            ref={inside}
+            className="text-input"
+            aria-label="Text inside the shape"
+            rows={Math.min(5, (label?.text.split('\n').length ?? 1) + 1)}
+            value={label?.text ?? ''}
+            placeholder="Type here, or double-tap the shape"
+            onChange={(e) => setText(e.target.value)}
+          />
+          <SymbolPicker onPick={(symbol) => insertSymbol(inside.current, label?.text ?? '', symbol, setText)} />
+        </Field>
+      )}
+      {label && (
+        <div className="row">
+          <Field label="Text size">
+            <NumberInput label="Size of the text inside" value={label.fontSize} min={4} max={400} onChange={(fontSize) => setLabel({ fontSize }, 'shape-text-size')} />
+          </Field>
+          <Field label="Text colour">
+            <ColorInput label="Colour of the text inside" value={label.fill} onChange={(fill) => setLabel({ fill }, 'shape-text-fill')} />
+          </Field>
+          <div className="segmented" role="group" aria-label="Style of the text inside">
+            <button className={label.bold ? 'active' : ''} aria-pressed={!!label.bold} title="Bold text inside" onClick={() => setLabel({ bold: !label.bold || undefined })}>
+              <b>B</b>
+            </button>
+            <button className={label.italic ? 'active' : ''} aria-pressed={!!label.italic} title="Italic text inside" onClick={() => setLabel({ italic: !label.italic || undefined })}>
+              <i>I</i>
+            </button>
+          </div>
+        </div>
+      )}
+      {label && (
+        <>
+          <Field label="Text position">
+            <Segmented label="Position of the text inside" value={label.align ?? 'center'} options={ALIGN_OPTIONS} onChange={(align) => setLabel({ align: align === 'center' ? undefined : align })} />
+          </Field>
+          <Field label="Font type">
+            <Segmented
+              label="Font type of the text inside"
+              value={label.fontFamily ?? 'sans'}
+              options={FONT_OPTIONS}
+              onChange={(fontFamily) => setLabel({ fontFamily: fontFamily === 'sans' ? undefined : fontFamily })}
+            />
+          </Field>
+        </>
+      )}
+      {single && (
+        <p className="hint">
+          Long lines break to fit the shape, and the text stays in place when the shape is moved or resized. Press Enter for a new line; Ca^{'{2+}'}, H_{'{2}'}O,
+          *italic* and **bold** work here too.
+        </p>
+      )}
     </Section>
   )
 }
 
-function TextProps({ node }: { node: TextNode }) {
+const ALIGN_OPTIONS: { value: TextAlign; label: string }[] = [
+  { value: 'left', label: 'Left' },
+  { value: 'center', label: 'Centre' },
+  { value: 'right', label: 'Right' },
+]
+
+const FONT_OPTIONS: { value: FontFamily; label: string }[] = [
+  { value: 'sans', label: 'Sans' },
+  { value: 'serif', label: 'Serif' },
+  { value: 'mono', label: 'Mono' },
+]
+
+function TextProps({ node, single }: { node: TextNode; single: boolean }) {
+  const box = useRef<HTMLTextAreaElement>(null)
   const aligns: { value: TextAlign; label: string }[] = [
     { value: 'left', label: 'Left' },
     { value: 'center', label: 'Centre' },
     { value: 'right', label: 'Right' },
   ]
+  /** Format the characters selected in the text box as superscript, subscript, italic or bold. */
+  const format = (kind: 'sup' | 'sub' | 'italic' | 'bold') => {
+    const el = box.current
+    if (!el) return
+    if (el.selectionStart === el.selectionEnd) {
+      toast('Select the characters to format in the text box first.')
+      return
+    }
+    const next = wrapSelection(node.text, el.selectionStart, el.selectionEnd, kind)
+    patch<TextNode>('text', { text: next.text })
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(next.start, next.end)
+    })
+  }
   return (
     <Section title="Text">
-      <textarea
-        className="text-input"
-        aria-label="Text"
-        rows={Math.min(6, node.text.split('\n').length + 1)}
-        value={node.text}
-        onChange={(e) => patch<TextNode>('text', { text: e.target.value }, 'text-edit')}
-      />
+      {single && (
+        <>
+          <textarea
+            ref={box}
+            className="text-input"
+            aria-label="Text"
+            rows={Math.min(6, node.text.split('\n').length + 1)}
+            value={node.text}
+            onChange={(e) => patch<TextNode>('text', { text: e.target.value }, 'text-edit')}
+          />
+          <div className="row wrap">
+            <button className="btn small" title="Superscript the selected characters" aria-label="Superscript" onClick={() => format('sup')}>
+              x<sup>2</sup>
+            </button>
+            <button className="btn small" title="Subscript the selected characters" aria-label="Subscript" onClick={() => format('sub')}>
+              x<sub>2</sub>
+            </button>
+            <button className="btn small" title="Make the selected characters italic" aria-label="Italic for selected characters" onClick={() => format('italic')}>
+              <i>Italic</i>
+            </button>
+            <button className="btn small" title="Make the selected characters bold" aria-label="Bold for selected characters" onClick={() => format('bold')}>
+              <b>Bold</b>
+            </button>
+          </div>
+          <SymbolPicker onPick={(symbol) => insertSymbol(box.current, node.text, symbol, (text) => patch<TextNode>('text', { text }, 'text-edit'))} />
+          <p className="hint">
+            Select characters in the box, then press a button. Or type the marks yourself: Ca^{'{2+}'}, H_{'{2}'}O, *italic*, **bold**.
+          </p>
+        </>
+      )}
       <div className="row">
         <Field label="Size">
           <NumberInput label="Font size" value={node.fontSize} min={4} max={400} onChange={(fontSize) => patch<TextNode>('text', { fontSize }, 'text-size')} />
@@ -248,16 +555,351 @@ function TextProps({ node }: { node: TextNode }) {
         <Field label="Colour">
           <ColorInput label="Text colour" value={node.fill} onChange={(fill) => patch<TextNode>('text', { fill }, 'text-fill')} />
         </Field>
-        <div className="segmented" role="group" aria-label="Text style">
-          <button className={node.bold ? 'active' : ''} aria-pressed={!!node.bold} title="Bold" onClick={() => patch<TextNode>('text', { bold: !node.bold || undefined })}>
+        <div className="segmented" role="group" aria-label="Style of the whole label">
+          <button className={node.bold ? 'active' : ''} aria-pressed={!!node.bold} title="Whole label bold" onClick={() => patch<TextNode>('text', { bold: !node.bold || undefined })}>
             <b>B</b>
           </button>
-          <button className={node.italic ? 'active' : ''} aria-pressed={!!node.italic} title="Italic" onClick={() => patch<TextNode>('text', { italic: !node.italic || undefined })}>
+          <button className={node.italic ? 'active' : ''} aria-pressed={!!node.italic} title="Whole label italic" onClick={() => patch<TextNode>('text', { italic: !node.italic || undefined })}>
             <i>I</i>
           </button>
         </div>
       </div>
+      <Field label="Font type">
+        <Segmented
+          label="Font type"
+          value={node.fontFamily ?? 'sans'}
+          options={FONT_OPTIONS}
+          onChange={(fontFamily) => patch<TextNode>('text', { fontFamily: fontFamily === 'sans' ? undefined : fontFamily })}
+        />
+      </Field>
       <Segmented label="Text alignment" value={node.align} options={aligns} onChange={(align) => patch<TextNode>('text', { align })} />
+    </Section>
+  )
+}
+
+const CHART_OPTIONS: { value: ChartKind; label: string; title: string }[] = [
+  { value: 'bar', label: 'Bars', title: 'A bar for the mean of each group' },
+  { value: 'dot', label: 'Dots', title: 'Every value as a dot, with a line at the mean' },
+  { value: 'box', label: 'Box', title: 'Median, quartiles and whiskers of each group' },
+  { value: 'violin', label: 'Violin', title: 'The spread of the values in each group as an outline' },
+  { value: 'line', label: 'Line', title: 'The means joined by a line, in the order of the columns' },
+  { value: 'scatter', label: 'Scatter', title: 'Pairs of x and y values as points' },
+]
+
+const ERROR_OPTIONS: { value: 'none' | 'sd' | 'sem'; label: string; title: string }[] = [
+  { value: 'none', label: 'None', title: 'No error bars' },
+  { value: 'sd', label: 'SD', title: 'Standard deviation' },
+  { value: 'sem', label: 'SEM', title: 'Standard error of the mean' },
+]
+
+/** A number in three significant figures, without trailing zeros. */
+const short = (v: number): string => String(Number(v.toPrecision(3)))
+
+/** A number box that may be left empty (meaning "choose for me"). Accepts a decimal comma. */
+function OptionalNumber({ label, value, placeholder, onChange }: { label: string; value: number | undefined; placeholder: string; onChange: (v: number | undefined) => void }) {
+  const [draft, setDraft] = useState<string | null>(null)
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className="number"
+      aria-label={label}
+      placeholder={placeholder}
+      value={draft ?? (value === undefined ? '' : String(value))}
+      onChange={(e) => {
+        setDraft(e.target.value)
+        const text = e.target.value.trim().replace(',', '.')
+        if (text === '') onChange(undefined)
+        else if (Number.isFinite(Number(text))) onChange(Number(text))
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  )
+}
+
+/** The ends of one axis and whether it is logarithmic. */
+function AxisRange(props: { title: string; min: number | undefined; max: number | undefined; log: boolean; onMin: (v: number | undefined) => void; onMax: (v: number | undefined) => void; onLog: (v: boolean) => void }) {
+  return (
+    <Field label={props.title}>
+      <div className="row">
+        <OptionalNumber label={`${props.title}: start`} value={props.min} placeholder="auto" onChange={props.onMin} />
+        <span className="between">to</span>
+        <OptionalNumber label={`${props.title}: end`} value={props.max} placeholder="auto" onChange={props.onMax} />
+      </div>
+      <Check checked={props.log} onChange={props.onLog}>
+        Logarithmic
+      </Check>
+    </Field>
+  )
+}
+
+/** What a group is called in a list: its category first in a grouped chart. */
+const groupName = (g: ChartGroup): string => (g.category ? `${g.category} · ${g.name}` : g.name)
+
+const HEAD_OPTIONS: { value: '0' | '1' | '2'; label: string; title: string }[] = [
+  { value: '0', label: 'None', title: 'The table starts with numbers: the groups are named for you' },
+  { value: '1', label: 'One', title: 'The first row holds the names of the groups' },
+  { value: '2', label: 'Two (grouped)', title: 'The first row holds the categories, the second the series: a grouped chart' },
+]
+
+/** What reading the table left out or had to guess, in plain words for the scientist. */
+function tableNotices(report: TableReport): string[] {
+  const notices: string[] = []
+  if (report.unread) notices.push(`${report.unread} ${report.unread === 1 ? 'cell was' : 'cells were'} not read as ${report.unread === 1 ? 'a number' : 'numbers'} and left out (for example “${report.example}”).`)
+  if (report.droppedValues || report.droppedGroups) {
+    const parts = [report.droppedValues ? `${report.droppedValues} ${report.droppedValues === 1 ? 'value' : 'values'}` : '', report.droppedGroups ? `${report.droppedGroups} ${report.droppedGroups === 1 ? 'column' : 'columns'}` : ''].filter(Boolean)
+    notices.push(`The table is larger than a chart takes: ${parts.join(' and ')} were left out.`)
+  }
+  if (report.commasUnclear) notices.push('Commas were read as decimal commas (1,234 is taken as 1.234). If yours separate thousands, remove them.')
+  if (report.numericNames) notices.push('The names in the first row are all numbers. If that row holds values, choose “None” under “Rows of names”.')
+  return notices
+}
+
+function ChartProps({ node }: { node: ChartNode }) {
+  // While the numbers are being typed the box shows exactly what was typed. That text is kept for
+  // as long as the chart still holds the groups read from it; when they change in any other way
+  // (undo, another kind of chart, a new colour) the box shows the chart's own table again.
+  const [typed, setTyped] = useState<{ text: string; groups: ChartGroup[]; head?: 0 | 1 | 2; report: TableReport } | null>(null)
+  const live = typed && typed.groups === node.groups ? typed : null
+  const scatter = node.kind === 'scatter'
+  const grouped = isGrouped(node)
+  const set = (change: Partial<ChartNode>, merge?: string) => patch<ChartNode>('chart', change, merge)
+  const ownHead = headRows(node.groups, node.kind)
+  const shownText = live ? live.text : tableText(node.groups, node.kind)
+
+  /** Read the table and put it in the chart. Colours and brackets stay with their groups. */
+  const read = (text: string, chosen: 0 | 1 | 2 | undefined) => {
+    // Unless the scientist said how many rows of names there are, the table keeps at least as
+    // many as it had: a first row made of numbers (doses, time points) stays a row of names.
+    const guess = readTable(text, node.kind)
+    const head = Math.min(chosen ?? Math.max(guess.head, ownHead), scatter ? 1 : 2) as 0 | 1 | 2
+    const report = head === guess.head ? guess : readTable(text, node.kind, head)
+    if (!report.groups.some((g) => g.values.length)) {
+      setTyped({ text, groups: node.groups, head: chosen, report })
+      return
+    }
+    const carried = carryOver(node.groups, report.groups, node.brackets)
+    setTyped({ text, groups: carried.groups, head: chosen, report })
+    set({ groups: carried.groups, brackets: carried.brackets }, 'chart-data')
+    if (carried.lost) toast(`${carried.lost === 1 ? 'A bracket was' : `${carried.lost} brackets were`} removed: ${carried.lost === 1 ? 'one of its groups is' : 'their groups are'} no longer in the table.`)
+  }
+
+  // Going to a scatter chart and back reads the table twice, which loses things. The chart as it
+  // was before the crossing is remembered, and given back if nothing was changed in between.
+  const crossed = useRef<{ before: ChartNode; result: ChartGroup[] } | null>(null)
+  const onKind = (kind: ChartKind) => {
+    if ((kind === 'scatter') === scatter) return set({ kind })
+    const back = crossed.current
+    crossed.current = null
+    if (back && back.result === node.groups) {
+      const b = back.before
+      return set({ kind: (b.kind === 'scatter') === (kind === 'scatter') ? kind : b.kind, groups: b.groups, brackets: b.brackets, fit: b.fit, xMin: b.xMin, xMax: b.xMax, xLog: b.xLog })
+    }
+    const result = crossTable(node.groups, node.kind, kind)
+    crossed.current = { before: node, result }
+    set({ kind, groups: result, brackets: undefined, fit: undefined, xMin: undefined, xMax: undefined, xLog: undefined })
+    toast(kind === 'scatter' ? 'A scatter chart reads the first column of the table as the x values. Choose another kind again to get your chart back.' : 'The x values became the first group. Choose Scatter again to get your chart back.')
+  }
+
+  const drawing = chartLayout(node)
+  const series = chartSeries(node)
+  const drawn = node.groups.map((group, index) => ({ group, index })).filter((c) => c.group.values.length)
+  const fits = scatter ? scatterFits(node) : []
+  const brackets = node.brackets ?? []
+  const setBracket = (i: number, change: Partial<ChartBracket>) => set({ brackets: brackets.map((b, k) => (k === i ? { ...b, ...change } : b)) }, 'chart-bracket')
+  const colourBox = (entry: (typeof series)[number]) => (
+    <input
+      type="color"
+      className="color small"
+      aria-label={`Colour of ${entry.name}`}
+      title={`Colour of ${entry.name}`}
+      value={entry.colour}
+      onChange={(e) => set({ groups: node.groups.map((g, k) => (entry.groups.includes(k) ? { ...g, color: e.target.value } : g)) }, 'chart-colour')}
+    />
+  )
+  /** One line of plain words about a group: how many values, and what the chart draws for them. */
+  const about = (g: ChartGroup): string => {
+    // The same values the chart draws from: on a logarithmic axis, only those above zero.
+    const values = shownValues(node, g)
+    const s = stats(values)
+    const b = boxStats(values)
+    const count = `n = ${s.n}${values.length < g.values.length ? ` of ${g.values.length} (the rest are not above zero)` : ''}`
+    if (!s.n) return count
+    if ((node.kind === 'box' || node.kind === 'violin') && b) return `${count}, median ${short(b.median)} (quartiles ${short(b.q1)} to ${short(b.q3)})`
+    return `${count}, mean ${short(s.mean)}${s.n > 1 ? ` ± ${short(node.error === 'sem' ? s.sem : s.sd)} ${node.error === 'sem' ? 'SEM' : 'SD'}` : ''}`
+  }
+
+  return (
+    <Section title="Chart">
+      <Segmented label="Chart type" value={node.kind} options={CHART_OPTIONS} onChange={onKind} wrap />
+      <Field label="Numbers">
+        <textarea
+          className="text-input table-input"
+          aria-label="Numbers for the chart"
+          rows={7}
+          wrap="off"
+          spellCheck={false}
+          value={shownText}
+          onChange={(e) => read(e.target.value, live?.head)}
+        />
+      </Field>
+      <Field label="Rows of names at the top">
+        <Segmented
+          label="Rows of names at the top"
+          value={String(live ? live.report.head : ownHead) as '0' | '1' | '2'}
+          options={scatter ? HEAD_OPTIONS.slice(0, 2) : HEAD_OPTIONS}
+          onChange={(v) => read(shownText, Number(v) as 0 | 1 | 2)}
+        />
+      </Field>
+      <p className="hint">
+        {scatter
+          ? 'First column: the x values. Each further column: the y values of one series, with its name in the first row.'
+          : 'One column per group, with its name in the first row; one row per replicate. For a grouped chart, add a row above with the category of each column (for example WT, WT, KO, KO).'}{' '}
+        Paste from a spreadsheet, or type with tabs, commas or spaces between the numbers.
+      </p>
+      {[...(live ? tableNotices(live.report) : []), ...drawing.notes].map((note, i) => (
+        <p key={i} className="notice">
+          {note}
+        </p>
+      ))}
+      {series.length > 0 && (
+        <ul className="chart-summary" aria-label="What the chart shows">
+          {scatter || !grouped
+            ? series.map((entry, i) => {
+                const fit = fits[i]?.fit
+                const group = node.groups[entry.groups[0]]
+                return (
+                  <li key={i}>
+                    {colourBox(entry)}
+                    <span>
+                      <b>{entry.name}</b>:{' '}
+                      {scatter
+                        ? `${fits[i]?.points ?? 0} points${(fits[i]?.points ?? 0) < group.values.length ? ` of ${group.values.length} (the rest are not above zero)` : ''}${node.fit && fit ? `; line ${node.yLog ? 'log y' : 'y'} = ${short(fit.slope)} × ${node.xLog ? 'log x' : 'x'} ${fit.intercept < 0 ? '−' : '+'} ${short(Math.abs(fit.intercept))}, R² = ${short(fit.r2)}` : ''}`
+                        : about(group)}
+                    </span>
+                  </li>
+                )
+              })
+            : [
+                ...series.map((entry, i) => (
+                  <li key={`s${i}`}>
+                    {colourBox(entry)}
+                    <span>
+                      <b>{entry.name}</b>
+                    </span>
+                  </li>
+                )),
+                ...drawn.map(({ group }, i) => (
+                  <li key={`g${i}`}>
+                    <span>
+                      <b>{groupName(group)}</b>: {about(group)}
+                    </span>
+                  </li>
+                )),
+              ]}
+        </ul>
+      )}
+      {(node.kind === 'bar' || node.kind === 'dot' || node.kind === 'line') && (
+        <Field label="Error bars">
+          <Segmented label="Error bars" value={node.error ?? 'none'} options={ERROR_OPTIONS} onChange={(error) => set({ error: error === 'none' ? undefined : error })} />
+        </Field>
+      )}
+      {node.kind !== 'dot' && !scatter && (
+        <Check checked={!!node.points} onChange={(v) => set({ points: v || undefined })}>
+          Show every value as a dot
+        </Check>
+      )}
+      {scatter && (
+        <Check checked={!!node.fit} onChange={(v) => set({ fit: v || undefined })}>
+          Draw a fitted straight line
+        </Check>
+      )}
+      <AxisRange
+        title={scatter ? 'Range of the y axis' : 'Range of the value axis'}
+        min={node.yMin}
+        max={node.yMax}
+        log={!!node.yLog}
+        onMin={(yMin) => set({ yMin }, 'chart-range')}
+        onMax={(yMax) => set({ yMax }, 'chart-range')}
+        onLog={(v) => set({ yLog: v || undefined })}
+      />
+      {scatter && (
+        <AxisRange
+          title="Range of the x axis"
+          min={node.xMin}
+          max={node.xMax}
+          log={!!node.xLog}
+          onMin={(xMin) => set({ xMin }, 'chart-range')}
+          onMax={(xMax) => set({ xMax }, 'chart-range')}
+          onLog={(v) => set({ xLog: v || undefined })}
+        />
+      )}
+      {!scatter && (
+        <Field label="Significance brackets">
+          {brackets.map((b, i) => (
+            <div key={i} className="bracket-row">
+              <select aria-label="First group" value={b.from} onChange={(e) => setBracket(i, { from: Number(e.target.value) })}>
+                {drawn.map((c) => (
+                  <option key={c.index} value={c.index}>
+                    {groupName(c.group)}
+                  </option>
+                ))}
+              </select>
+              <select aria-label="Second group" value={b.to} onChange={(e) => setBracket(i, { to: Number(e.target.value) })}>
+                {drawn.map((c) => (
+                  <option key={c.index} value={c.index}>
+                    {groupName(c.group)}
+                  </option>
+                ))}
+              </select>
+              <input type="text" className="text-line" aria-label="Label of the bracket" value={b.label} placeholder="e.g. p = 0.03" onChange={(e) => setBracket(i, { label: e.target.value.slice(0, 40) })} />
+              <button className="icon-only" aria-label="Remove this bracket" title="Remove this bracket" onClick={() => set({ brackets: brackets.length > 1 ? brackets.filter((_, k) => k !== i) : undefined })}>
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+          ))}
+          <button
+            className="btn small"
+            disabled={drawn.length < 2 || brackets.length >= 30}
+            onClick={() => set({ brackets: [...brackets, { from: drawn[0].index, to: drawn[Math.min(1, drawn.length - 1)].index, label: '*' }] })}
+          >
+            Add a bracket
+          </button>
+          <p className="hint">Choose two groups and type the label yourself (for example p = 0.03, ** or ns). BioSketch draws the bracket; it does not test your data.</p>
+        </Field>
+      )}
+      <Field label="Title">
+        <input type="text" className="text-line" maxLength={120} value={node.title ?? ''} placeholder="e.g. Cell viability" onChange={(e) => set({ title: e.target.value.trim() ? e.target.value : undefined }, 'chart-title')} />
+      </Field>
+      <Field label={scatter ? 'Title of the y axis' : 'Title of the value axis'}>
+        <input type="text" className="text-line" maxLength={120} value={node.yLabel ?? ''} placeholder="e.g. Viable cells (%)" onChange={(e) => set({ yLabel: e.target.value.trim() ? e.target.value : undefined }, 'chart-ylabel')} />
+      </Field>
+      <Field label="Title of the x axis">
+        <input type="text" className="text-line" maxLength={120} value={node.xLabel ?? ''} placeholder={scatter ? 'e.g. Dose (µM)' : 'e.g. Genotype'} onChange={(e) => set({ xLabel: e.target.value.trim() ? e.target.value : undefined }, 'chart-xlabel')} />
+      </Field>
+      <Field label="Text size">
+        <NumberInput label="Size of the chart's text" value={node.fontSize ?? 13} min={6} max={60} onChange={(fontSize) => set({ fontSize }, 'chart-font')} />
+      </Field>
+      <p className="hint">
+        Drag a corner to resize the chart. Titles and names accept Ca^{'{2+}'}, H_{'{2}'}O, *italic* and **bold**.{' '}
+        {node.kind === 'box'
+          ? 'The box runs from the first to the third quartile with a line at the median; each whisker ends at the furthest value within 1.5 box lengths, and values beyond are drawn as rings.'
+          : node.kind === 'violin'
+            ? 'The outline is a smoothed estimate of how the values are spread, from the smallest to the largest value; the line marks the median. All violins have the same greatest width.'
+            : scatter
+              ? 'A fitted line is the least-squares line of y on x, drawn across the x values of its series; on a logarithmic axis it is fitted to the logarithms.'
+              : 'The value axis includes zero unless you set its range or make it logarithmic.'}
+      </p>
+    </Section>
+  )
+}
+
+function ImageProps({ node }: { node: ImageNode }) {
+  return (
+    <Section title="Picture">
+      <p className="hint">
+        {Math.round(node.w)} × {Math.round(node.h)} on the page. Drag a corner to resize; hold Shift to stretch. Arrows can attach to pictures.
+      </p>
     </Section>
   )
 }
@@ -266,17 +908,29 @@ function ConnectorProps({ node }: { node: ConnectorNode }) {
   return (
     <Section title="Arrow">
       <Segmented label="Arrow type" value={node.kind} options={KIND_OPTIONS} onChange={(kind) => patch<ConnectorNode>('connector', { kind })} />
+      <Field label="Line shape">
+        <Segmented
+          label="Line shape"
+          value={node.route === 'elbow' ? 'elbow' : 'straight'}
+          options={ROUTE_OPTIONS}
+          onChange={(route) => patch<ConnectorNode>('connector', { route: route === 'elbow' ? 'elbow' : undefined, bend: undefined })}
+        />
+      </Field>
       <div className="row">
         <Field label="Colour">
           <ColorInput label="Arrow colour" value={node.stroke} onChange={(stroke) => patch<ConnectorNode>('connector', { stroke }, 'conn-stroke')} />
         </Field>
-        <Field label="Width">
-          <NumberInput label="Line width" value={node.strokeWidth} min={0.5} max={20} step={0.5} onChange={(strokeWidth) => patch<ConnectorNode>('connector', { strokeWidth }, 'conn-sw')} />
-        </Field>
       </div>
-      <Check checked={!!node.dashed} onChange={(v) => patch<ConnectorNode>('connector', { dashed: v || undefined })}>
-        Dashed (indirect / transport)
-      </Check>
+      <Thickness label="Line thickness" value={node.strokeWidth} max={Math.max(12, node.strokeWidth)} onChange={(strokeWidth) => patch<ConnectorNode>('connector', { strokeWidth }, 'conn-sw')} />
+      <LineStyleControl
+        label="Line style"
+        value={node}
+        onStyle={(style) => patch<ConnectorNode>('connector', lineStylePatch(style))}
+        onScale={(dashScale) => patch<ConnectorNode>('connector', { dashScale: dashScale === 1 ? undefined : dashScale }, 'conn-dash')}
+      />
+      <Field label="Fading">
+        <Segmented label="Fading" value={node.fade ?? 'none'} options={FADE_OPTIONS} onChange={(fade) => patch<ConnectorNode>('connector', { fade: fade === 'none' ? undefined : fade })} />
+      </Field>
       <Field label="Label">
         <input
           type="text"
@@ -297,7 +951,7 @@ function ConnectorProps({ node }: { node: ConnectorNode }) {
           Straighten
         </button>
       </div>
-      <p className="hint">Drag an end onto an icon to attach it. Drag the diamond to curve the arrow.</p>
+      <p className="hint">Drag an end onto an icon to attach it. Drag the diamond to curve the arrow or move its middle segment. Drag the small dot to move the label.</p>
     </Section>
   )
 }
@@ -351,8 +1005,7 @@ function StrokeProps({ node }: { node: StrokeNode }) {
 function Arrange({ nodes }: { nodes: FigNode[] }) {
   const first = nodes[0]
   const grouped = nodes.some((n) => n.groupId)
-  const opacity = first.opacity ?? 1
-  const rotatable = nodes.length === 1 && (first.type === 'icon' || first.type === 'shape' || first.type === 'text')
+  const rotatable = nodes.length === 1 && (first.type === 'icon' || first.type === 'shape' || first.type === 'text' || first.type === 'image' || first.type === 'chart')
   const units = new Set(nodes.map((n) => n.groupId ?? n.id)).size
   return (
     <Section title="Arrange">
@@ -392,6 +1045,9 @@ function Arrange({ nodes }: { nodes: FigNode[] }) {
         <button className="btn small" onClick={duplicateSelection}>
           <Icon name="copy" size={14} /> Duplicate
         </button>
+        <button className="btn small" title="Fix in place so it cannot be moved by accident" onClick={lockSelection}>
+          <Icon name="lock" size={14} /> Lock
+        </button>
         <button className="btn small danger" onClick={deleteSelection}>
           <Icon name="trash" size={14} /> Delete
         </button>
@@ -407,14 +1063,23 @@ function Arrange({ nodes }: { nodes: FigNode[] }) {
           />
         </Field>
       )}
-      <Field label={`Opacity ${Math.round(opacity * 100)}%`}>
+    </Section>
+  )
+}
+
+/** Transparency applies to every kind of object, so it sits right under the object's own settings. */
+function Transparency({ nodes }: { nodes: FigNode[] }) {
+  const opacity = nodes[0].opacity ?? 1
+  return (
+    <Section title="Transparency">
+      <Field label={`${Math.round((1 - opacity) * 100)}% transparent`}>
         <Range
-          label="Opacity"
-          value={opacity}
-          min={0.1}
-          max={1}
+          label="Transparency"
+          value={1 - opacity}
+          min={0}
+          max={0.9}
           step={0.05}
-          onChange={(v) => patchSelection((n) => ({ ...n, opacity: v >= 1 ? undefined : v }), 'opacity')}
+          onChange={(v) => patchSelection((n) => ({ ...n, opacity: v <= 0 ? undefined : Math.round((1 - v) * 100) / 100 }), 'opacity')}
         />
       </Field>
     </Section>
@@ -422,6 +1087,13 @@ function Arrange({ nodes }: { nodes: FigNode[] }) {
 }
 
 // ---------- nothing selected ----------
+
+/** Common journal figure widths. */
+const PRINT_WIDTHS: { label: string; mm: number }[] = [
+  { label: 'Single column', mm: 85 },
+  { label: 'One and a half columns', mm: 114 },
+  { label: 'Double column', mm: 174 },
+]
 
 const PAGE_SIZES: { label: string; w: number; h: number }[] = [
   { label: 'Landscape 3:2', w: 1200, h: 800 },
@@ -465,6 +1137,105 @@ function PageProps() {
           <ColorInput label="Page colour" value={doc.background} onChange={(background) => patchDoc({ background }, 'page-bg')} />
         </Field>
       </div>
+      <Field label="Icon style">
+        <Segmented
+          label="Style of the built-in icons"
+          value={doc.iconStyle ?? 'outlined'}
+          options={STYLE_OPTIONS}
+          onChange={(v) => {
+            const iconStyle = v === 'flat' ? 'flat' : undefined
+            patchDoc({ iconStyle })
+            rememberStyle(iconStyle)
+          }}
+        />
+      </Field>
+      <Field label="Printed width (for journals)">
+        <select
+          value={doc.widthMm ? (PRINT_WIDTHS.some((w) => w.mm === doc.widthMm) ? String(doc.widthMm) : 'custom') : ''}
+          onChange={(e) => {
+            const v = e.target.value
+            // "Other width" starts from 100 mm unless a non-standard width is already set.
+            const other = doc.widthMm && !PRINT_WIDTHS.some((w) => w.mm === doc.widthMm) ? doc.widthMm : 100
+            patchDoc({ widthMm: v === '' ? undefined : v === 'custom' ? other : Number(v) })
+          }}
+        >
+          <option value="">Not set</option>
+          {PRINT_WIDTHS.map((w) => (
+            <option key={w.mm} value={w.mm}>
+              {w.label} ({w.mm} mm)
+            </option>
+          ))}
+          <option value="custom">Other width…</option>
+        </select>
+      </Field>
+      {!!doc.widthMm && (
+        <div className="row">
+          <Field label="Width in mm">
+            <NumberInput label="Printed width in millimetres" value={doc.widthMm} min={10} max={1000} onChange={(widthMm) => patchDoc({ widthMm }, 'page-mm')} />
+          </Field>
+          <p className="hint">Height {Math.round(((doc.widthMm * doc.height) / doc.width) * 10) / 10} mm</p>
+        </div>
+      )}
+    </Section>
+  )
+}
+
+/** Things to add to the page that are not icons. */
+function AddToPage() {
+  const locked = useEditor((s) => s.doc.nodes.reduce((n, node) => n + (node.locked && !node.guide ? 1 : 0), 0))
+  const guides = useEditor((s) => s.doc.nodes.reduce((n, node) => n + (node.guide ? 1 : 0), 0))
+  const file = useRef<HTMLInputElement>(null)
+  return (
+    <Section title="Add to the page">
+      <div className="row wrap">
+        <button className="btn small" onClick={() => file.current?.click()}>
+          <Icon name="image" size={14} /> Picture
+        </button>
+        <button className="btn small" title="Add the next panel letter: A, B, C…" onClick={addPanelLetter}>
+          <Icon name="text" size={14} /> Panel letter
+        </button>
+        <button className="btn small" title="Add a chart drawn from your own numbers" onClick={addChart}>
+          <Icon name="chart" size={14} /> Chart
+        </button>
+      </div>
+      <p className="hint">Pictures (micrographs, plots) can also be dragged in from your computer or pasted. A chart is drawn from numbers you paste, and stays editable.</p>
+      <Field label="Panels">
+        <select
+          aria-label="Divide the page into panels"
+          value=""
+          onChange={(e) => {
+            if (e.target.value) addPanels(e.target.value as PanelLayout)
+          }}
+        >
+          <option value="">Divide the page into panels…</option>
+          {PANEL_LAYOUTS.map((l) => (
+            <option key={l.value} value={l.value}>
+              {l.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {guides > 0 && (
+        <button className="btn small" onClick={removeGuides}>
+          <Icon name="trash" size={14} /> Remove panel frames ({guides})
+        </button>
+      )}
+      <input
+        ref={file}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) void placeImageFile(f)
+          e.target.value = ''
+        }}
+      />
+      {locked > 0 && (
+        <button className="btn small" onClick={unlockAll}>
+          <Icon name="unlock" size={14} /> Unlock all ({locked})
+        </button>
+      )}
     </Section>
   )
 }
@@ -475,7 +1246,11 @@ function ToolOptions() {
   const tool = useEditor((st) => st.tool)
   const shapeKind = useEditor((st) => st.shapeKind)
   const connectorKind = useEditor((st) => st.connectorKind)
-  const connectorDashed = useEditor((st) => st.connectorDashed)
+  const connectorLine = useEditor((st) => st.connectorLine)
+  const shapeText = useEditor((st) => st.shapeText)
+  const connectorFade = useEditor((st) => st.connectorFade)
+  const connectorRoute = useEditor((st) => st.connectorRoute)
+  const connectorWidth = useEditor((st) => st.connectorWidth)
   const membraneThickness = useEditor((st) => st.membraneThickness)
   const penColor = useEditor((st) => st.penColor)
   const penSize = useEditor((st) => st.penSize)
@@ -486,17 +1261,25 @@ function ToolOptions() {
     case 'shape':
       return (
         <Section title="Shape tool">
-          <Segmented label="Shape type" value={shapeKind} options={SHAPE_OPTIONS} onChange={(shapeKind) => set({ shapeKind })} />
-          <p className="hint">Drag on the page to draw. Hold Shift for a square or circle.</p>
+          <ShapePicker value={shapeKind} onChange={(shapeKind) => set({ shapeKind })} />
+          <Check checked={shapeText} onChange={(shapeText) => set({ shapeText })}>
+            Type text inside after drawing
+          </Check>
+          <p className="hint">Drag on the page to draw. Hold Shift for a square or circle. Double-tap any shape to type inside it.</p>
         </Section>
       )
     case 'connector':
       return (
         <Section title="Arrow tool">
           <Segmented label="Arrow type" value={connectorKind} options={KIND_OPTIONS} onChange={(connectorKind) => set({ connectorKind })} />
-          <Check checked={connectorDashed} onChange={(connectorDashed) => set({ connectorDashed })}>
-            Dashed (indirect / transport)
-          </Check>
+          <Field label="Line shape">
+            <Segmented label="Line shape" value={connectorRoute} options={ROUTE_OPTIONS} onChange={(connectorRoute) => set({ connectorRoute })} />
+          </Field>
+          <Thickness label="Line thickness" value={connectorWidth} onChange={(connectorWidth) => set({ connectorWidth })} />
+          <LineStyleControl label="Line style" value={lineStylePatch(connectorLine)} onStyle={(connectorLine) => set({ connectorLine })} />
+          <Field label="Fading">
+            <Segmented label="Fading" value={connectorFade ?? 'none'} options={FADE_OPTIONS} onChange={(fade) => set({ connectorFade: fade === 'none' ? null : fade })} />
+          </Field>
           <p className="hint">Drag from one icon to another. Ends that start or finish on an icon stay attached when you move it. Hold Alt to keep an end free.</p>
         </Section>
       )
@@ -563,22 +1346,27 @@ export function PropertiesPanel() {
       {!first && (
         <>
           <ToolOptions />
+          <AddToPage />
           <PageProps />
-          <p className="hint pad">Select something on the page to change its colours, size and order.</p>
+          <p className="hint pad">Select something on the page to change its colours, transparency, size and order.</p>
         </>
       )}
       {first && (
         <>
           {nodes.length > 1 && <p className="selection-count">{nodes.length} objects selected</p>}
-          {sameType && first.type === 'icon' && <IconProps node={first} />}
-          {sameType && first.type === 'shape' && <ShapeProps node={first} />}
-          {sameType && first.type === 'text' && <TextProps node={first} />}
+          {sameType && first.type === 'icon' && <IconProps node={first} single={nodes.length === 1} />}
+          {sameType && first.type === 'image' && <ImageProps node={first} />}
+          {sameType && first.type === 'chart' && nodes.length === 1 && <ChartProps key={first.id} node={first} />}
+          {sameType && first.type === 'shape' && <ShapeProps node={first} single={nodes.length === 1} />}
+          {sameType && first.type === 'text' && <TextProps node={first} single={nodes.length === 1} />}
           {sameType && first.type === 'connector' && <ConnectorProps node={first} />}
           {sameType && first.type === 'membrane' && <MembraneProps node={first} />}
           {sameType && first.type === 'stroke' && <StrokeProps node={first} />}
+          <Transparency nodes={nodes} />
           <Arrange nodes={nodes} />
         </>
       )}
+      <ObjectsList />
     </aside>
   )
 }

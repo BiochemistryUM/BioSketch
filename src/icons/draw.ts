@@ -1,6 +1,7 @@
 // Shared helpers for drawing built-in icons, so every pack uses the same palette and outline style.
 
 import type { IconDef } from '../model/types'
+import { BUILTIN_SOURCE } from './style'
 
 export const r1 = (v: number): number => Math.round(v * 10) / 10
 
@@ -43,7 +44,7 @@ export function def(
     body: `<g stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5">${inner}</g>`,
     license: 'CC0-1.0',
     author: 'BioSketch contributors',
-    source: 'BioSketch built-in library',
+    source: BUILTIN_SOURCE,
   }
 }
 
@@ -56,6 +57,8 @@ export const ellipse = (cx: number, cy: number, rx: number, ry: number, attrs: s
 export const rect = (x: number, y: number, w: number, h: number, rx: number, attrs: string): string =>
   `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${rx}" ${attrs}/>`
 export const line = (d: string, stroke: string, width: number): string => `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${width}"/>`
+/** A free shape: one path with its own fill and outline. */
+export const shape = (d: string, attrs: string): string => `<path d="${d}" ${attrs}/>`
 export const label = (x: number, y: number, size: number, colour: string, text: string): string =>
   `<text x="${x}" y="${y}" font-size="${size}" fill="${colour}" ${FONT}>${text}</text>`
 

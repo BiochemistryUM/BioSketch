@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { attributionLines, attributionText, exportRect, fileBase, renderSvg } from '../src/io/export'
+import { attributionLines, attributionText, exportRect, fileBase, mmPerUnit, renderSvg, scaleForDpi, smallestTextPt } from '../src/io/export'
 import { parseDoc, serializeDoc, validateDoc } from '../src/io/files'
 import { emptyDoc } from '../src/model/doc'
 import type { FigDoc, IconDef, IconNode, StrokeNode } from '../src/model/types'
@@ -154,11 +154,75 @@ describe('export', () => {
 
   it('credits icons that need it and only those', () => {
     const doc = withCustom()
-    expect(attributionLines(doc)).toEqual(['"Heart" by Servier Medical Art (https://smart.servier.com), licence: CC BY 4.0'])
+    // The icon in this figure was recoloured, which a Creative Commons credit has to mention.
+    expect(attributionLines(doc)).toEqual(['"Heart" (adapted) by Servier Medical Art (https://smart.servier.com), licence: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)'])
     expect(renderSvg(doc, { area: 'page', transparent: false, includeSketch: true }).svg).toContain('<desc>Created with BioSketch. Icons:')
     for (const t of TEMPLATES) expect(attributionText(t.build())).toBe('')
     const unknown = { ...doc, customIcons: { 'custom-1': { ...customIcon, license: '', author: '' } } }
     expect(attributionLines(unknown)[0]).toContain('unknown author')
+  })
+
+  it('marks a credited icon as adapted once it was recoloured or redrawn thicker', () => {
+    const doc = withCustom()
+    const asDrawn = { ...doc, nodes: doc.nodes.map((n) => (n.type === 'icon' ? { ...n, colors: undefined } : n)) }
+    expect(attributionLines(asDrawn)[0]).toMatch(/^"Heart" by Servier Medical Art/)
+    const thicker = { ...asDrawn, nodes: asDrawn.nodes.map((n) => (n.type === 'icon' ? { ...n, strokeScale: 2 } : n)) }
+    expect(attributionLines(thicker)[0]).toMatch(/^"Heart" \(adapted\) by Servier Medical Art/)
+    const other = { ...doc, customIcons: { 'custom-1': { ...customIcon, license: 'CC BY-SA 3.0' } } }
+    expect(attributionLines(other)[0]).toContain('licence: CC BY-SA 3.0 (https://creativecommons.org/licenses/by-sa/3.0/)')
+    const odd = { ...doc, customIcons: { 'custom-1': { ...customIcon, license: 'Ask the author' } } }
+    expect(attributionLines(odd)[0]).toMatch(/licence: Ask the author$/)
+  })
+
+  it('leaves hidden objects out of the export', () => {
+    const doc = withCustom()
+    const all = renderSvg(doc, { area: 'page', transparent: false, includeSketch: true }).svg
+    const hidden = { ...doc, nodes: doc.nodes.map((n) => ({ ...n, hidden: true })) }
+    const none = renderSvg(hidden, { area: 'page', transparent: false, includeSketch: true }).svg
+    expect(all.length).toBeGreaterThan(none.length)
+    expect(none).not.toContain('<path')
+  })
+
+  it('keeps hidden, names and outline thickness when a figure is read back, and refuses nonsense', () => {
+    const doc = withCustom()
+    const raw = JSON.parse(JSON.stringify(doc))
+    raw.nodes[0] = { ...raw.nodes[0], hidden: true, name: '  My receptor  ', strokeScale: 2.5 }
+    const back = validateDoc(raw).nodes[0]
+    expect(back.hidden).toBe(true)
+    expect(back.name).toBe('My receptor')
+    raw.nodes[0] = { ...raw.nodes[0], hidden: 'yes', name: 7, strokeScale: 500 }
+    const odd = validateDoc(raw).nodes[0]
+    expect(odd.hidden).toBeUndefined()
+    expect(odd.name).toBeUndefined()
+    if (odd.type === 'icon') expect(odd.strokeScale).toBe(10)
+  })
+
+  it('states the real size in the SVG when a printed width is set', () => {
+    const doc: FigDoc = { ...emptyDoc(), width: 1200, height: 800, widthMm: 85 }
+    const xml = parseXml(renderSvg(doc, { area: 'page', transparent: false, includeSketch: true }).svg)
+    expect(xml.documentElement.getAttribute('width')).toBe('85mm')
+    expect(xml.documentElement.getAttribute('height')).toBe('56.67mm')
+    expect(xml.documentElement.getAttribute('viewBox')).toBe('0 0 1200 800')
+    expect(mmPerUnit(emptyDoc())).toBeNull()
+  })
+
+  it('reports the smallest printed text size and the scale for a resolution', () => {
+    const doc: FigDoc = {
+      ...emptyDoc(),
+      width: 1200,
+      widthMm: 85,
+      nodes: [
+        { id: 't', type: 'text', x: 0, y: 0, text: 'Big', fontSize: 40, fill: '#000', align: 'left', rotation: 0 },
+        { id: 'u', type: 'text', x: 0, y: 0, text: 'Small', fontSize: 20, fill: '#000', align: 'left', rotation: 0 },
+      ],
+    }
+    // 20 units * 85/1200 mm per unit = 1.417 mm = 4.0 pt
+    expect(smallestTextPt(doc)).toBe(4)
+    expect(smallestTextPt({ ...doc, widthMm: undefined })).toBeNull()
+    expect(smallestTextPt({ ...doc, nodes: [] })).toBeNull()
+    // 85 mm at 300 dpi is 1004 pixels wide: scale 1004 / 1200.
+    expect(scaleForDpi(doc, 300)! * doc.width).toBeCloseTo(1003.9, 1)
+    expect(scaleForDpi(emptyDoc(), 300)).toBeNull()
   })
 
   it('builds safe file names', () => {

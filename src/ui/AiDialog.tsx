@@ -4,10 +4,16 @@
 //  - "Claude app": no key and no extra cost. BioSketch writes the request, the user pastes it into
 //    the Claude app they already use and pastes the answer back.
 //  - "API key": one click, but needs a paid Claude API key.
+//
+// The AI complements what the scientist asked for in three ways: it can describe its plan and ask
+// questions before building ("Plan first", Claude app route), it adds notes about the choices it
+// made, and BioSketch checks the layout itself and moves apart anything that overlaps.
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { buildChatRequest, readChatAnswer } from '../ai/bridge'
 import { AI_MODELS, AiError, DEFAULT_MODEL, requestScene } from '../ai/client'
+import { tidyScene } from '../ai/layout'
+import { applyRevision, docToScene, reviseTaskText } from '../ai/revise'
 import { sceneToNodes, type Scene } from '../ai/scene'
 import { download, fileBase, renderPng, renderPngBase64, renderSvg } from '../io/export'
 import { removeNodes } from '../model/doc'
@@ -19,9 +25,19 @@ import { Icon } from './Icon'
 const KEY_STORE = 'biosketch.apiKey'
 const MODEL_STORE = 'biosketch.aiModel'
 const VIA_STORE = 'biosketch.aiVia'
+const PLAN_STORE = 'biosketch.aiPlanFirst'
 const SKETCH_MAX_SIDE = 1400
 
 type Via = 'chat' | 'api'
+
+/** What is shown after a figure was built, when there is something to tell the scientist. */
+interface Outcome {
+  summary: string
+  /** The AI's own remarks: assumptions, stand-ins for missing icons, open questions. */
+  notes: string[]
+  /** What the layout check moved. */
+  fixes: string[]
+}
 
 const read = (key: string): string => {
   try {
@@ -86,7 +102,10 @@ async function copyImage(image: Promise<Blob>): Promise<boolean> {
 export function AiDialog() {
   const doc = useEditor((s) => s.doc)
   const strokes = useMemo(() => doc.nodes.filter((n) => n.type === 'stroke'), [doc])
-  const [mode, setMode] = useState<'sketch' | 'text'>(strokes.length ? 'sketch' : 'text')
+  const [mode, setMode] = useState<'sketch' | 'text' | 'revise'>(strokes.length ? 'sketch' : 'text')
+  // The page described the way the AI reads it, for changing an existing figure.
+  const snapshot = useMemo(() => docToScene(doc), [doc])
+  const canRevise = snapshot.elements.size > 0
   const [via, setVia] = useState<Via>(() => (read(VIA_STORE) === 'api' || read(KEY_STORE) || sessionKey ? 'api' : 'chat'))
   const [description, setDescription] = useState('')
   const [answer, setAnswer] = useState('')
@@ -98,6 +117,8 @@ export function AiDialog() {
   })
   const [replaceSketch, setReplaceSketch] = useState(true)
   const [replacePage, setReplacePage] = useState(false)
+  const [planFirst, setPlanFirst] = useState(() => read(PLAN_STORE) === 'yes')
+  const [outcome, setOutcome] = useState<Outcome | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const abort = useRef<AbortController | null>(null)
@@ -110,7 +131,10 @@ export function AiDialog() {
   }
 
   const fromSketch = mode === 'sketch'
-  const hasInput = fromSketch ? strokes.length > 0 : description.trim().length > 3
+  const revising = mode === 'revise'
+  const hasInput = fromSketch ? strokes.length > 0 : description.trim().length > 3 && (!revising || canRevise)
+  /** The request wording when changing the figure; undefined for "draw this". */
+  const reviseTask = revising ? reviseTaskText(snapshot.scene, description) : undefined
 
   const sketchPreview = useMemo(() => {
     if (!fromSketch || !strokes.length) return ''
@@ -118,7 +142,7 @@ export function AiDialog() {
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
   }, [doc, fromSketch, strokes.length])
 
-  const request = useMemo(() => (hasInput ? buildChatRequest(fromSketch, description) : ''), [hasInput, fromSketch, description])
+  const request = useMemo(() => (hasInput ? buildChatRequest(fromSketch, description, reviseTask, planFirst) : ''), [hasInput, fromSketch, description, reviseTask, planFirst])
 
   const chooseVia = (next: Via) => {
     setVia(next)
@@ -126,9 +150,29 @@ export function AiDialog() {
     write(VIA_STORE, next)
   }
 
+  /** After building: close with a short message, or stay open when there is more to tell. */
+  const finish = (summary: string, notes: string[], fixes: string[]) => {
+    useEditor.getState().set({ tool: 'select', selection: [] })
+    if (!notes.length && !fixes.length) {
+      useEditor.getState().set({ dialog: null })
+      toast(summary)
+      return
+    }
+    setOutcome({ summary, notes, fixes })
+  }
+
   /** Put the figure on the page as one undo step. */
-  const applyScene = (scene: Scene) => {
+  const applyScene = (answered: Scene) => {
     const s = useEditor.getState()
+    if (revising) {
+      // Apply the answer as changes to what is on the page, so hand-made styling survives.
+      // Nothing is moved by the layout check here: the scientist placed these things.
+      s.commit((d) => applyRevision(d, docToScene(d), answered))
+      finish('Figure changed. Undo brings the previous version back.', answered.notes, [])
+      return
+    }
+    // Check the layout before anything is drawn: nothing off the page, nothing on top of something else.
+    const { scene, fixes } = tidyScene(answered, s.doc)
     const nodes = sceneToNodes(scene, s.doc)
     // From a sketch: the strokes make way for the figure. From a description: optionally start from a clean page.
     const removeIds = fromSketch
@@ -142,10 +186,18 @@ export function AiDialog() {
       const base = removeNodes(d, removeIds)
       return { ...base, nodes: [...base.nodes, ...nodes] }
     })
-    s.set({ dialog: null, tool: 'select', selection: [] })
     const undoNote = removeIds.length ? (fromSketch ? ' Undo brings your sketch back.' : ' Undo brings the previous page back.') : ''
     const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
-    toast(`Figure created: ${count(scene.elements.length, 'element')}, ${count(scene.connectors.length, 'arrow')}.${undoNote}`)
+    finish(`Figure created: ${count(scene.elements.length, 'element')}, ${count(scene.connectors.length, 'arrow')}.${undoNote}`, scene.notes, fixes)
+  }
+
+  /** From the result: go straight on to asking for a change to the figure that was just built. */
+  const askForChange = () => {
+    setOutcome(null)
+    setMode('revise')
+    setDescription('')
+    setAnswer('')
+    setError('')
   }
 
   const runApi = async () => {
@@ -159,7 +211,7 @@ export function AiDialog() {
     abort.current = controller
     try {
       const imageBase64 = fromSketch ? await renderPngBase64(useEditor.getState().doc, SKETCH_MAX_SIDE) : undefined
-      applyScene(await requestScene({ apiKey: key, model, description, imageBase64, signal: controller.signal }))
+      applyScene(await requestScene({ apiKey: key, model, description, task: reviseTask, imageBase64, signal: controller.signal }))
     } catch (e) {
       if (!controller.signal.aborted) setError(e instanceof AiError || e instanceof Error ? e.message : 'Something went wrong.')
     } finally {
@@ -191,14 +243,60 @@ export function AiDialog() {
     }
   }
 
+  if (outcome) {
+    return (
+      <Modal title="Your figure is on the page" onClose={close}>
+        <p>{outcome.summary}</p>
+        {outcome.notes.length > 0 && (
+          <>
+            <h3 className="outcome-title">Notes from the AI</h3>
+            <ul className="outcome-list">
+              {outcome.notes.map((note, i) => (
+                <li key={i}>{note}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {outcome.fixes.length > 0 && (
+          <>
+            <h3 className="outcome-title">Layout check</h3>
+            <p className="hint">BioSketch checked the layout before drawing and changed this:</p>
+            <ul className="outcome-list">
+              {outcome.fixes.map((fix, i) => (
+                <li key={i}>{fix}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        <div className="modal-actions">
+          <button className="btn" onClick={askForChange}>
+            Ask for a change
+          </button>
+          <button className="btn primary" onClick={close}>
+            Done
+          </button>
+        </div>
+      </Modal>
+    )
+  }
+
   return (
     <Modal title="Create a figure with AI" onClose={close} wide>
       <div className="segmented big" role="group" aria-label="Start from">
         <button className={fromSketch ? 'active' : ''} aria-pressed={fromSketch} onClick={() => setMode('sketch')}>
           From my sketch
         </button>
-        <button className={!fromSketch ? 'active' : ''} aria-pressed={!fromSketch} onClick={() => setMode('text')}>
+        <button className={mode === 'text' ? 'active' : ''} aria-pressed={mode === 'text'} onClick={() => setMode('text')}>
           From a description
+        </button>
+        <button
+          className={revising ? 'active' : ''}
+          aria-pressed={revising}
+          disabled={!canRevise}
+          title={canRevise ? 'Ask the AI to change the figure on the page' : 'There is nothing on the page to change yet'}
+          onClick={() => setMode('revise')}
+        >
+          Change this figure
         </button>
       </div>
 
@@ -223,6 +321,22 @@ export function AiDialog() {
         ) : (
           <p className="notice">There is no sketch yet. Close this window, pick the sketch pen, and draw your process on the page first.</p>
         )
+      ) : revising ? (
+        <>
+          <label className="field">
+            <span className="field-label">What should change?</span>
+            <textarea
+              rows={4}
+              value={description}
+              placeholder="e.g. Add an inhibitor of AKT on the left, move the nucleus to the right, and rename ERK to ERK1/2."
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </label>
+          <p className="hint">
+            The AI sees {snapshot.elements.size} objects and {snapshot.connectors.size} arrows. Colours, rotation and anything else you set by hand are
+            kept. Pictures, charts, sketch strokes, imported or split icons, locked or hidden objects and arrows with a loose end are not shown to it and stay as they are.
+          </p>
+        </>
       ) : (
         <>
           <label className="field">
@@ -258,6 +372,17 @@ export function AiDialog() {
           <ol className="steps">
             <li>
               <span className="step-title">Copy the request{fromSketch ? ' and your sketch' : ''}</span>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={planFirst}
+                  onChange={(e) => {
+                    setPlanFirst(e.target.checked)
+                    write(PLAN_STORE, e.target.checked ? 'yes' : '')
+                  }}
+                />
+                <span>Plan first: Claude says what it will draw and asks its questions before it builds</span>
+              </label>
               <div className="row wrap">
                 <button className="btn small" disabled={!hasInput} onClick={onCopyRequest}>
                   <Icon name="copy" size={14} /> Copy request
@@ -286,10 +411,11 @@ export function AiDialog() {
               <span className="step-title">Ask Claude</span>
               <p className="hint">
                 Open the Claude app or claude.ai, start a new chat, paste the request{fromSketch ? ', add the sketch image to the same message' : ''} and send it.
+                {planFirst && ' Claude first describes its plan and may ask questions. Answer in the chat, correct what is wrong, and say “go ahead” when the plan is right.'}
               </p>
             </li>
             <li>
-              <span className="step-title">Paste Claude’s answer here</span>
+              <span className="step-title">Paste Claude’s {planFirst ? 'final answer' : 'answer'} here</span>
               <textarea
                 rows={4}
                 value={answer}

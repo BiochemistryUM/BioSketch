@@ -2,7 +2,8 @@
 
 import { rectContains, rectsIntersect, round, unionRects } from './geometry'
 import { findNode, getRect, resolveConnector, translateNode } from './nodes'
-import type { Endpoint, FigDoc, FigNode, Rect } from './types'
+import type { Endpoint, FigDoc, FigNode, Rect, TextNode } from './types'
+import { isPickable } from './types'
 
 export const uid = (): string => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3)
 
@@ -49,7 +50,41 @@ export function expandGroups(doc: FigDoc, ids: Iterable<string>): string[] {
   const set = new Set(ids)
   const groups = new Set<string>()
   for (const n of doc.nodes) if (set.has(n.id) && n.groupId) groups.add(n.groupId)
-  return doc.nodes.filter((n) => set.has(n.id) || (n.groupId && groups.has(n.groupId))).map((n) => n.id)
+  // Locked and hidden members stay out: such an object is never picked up through the group it belongs to.
+  return doc.nodes.filter((n) => set.has(n.id) || (isPickable(n) && n.groupId && groups.has(n.groupId))).map((n) => n.id)
+}
+
+/**
+ * What can be selected one step at a time (keyboard, objects list): each loose object, and each
+ * group as a whole, in drawing order. Locked and hidden objects are left out; pen strokes only when shown.
+ */
+export function selectionUnits(doc: FigDoc, withStrokes = true): string[][] {
+  const units: string[][] = []
+  const byGroup = new Map<string, string[]>()
+  for (const n of doc.nodes) {
+    if (!isPickable(n) || (!withStrokes && n.type === 'stroke')) continue
+    const group = n.groupId ? byGroup.get(n.groupId) : undefined
+    if (group) group.push(n.id)
+    else {
+      const unit = [n.id]
+      if (n.groupId) byGroup.set(n.groupId, unit)
+      units.push(unit)
+    }
+  }
+  return units
+}
+
+/**
+ * The selection one step further (`dir` 1) or back (-1) from the current one. Null when the step
+ * runs off the end, so that keyboard focus can leave the page.
+ */
+export function stepSelection(doc: FigDoc, selection: string[], dir: 1 | -1, withStrokes = true): string[] | null {
+  const units = selectionUnits(doc, withStrokes)
+  if (!units.length) return null
+  const chosen = new Set(selection)
+  const at = units.map((u, i) => (u.some((id) => chosen.has(id)) ? i : -1)).filter((i) => i >= 0)
+  const next = at.length ? (dir === 1 ? at[at.length - 1] + 1 : at[0] - 1) : dir === 1 ? 0 : units.length - 1
+  return units[next] ?? null
 }
 
 export type OrderMode = 'front' | 'back' | 'forward' | 'backward'
@@ -145,10 +180,11 @@ export function selectionRect(doc: FigDoc, ids: Iterable<string>): Rect | null {
   return rects.length ? unionRects(rects) : null
 }
 
+/** The area taken up by everything that would be exported (hidden objects and guides do not count). */
 export const contentRect = (doc: FigDoc): Rect | null =>
   selectionRect(
     doc,
-    doc.nodes.map((n) => n.id),
+    doc.nodes.filter((n) => !n.hidden && !n.guide).map((n) => n.id),
   )
 
 /** Selected nodes split into units that move together: each group is one unit. */
@@ -226,3 +262,25 @@ export function nodesInRect(doc: FigDoc, rect: Rect): string[] {
 export function usedIconIds(doc: FigDoc): string[] {
   return [...new Set(doc.nodes.flatMap((n) => (n.type === 'icon' ? [n.iconId] : [])))]
 }
+
+/** The next unused panel letter: "A" for a figure without any, otherwise the letter after the highest one. */
+export function nextPanelLetter(doc: FigDoc): string {
+  let highest = 64
+  for (const n of doc.nodes) {
+    if (n.type === 'text' && n.bold && /^[A-Z]$/.test(n.text.trim())) highest = Math.max(highest, n.text.trim().charCodeAt(0))
+  }
+  return String.fromCharCode(Math.min(90, highest + 1))
+}
+
+/**
+ * The separate label that belongs to a shape or icon: the only text in a group of exactly the two.
+ * Figures made before shapes could hold text label their boxes this way.
+ */
+export function labelPartner(doc: FigDoc, node: FigNode): TextNode | undefined {
+  if (!node.groupId) return undefined
+  const members = doc.nodes.filter((n) => n.groupId === node.groupId)
+  if (members.length !== 2) return undefined
+  const other = members.find((n) => n.id !== node.id)
+  return other?.type === 'text' ? other : undefined
+}
+

@@ -61,7 +61,7 @@ describe('Claude API request', () => {
     expect(body.fallbacks).toBe('default')
     expect(body.output_config.effort).toBe('medium')
     expect(body.output_config.format.type).toBe('json_schema')
-    expect(body.output_config.format.schema.required).toEqual(['title', 'elements', 'connectors'])
+    expect(body.output_config.format.schema.required).toEqual(['title', 'elements', 'connectors', 'notes'])
     expect(body.thinking).toBeUndefined()
     expect(body.tool_choice).toBeUndefined()
     expect(body.temperature).toBeUndefined()

@@ -2,7 +2,8 @@
 
 import { create } from 'zustand'
 import { emptyDoc } from './model/doc'
-import type { ConnectorKind, FigDoc, FigNode, IconDef, ShapeKind } from './model/types'
+import type { LineStyle } from './model/dash'
+import type { ConnectorFade, ConnectorKind, FigDoc, FigNode, IconDef, ShapeKind } from './model/types'
 
 export type Tool = 'select' | 'pan' | 'text' | 'shape' | 'connector' | 'membrane' | 'pen' | 'eraser'
 
@@ -13,12 +14,14 @@ export interface View {
   zoom: number
 }
 
-export type Dialog = null | 'export' | 'ai' | 'import-icon' | 'help'
+export type Dialog = null | 'export' | 'ai' | 'import-icon' | 'help' | 'figures'
 
 const HISTORY_LIMIT = 100
 const MERGE_WINDOW_MS = 1000
 
 export interface EditorState {
+  /** Id under which the open figure is saved in the browser. */
+  figureId: string
   doc: FigDoc
   selection: string[]
   tool: Tool
@@ -31,14 +34,24 @@ export interface EditorState {
   mergeTime: number
 
   connectorKind: ConnectorKind
-  connectorDashed: boolean
+  /** Line style of the next arrow drawn. */
+  connectorLine: LineStyle
+  /** Whether the next arrow drawn fades, and which way. */
+  connectorFade: ConnectorFade | null
+  connectorRoute: 'straight' | 'elbow'
+  /** Line thickness of the next arrow drawn. */
+  connectorWidth: number
   shapeKind: ShapeKind
+  /** Open the next shape drawn for typing text inside it. */
+  shapeText: boolean
   penColor: string
   penSize: number
   membraneThickness: number
   gridSnap: boolean
   showSketch: boolean
   editingTextId: string | null
+  /** The icon whose outline points are being moved, and the copy of the icon made for that. */
+  reshape: { nodeId: string; iconId: string } | null
   clipboard: FigNode[]
   clipboardIcons: Record<string, IconDef>
   /** Size of the canvas area on screen, in CSS pixels. */
@@ -62,6 +75,7 @@ export interface EditorState {
 }
 
 export const useEditor = create<EditorState>((set, get) => ({
+  figureId: 'unsaved',
   doc: emptyDoc(),
   selection: [],
   tool: 'select',
@@ -73,14 +87,19 @@ export const useEditor = create<EditorState>((set, get) => ({
   mergeTime: 0,
 
   connectorKind: 'arrow',
-  connectorDashed: false,
+  connectorLine: 'solid',
+  connectorFade: null,
+  connectorRoute: 'straight',
+  connectorWidth: 2,
   shapeKind: 'roundrect',
+  shapeText: false,
   penColor: '#3b4252',
   penSize: 4,
   membraneThickness: 26,
   gridSnap: false,
   showSketch: true,
   editingTextId: null,
+  reshape: null,
   clipboard: [],
   clipboardIcons: {},
   canvasSize: { w: 800, h: 600 },
@@ -170,6 +189,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       future: [],
       gestureStart: null,
       editingTextId: null,
+      reshape: null,
       mergeKey: null,
       tool: 'select',
       fitRequest: s.fitRequest + 1,

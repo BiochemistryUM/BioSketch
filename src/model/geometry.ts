@@ -187,3 +187,36 @@ export function resample(points: Point[], spacing: number, closed: boolean): Pat
   }
   return samples
 }
+
+/**
+ * Smart guides: nudge a moving rectangle so its edges or centre line up with other rectangles.
+ * Returns the correction to apply and where to draw the guide lines (null = no snap on that axis).
+ */
+export function snapToGuides(moving: Rect, targets: Rect[], threshold: number): { dx: number; dy: number; x: number | null; y: number | null } {
+  const best = (mine: number[], theirs: number[]): { d: number; at: number | null } => {
+    let d = 0
+    let at: number | null = null
+    let gap = Infinity
+    for (const m of mine) {
+      for (const t of theirs) {
+        // The closest candidate wins; on a tie the first one found (left or top edge) is kept.
+        const away = Math.abs(t - m)
+        if (away <= threshold && away < gap) {
+          gap = away
+          d = t - m
+          at = t
+        }
+      }
+    }
+    return { d, at }
+  }
+  const x = best(
+    [moving.x, moving.x + moving.w / 2, moving.x + moving.w],
+    targets.flatMap((t) => [t.x, t.x + t.w / 2, t.x + t.w]),
+  )
+  const y = best(
+    [moving.y, moving.y + moving.h / 2, moving.y + moving.h],
+    targets.flatMap((t) => [t.y, t.y + t.h / 2, t.y + t.h]),
+  )
+  return { dx: x.d, dy: y.d, x: x.at, y: y.at }
+}

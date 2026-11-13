@@ -8,14 +8,17 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { MAX_ZOOM, MIN_ZOOM, addIcon, addText, fitView, zoomBy } from '../actions'
-import { addNodes, expandGroups, nodesInRect, removeNodes, selectionRect, uid, updateNodes } from '../model/doc'
-import { clamp, dist, mid, normalizeRect, pointInRect, polylineLength, rectCenter, round, simplify, snapTo } from '../model/geometry'
-import { bendThrough, canAttach, dragHandle, findNode, getBox, getRect, resizeNode, rotateNode, translateNode } from '../model/nodes'
+import { addNodes, expandGroups, labelPartner, nodesInRect, removeNodes, selectionRect, uid, updateNodes } from '../model/doc'
+import { clamp, dist, mid, normalizeRect, pointInRect, polylineLength, rectCenter, round, simplify, snapTo, snapToGuides } from '../model/geometry'
+import { bendThrough, canAttach, dragHandle, findNode, getBox, getRect, resizeNode, rotateNode, rotateNodeAbout, scaleNode, translateNode } from '../model/nodes'
 import type { Box, ConnectorNode, Endpoint, FigDoc, FigNode, MembraneNode, Point, Rect, ShapeNode, StrokeNode } from '../model/types'
+import { isPickable } from '../model/types'
 import { DocNodes, strokePath } from '../render/DocNodes'
 import { membraneShape } from '../model/membrane'
 import { useEditor, type View } from '../store'
-import { Overlay } from './Overlay'
+import { drawnPaths, movePointInDoc } from '../icons/reshape'
+import { placeImageFile } from '../io/images'
+import { Overlay, type Guides } from './Overlay'
 import { TextEditor } from './TextEditor'
 import { input } from './input'
 
@@ -30,7 +33,11 @@ interface GestureBase {
 type Gesture = GestureBase &
   (
     | { type: 'pan'; startScreen: Point; startView: View }
-    | { type: 'move'; start: Point; ids: string[]; moved: boolean; hitId: string; wasSelected: boolean; shift: boolean; origin: Point | null }
+    | { type: 'move'; start: Point; ids: string[]; moved: boolean; hitId: string; wasSelected: boolean; shift: boolean; rect: Rect | null; targets: Rect[] | null }
+    | { type: 'multi-resize'; ids: string[]; anchor: Point; startDist: number }
+    | { type: 'multi-rotate'; ids: string[]; center: Point; startAngle: number }
+    | { type: 'label'; id: string; start: Point; offset: Point }
+    | { type: 'point'; iconId: string; path: number; index: number; startClient: Point; inverse: [number, number, number, number] }
     | { type: 'marquee'; start: Point; base: string[] }
     | { type: 'resize'; id: string; hx: number; hy: number; node: FigNode; box: Box }
     | { type: 'rotate'; id: string; node: FigNode; center: Point; startAngle: number }
@@ -45,6 +52,17 @@ type Gesture = GestureBase &
   )
 
 type Draft = { kind: 'membrane'; points: Point[] } | { kind: 'stroke'; points: [number, number, number][] } | null
+
+const NO_GUIDES: Guides = { x: null, y: null }
+
+/** What a moving selection can line up with: every other visible object, and the page itself. */
+function guideTargets(doc: FigDoc, moving: string[], showSketch: boolean): Rect[] {
+  const skip = new Set(moving)
+  const rects = doc.nodes
+    .filter((n) => !skip.has(n.id) && !n.hidden && n.type !== 'connector' && (showSketch || n.type !== 'stroke'))
+    .map((n) => getRect(n, doc))
+  return [...rects, { x: 0, y: 0, w: doc.width, h: doc.height }]
+}
 
 const angleDeg = (from: Point, to: Point): number => (Math.atan2(to.y - from.y, to.x - from.x) * 180) / Math.PI
 
@@ -106,6 +124,7 @@ export function Canvas() {
   const [attachHint, setAttachHint] = useState<Rect | null>(null)
   const [draft, setDraft] = useState<Draft>(null)
   const [panning, setPanning] = useState(false)
+  const [guides, setGuides] = useState<Guides>(NO_GUIDES)
 
   // ----- size, fit and wheel -----
 
@@ -202,6 +221,7 @@ export function Canvas() {
     setAttachHint(null)
     setDraft(null)
     setPanning(false)
+    setGuides(NO_GUIDES)
   }
 
   const abortGesture = () => {
@@ -221,7 +241,18 @@ export function Canvas() {
 
   const connectorFromDrag = (g: Extract<Gesture, { type: 'connector' }>, to: Endpoint): ConnectorNode => {
     const s = useEditor.getState()
-    return { id: g.id, type: 'connector', from: g.from, to, kind: s.connectorKind, dashed: s.connectorDashed || undefined, stroke: '#2b2f36', strokeWidth: 2 }
+    return {
+      id: g.id,
+      type: 'connector',
+      from: g.from,
+      to,
+      kind: s.connectorKind,
+      stroke: '#2b2f36',
+      strokeWidth: s.connectorWidth,
+      ...(s.connectorLine !== 'solid' ? { dashed: true as const, ...(s.connectorLine !== 'dashed' ? { dashStyle: s.connectorLine } : {}) } : {}),
+      ...(s.connectorFade ? { fade: s.connectorFade } : {}),
+      ...(s.connectorRoute === 'elbow' ? { route: 'elbow' as const } : {}),
+    }
   }
 
   // ----- pointer input -----
@@ -229,6 +260,8 @@ export function Canvas() {
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     // Touching the canvas finishes any text being edited (this can change the document, so do it first).
     if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) document.activeElement.blur()
+    // The page takes keyboard focus, so that Tab and the arrow keys act on its objects next.
+    svgRef.current?.focus({ preventScroll: true })
     const s = useEditor.getState()
     if (e.pointerType === 'pen') penSeen.current = true
     const local = toLocal(e)
@@ -267,8 +300,31 @@ export function Canvas() {
       case 'select': {
         const handle = target.closest('[data-handle]')?.getAttribute('data-handle')
         const single = s.selection.length === 1 ? findNode(s.doc, s.selection[0]) : undefined
-        if (handle && single) {
-          if (handle.startsWith('r:')) {
+        if (handle) {
+          const many = selectionRect(s.doc, s.selection)
+          if ((handle.startsWith('m:') || handle === 'mrot') && many) {
+            // Several objects are resized or turned together, about their shared outline.
+            const center = rectCenter(many)
+            if (handle === 'mrot') {
+              gesture.current = { ...base, type: 'multi-rotate', ids: s.selection, center, startAngle: angleDeg(center, world) }
+            } else {
+              const [, hx, hy] = handle.split(':')
+              const anchor = { x: center.x - (Number(hx) * many.w) / 2, y: center.y - (Number(hy) * many.h) / 2 }
+              gesture.current = { ...base, type: 'multi-resize', ids: s.selection, anchor, startDist: Math.max(1, dist(anchor, world)) }
+            }
+          } else if (!single) {
+            return
+          } else if (handle.startsWith('pt:') && s.reshape?.nodeId === single.id) {
+            // One point of the icon's outline. The drag is measured on screen and converted to the
+            // path's own coordinates, whatever the icon's size, turn, flip or inner groups.
+            const [, k, i] = handle.split(':')
+            const drawn = svgRef.current?.querySelector(`[data-id="${single.id}"]`)
+            const path = drawn ? (drawnPaths(drawn)[Number(k)] as SVGGraphicsElement | undefined) : undefined
+            const m = path?.getScreenCTM()?.inverse()
+            if (m) gesture.current = { ...base, type: 'point', iconId: s.reshape.iconId, path: Number(k), index: Number(i), startClient: { x: e.clientX, y: e.clientY }, inverse: [m.a, m.b, m.c, m.d] }
+          } else if (handle === 'lab' && single.type === 'connector') {
+            gesture.current = { ...base, type: 'label', id: single.id, start: world, offset: single.labelOffset ?? { x: 0, y: 0 } }
+          } else if (handle.startsWith('r:')) {
             const [, hx, hy] = handle.split(':')
             gesture.current = { ...base, type: 'resize', id: single.id, hx: Number(hx), hy: Number(hy), node: single, box: getBox(single, s.doc) }
           } else if (handle === 'rot') {
@@ -305,7 +361,8 @@ export function Canvas() {
             hitId,
             wasSelected,
             shift: e.shiftKey,
-            origin: rect ? { x: rect.x, y: rect.y } : null,
+            rect,
+            targets: null,
           }
         } else {
           if (!e.shiftKey) s.set({ selection: [] })
@@ -352,7 +409,7 @@ export function Canvas() {
     const reach = 9 / s.view.zoom
     let found = false
     for (const n of s.doc.nodes) {
-      if (n.type !== 'stroke' || removed.has(n.id)) continue
+      if (n.type !== 'stroke' || !isPickable(n) || removed.has(n.id)) continue
       if (n.points.some(([x, y]) => Math.hypot(x - world.x, y - world.y) <= reach + n.size / 2)) {
         removed.add(n.id)
         found = true
@@ -396,13 +453,24 @@ export function Canvas() {
           g.moved = true
           s.beginGesture()
         }
-        if (e.shiftKey && !g.shift) {
-          if (Math.abs(dx) > Math.abs(dy)) dy = 0
-          else dx = 0
-        }
-        if (s.gridSnap && g.origin) {
-          dx = snapTo(g.origin.x + dx, GRID) - g.origin.x
-          dy = snapTo(g.origin.y + dy, GRID) - g.origin.y
+        const constrained = e.shiftKey && !g.shift
+        const freeX = !constrained || Math.abs(dx) > Math.abs(dy)
+        const freeY = !constrained || !freeX
+        if (!freeX) dx = 0
+        if (!freeY) dy = 0
+        if (s.gridSnap && g.rect) {
+          if (freeX) dx = snapTo(g.rect.x + dx, GRID) - g.rect.x
+          if (freeY) dy = snapTo(g.rect.y + dy, GRID) - g.rect.y
+        } else if (g.rect && !e.altKey) {
+          // Smart guides: line up with the edges and centres of other objects and of the page.
+          const start = s.gestureStart ?? s.doc
+          g.targets ??= guideTargets(start, g.ids, s.showSketch)
+          const snap = snapToGuides({ ...g.rect, x: g.rect.x + dx, y: g.rect.y + dy }, g.targets, 6 / s.view.zoom)
+          if (freeX) dx += snap.dx
+          if (freeY) dy += snap.dy
+          setGuides({ x: freeX ? snap.x : null, y: freeY ? snap.y : null })
+        } else {
+          setGuides(NO_GUIDES)
         }
         s.transient((start) => updateNodes(start, g.ids, (n) => translateNode(n, dx, dy)))
         return
@@ -410,12 +478,38 @@ export function Canvas() {
       case 'marquee': {
         const rect = normalizeRect(g.start, world)
         setMarquee(rect)
-        const hit = nodesInRect(s.doc, rect).filter((id) => s.showSketch || findNode(s.doc, id)?.type !== 'stroke')
+        const hit = nodesInRect(s.doc, rect).filter((id) => {
+          const n = findNode(s.doc, id)
+          return !!n && isPickable(n) && (s.showSketch || n.type !== 'stroke')
+        })
         s.set({ selection: [...new Set([...g.base, ...expandGroups(s.doc, hit)])] })
         return
       }
+      case 'multi-resize': {
+        const factor = clamp(dist(g.anchor, world) / g.startDist, 0.05, 20)
+        s.transient((start) => updateNodes(start, g.ids, (n) => scaleNode(n, factor, g.anchor, start)))
+        return
+      }
+      case 'multi-rotate': {
+        let delta = angleDeg(g.center, world) - g.startAngle
+        if (e.shiftKey) delta = Math.round(delta / 15) * 15
+        s.transient((start) => updateNodes(start, g.ids, (n) => rotateNodeAbout(n, delta, g.center, start)))
+        return
+      }
+      case 'point': {
+        const sx = e.clientX - g.startClient.x
+        const sy = e.clientY - g.startClient.y
+        const [a, b, c, d] = g.inverse
+        s.transient((start) => movePointInDoc(start, g.iconId, g.path, g.index, a * sx + c * sy, b * sx + d * sy))
+        return
+      }
+      case 'label': {
+        const labelOffset = { x: round(g.offset.x + world.x - g.start.x, 1), y: round(g.offset.y + world.y - g.start.y, 1) }
+        s.transient((start) => updateNodes(start, [g.id], (n) => (n.type === 'connector' ? { ...n, labelOffset } : n)))
+        return
+      }
       case 'resize': {
-        const lockByDefault = g.node.type === 'icon' || g.node.type === 'text'
+        const lockByDefault = g.node.type === 'icon' || g.node.type === 'text' || g.node.type === 'image'
         const keep = lockByDefault ? !e.shiftKey : e.shiftKey
         const box = dragHandle(g.box, g.hx, g.hy, snapPoint(world), keep)
         s.transient((start) => updateNodes(start, [g.id], () => resizeNode(g.node, g.box, box)))
@@ -528,6 +622,14 @@ export function Canvas() {
         if (lastTap.current.id === g.hitId && now - lastTap.current.time < 420) {
           const node = findNode(s.doc, g.hitId)
           if (node?.type === 'text') s.set({ selection: [node.id], editingTextId: node.id })
+          // Double-tapping a shape types inside it, grouped or not. A box from an older figure has
+          // its words in a separate label grouped with it: then that label is the one to type in.
+          else if (node?.type === 'shape') {
+            const words = node.label ? undefined : labelPartner(s.doc, node)
+            s.set({ selection: [words?.id ?? node.id], editingTextId: words?.id ?? node.id })
+          }
+          // Double-tapping one member of a group selects just that member, so it can be edited alone.
+          else if (node?.groupId) s.set({ selection: [node.id] })
           lastTap.current = { id: '', time: 0 }
         } else {
           lastTap.current = { id: g.hitId, time: now }
@@ -536,6 +638,10 @@ export function Canvas() {
       }
       case 'resize':
       case 'rotate':
+      case 'multi-resize':
+      case 'multi-rotate':
+      case 'label':
+      case 'point':
       case 'endpoint':
       case 'bend':
       case 'erase':
@@ -546,7 +652,8 @@ export function Canvas() {
         if (node.w < 6 || node.h < 6) node = { ...node, x: g.start.x - 70, y: g.start.y - 45, w: 140, h: 90 }
         s.transient((start) => addNodes(start, [node]))
         s.endGesture()
-        s.set({ selection: [g.id], tool: 'select' })
+        // With "Type text inside" on, the new shape opens for typing straight away.
+        s.set({ selection: [g.id], tool: 'select', ...(s.shapeText ? { editingTextId: g.id } : {}) })
         return
       }
       case 'connector': {
@@ -584,10 +691,19 @@ export function Canvas() {
   // ----- dropping icons from the library -----
 
   const onDrop = (e: React.DragEvent) => {
+    const at = toWorld(toLocal(e))
     const id = e.dataTransfer.getData(ICON_MIME)
-    if (!id) return
-    e.preventDefault()
-    addIcon(id, toWorld(toLocal(e)))
+    if (id) {
+      e.preventDefault()
+      addIcon(id, at)
+      return
+    }
+    // A picture file dragged in from the computer.
+    const file = Array.from(e.dataTransfer.files).find((f) => f.type.startsWith('image/'))
+    if (file) {
+      e.preventDefault()
+      void placeImageFile(file, at)
+    }
   }
 
   const draftMembrane =
@@ -600,13 +716,16 @@ export function Canvas() {
       className="canvas-wrap"
       ref={wrapRef}
       onDragOver={(e) => {
-        if (e.dataTransfer.types.includes(ICON_MIME)) e.preventDefault()
+        if (e.dataTransfer.types.includes(ICON_MIME) || e.dataTransfer.types.includes('Files')) e.preventDefault()
       }}
       onDrop={onDrop}
     >
       <svg
         ref={svgRef}
         className={`canvas tool-${tool}${panning ? ' panning' : ''}`}
+        tabIndex={0}
+        role="application"
+        aria-label="Figure page. Tab selects the next object, arrow keys move it, Enter edits a text, Delete removes it."
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -624,7 +743,7 @@ export function Canvas() {
           )}
           {draft?.kind === 'stroke' && <path d={strokePath(draft.points, penSize)} fill={penColor} pointerEvents="none" />}
         </g>
-        <Overlay marquee={marquee} attachHint={attachHint} />
+        <Overlay marquee={marquee} attachHint={attachHint} guides={guides} />
       </svg>
       {editingTextId && <TextEditor key={editingTextId} id={editingTextId} />}
     </div>

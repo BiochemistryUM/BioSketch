@@ -2,7 +2,7 @@
 // biology itself (not from any other collection's artwork) and released as CC0.
 
 import type { IconDef } from '../model/types'
-import { C, MEM_FILL, MEM_LINE, circle, def, ellipse, fill, line, membrane, network, r1, rect, ribbon } from './draw'
+import { C, MEM_FILL, MEM_LINE, circle, def, ellipse, fill, line, membrane, network, r1, rect, ribbon, shape } from './draw'
 
 const ORGANELLES = 'Organelles'
 const MEMBRANE = 'Membrane & junctions'
@@ -105,6 +105,32 @@ function coat(cx: number, cy: number, inner: number, outer: number, from: number
 const PURPLE = fill(C.nuc, C.nucLine)
 const GREEN = fill(C.green, C.greenLine)
 
+/**
+ * A mitochondrion cut open, with each layer a shape of its own colour: the outer membrane (a band
+ * between two outlines), the intermembrane space, the inner membrane folded into cristae, and the
+ * matrix inside it with its DNA and ribosomes.
+ */
+function mitochondrionLayers(): string {
+  // The inner membrane runs along the outer one and folds inwards as fingers, from the top and
+  // the bottom in turn. Each fold is open towards the intermembrane space.
+  const fold = 6
+  let d = 'M50 18'
+  for (const x of [57, 105, 153]) d += `H${x - fold}V50C${x - fold} 58 ${x + fold} 58 ${x + fold} 50V18`
+  d += 'H160C177.7 18 192 32.3 192 50C192 67.7 177.7 82 160 82'
+  for (const x of [129, 81]) d += `H${x + fold}V50C${x + fold} 42 ${x - fold} 42 ${x - fold} 50V82`
+  d += 'H50C32.3 82 18 67.7 18 50C18 32.3 32.3 18 50 18Z'
+  const ribosome = fill('#a8763f', '#a8763f', 'stroke-width="1"')
+  return (
+    rect(3, 3, 204, 94, 47, fill(C.mito, C.mitoLine)) +
+    rect(9, 9, 192, 82, 41, fill('#fff3ea', C.mitoLine, 'stroke-width="2"')) +
+    shape(d, fill('#fdeab5', C.redLine)) +
+    ribbon(d, C.redLine, C.red, 2) +
+    circle(34.5, 50, 7, `fill="none" stroke="${C.nucLine}" stroke-width="2.2"`) +
+    circle(81, 30, 1.8, ribosome) + circle(129, 30, 1.8, ribosome) + circle(57, 70, 1.8, ribosome) + circle(105, 70, 1.8, ribosome) +
+    circle(153, 70, 1.8, ribosome) + circle(177, 41, 1.8, ribosome) + circle(175, 60, 1.8, ribosome) + circle(36, 32, 1.8, ribosome) + circle(37, 68, 1.8, ribosome)
+  )
+}
+
 export const ORGANELLE_ICONS: IconDef[] = [
   // ---- Organelles and cell structures ----
   def('nuclear-pore', 'Nuclear pore', ORGANELLES, 'nuclear pore complex,npc,nuclear envelope,import,export,nucleoporin', 100, 80,
@@ -114,6 +140,7 @@ export const ORGANELLE_ICONS: IconDef[] = [
   def('nucleolus', 'Nucleolus', ORGANELLES, 'nucleolus,ribosome biogenesis,rrna,nuclear body', 80, 80,
     `<path d="M42 6C60 4 76 20 74 42C72 62 58 76 38 74C20 72 6 58 8 38C10 20 24 8 42 6Z" ${fill('#9c86d6', C.nucLine)}/>` +
       dot(30, 30, 9, C.nuc) + dot(50, 44, 11, C.nuc) + dot(32, 55, 7, C.nuc)),
+  def('mitochondrion-layers', 'Mitochondrion (outer and inner membrane)', ORGANELLES, 'mitochondria,omm,imm,outer membrane,inner membrane,matrix,cristae,intermembrane space,mtdna,cut-away,cross-section', 210, 100, mitochondrionLayers()),
   def('mitochondrial-network', 'Mitochondrial network', ORGANELLES, 'mitochondria,network,fusion,fission,tubular,dynamics', 130, 90,
     network(['M10 72C30 62 40 42 60 46C80 50 92 30 118 22', 'M60 46C66 62 86 72 114 74', 'M36 56C32 38 24 28 12 18'], C.mitoLine, C.mito, 9)),
   def('smooth-er', 'Smooth ER', ORGANELLES, 'smooth endoplasmic reticulum,ser,tubules,lipid synthesis,calcium store', 110, 90,

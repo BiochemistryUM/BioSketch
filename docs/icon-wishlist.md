@@ -2,7 +2,7 @@
 
 A checklist of subjects worth having in the BioSketch library, compiled on 12 November 2026 from the subject areas covered by open icon collections. It lists names of biological things only; no artwork from any collection was copied or used as a drawing reference.
 
-**320 subjects:** 285 already in BioSketch, 0 to draw in the BioSketch style, 35 better imported from an open collection.
+**360 subjects:** 340 already in BioSketch, 0 to draw in the BioSketch style, 14 found only in the icon packs (Bioicons CC0 and Servier Medical Art), 6 still better imported from an open collection. The second video survey (last section) added 52 subjects, all now drawn; 13 of them are subjects the tables above used to list as "Icon pack" or "Import" (the main organs, thymus, human outline, fruit fly), so those rows now read "In BioSketch".
 
 ## How to read it
 
@@ -10,6 +10,7 @@ A checklist of subjects worth having in the BioSketch library, compiled on 12 No
 |---|---|
 | In BioSketch | Already in the built-in library. |
 | Draw | Simple and schematic enough to draw as an original CC0 icon in the BioSketch style. |
+| Icon pack | In one of the collections under "More icons": Bioicons (public domain, CC0) or Servier Medical Art (CC BY 3.0, credit written into the export), built with `scripts/bioicons.mjs`. |
 | Import | Anatomical or detailed; an openly licensed illustration will look better than a hand-coded icon. |
 
 ## Collections surveyed
@@ -112,7 +113,7 @@ Bioicons was read from its public file listing; the others from their category p
 | Retrovirus or lentivirus | In BioSketch |
 | AAV particle | In BioSketch |
 | Fungal hypha | In BioSketch |
-| Malaria parasite | Import |
+| Malaria parasite | In BioSketch |
 
 ## Organelles and cell structures
 
@@ -120,6 +121,7 @@ Bioicons was read from its public file listing; the others from their category p
 |---|---|
 | Nucleus | In BioSketch |
 | Mitochondrion | In BioSketch |
+| Mitochondrion with outer and inner membrane, cristae and matrix | In BioSketch |
 | Endoplasmic reticulum | In BioSketch |
 | Golgi apparatus | In BioSketch |
 | Lysosome | In BioSketch |
@@ -308,38 +310,38 @@ Bioicons was read from its public file listing; the others from their category p
 | Tumour | In BioSketch |
 | Adipose tissue | In BioSketch |
 | Bone marrow | In BioSketch |
-| Heart | Import |
-| Lung | Import |
-| Liver | Import |
-| Kidney | Import |
-| Brain | Import |
+| Heart | In BioSketch |
+| Lung | In BioSketch |
+| Liver | In BioSketch |
+| Kidney | In BioSketch |
+| Brain | In BioSketch |
 | Spinal cord | Import |
-| Intestine | Import |
-| Stomach | Import |
-| Pancreas | Import |
-| Spleen | Import |
-| Lymph node | Import |
-| Thymus | Import |
+| Intestine | In BioSketch |
+| Stomach | In BioSketch |
+| Pancreas | In BioSketch |
+| Spleen | In BioSketch |
+| Lymph node | In BioSketch |
+| Thymus | In BioSketch |
 | Bone | Import |
-| Skeletal muscle | Import |
-| Eye | Import |
+| Skeletal muscle | Icon pack |
+| Eye | In BioSketch |
 
 ## Model organisms
 
 | Subject | Status |
 |---|---|
 | Mouse | In BioSketch |
-| Rat | Import |
-| Human outline | Import |
+| Rat | Icon pack |
+| Human outline | In BioSketch |
 | Zebrafish | Import |
-| Fruit fly | Import |
-| C. elegans | Import |
-| Xenopus | Import |
-| Rabbit | Import |
-| Pig | Import |
-| Monkey | Import |
+| Fruit fly | In BioSketch |
+| C. elegans | Icon pack |
+| Xenopus | Icon pack |
+| Rabbit | Icon pack |
+| Pig | Icon pack |
+| Monkey | Icon pack |
 | Chick embryo | Import |
-| Arabidopsis | Import |
+| Arabidopsis | Icon pack |
 
 ## Lab equipment
 
@@ -382,13 +384,13 @@ Bioicons was read from its public file listing; the others from their category p
 | Freezer | In BioSketch |
 | Liquid nitrogen tank | In BioSketch |
 | Biosafety cabinet | Import |
-| Flow cytometer | Import |
-| Sequencer | Import |
-| Mass spectrometer | Import |
-| Confocal microscope | Import |
+| Flow cytometer | Icon pack |
+| Sequencer | Icon pack |
+| Mass spectrometer | Icon pack |
+| Confocal microscope | Icon pack |
 | Electron microscope | Import |
-| Chromatography system | Import |
-| Bioreactor | Import |
+| Chromatography system | Icon pack |
+| Bioreactor | Icon pack |
 
 ## Figure helpers
 
@@ -413,3 +415,94 @@ Bioicons was read from its public file listing; the others from their category p
 | Heat map | In BioSketch |
 | Flow cytometry plot | In BioSketch |
 | QPCR curve | In BioSketch |
+
+## From the second video survey (13 November 2026)
+
+Subjects noted while sampling 45 more popular-science biology videos (twelve small frames each) and
+checked against the built-in library. As with the first survey, the videos supplied names of
+subjects only; nothing was copied or used as a drawing reference. All 52 were drawn on
+13 November 2026 as original schematics (`src/icons/pack-organs.ts`, `pack-organisms.ts` and
+`pack-extra.ts`). "Also in a pack" means the icon collections have a version too, so the built-in
+drawing adds the BioSketch look and a CC0 licence.
+
+### Organs and the body
+
+| Subject | Status |
+|---|---|
+| Brain | In BioSketch (also in a pack) |
+| Heart | In BioSketch (also in a pack) |
+| Lungs | In BioSketch (also in a pack) |
+| Liver | In BioSketch (also in a pack) |
+| Kidney | In BioSketch (also in a pack) |
+| Stomach | In BioSketch (also in a pack) |
+| Intestine | In BioSketch (also in a pack) |
+| Pancreas | In BioSketch (also in a pack) |
+| Spleen | In BioSketch (also in a pack) |
+| Eye | In BioSketch (also in a pack) |
+| Thymus | In BioSketch |
+| Adrenal gland | In BioSketch |
+| Human body outline | In BioSketch |
+| Fetus | In BioSketch |
+| Hair follicle | In BioSketch |
+| Taste bud | In BioSketch |
+| Ciliated airway lining | In BioSketch |
+
+### Microbes and viruses
+
+| Subject | Status |
+|---|---|
+| Bullet-shaped virus (rabies) | In BioSketch |
+| Giant virus | In BioSketch |
+| Brick-shaped virus (pox) | In BioSketch (also in a pack) |
+| Mycobacterium (tuberculosis) | In BioSketch |
+| Granuloma | In BioSketch |
+| Prophage (phage DNA in a bacterial genome) | In BioSketch |
+| Bacterium bursting (lysis) | In BioSketch |
+| Flatworm (planarian) | In BioSketch |
+
+### Molecules and genetics
+
+| Subject | Status |
+|---|---|
+| Peptide hormone (insulin) | In BioSketch |
+| Oncogene and tumour suppressor (gene on a chromosome) | In BioSketch |
+| Cellulose fibre | In BioSketch |
+
+### Plants and organisms
+
+| Subject | Status |
+|---|---|
+| Leaf | In BioSketch (also in a pack) |
+| Seedling | In BioSketch (also in a pack) |
+| Tree | In BioSketch |
+| Stomata | In BioSketch |
+| Root with fungal partners (mycorrhiza) | In BioSketch |
+| Mushroom | In BioSketch (also in a pack) |
+| Cereal crop | In BioSketch (also in a pack) |
+| Fruit fly | In BioSketch (also in a pack) |
+| Bee | In BioSketch |
+| Ant | In BioSketch |
+| Cow | In BioSketch |
+| Bird | In BioSketch |
+
+### Medical and lab
+
+| Subject | Status |
+|---|---|
+| Injection pen | In BioSketch |
+| Blood pressure gauge | In BioSketch |
+| Patient monitor | In BioSketch |
+| Rapid test (lateral flow) | In BioSketch |
+| Pill bottle | In BioSketch |
+| Laser beam | In BioSketch |
+| Radiation sign | In BioSketch |
+| Protective suit | In BioSketch |
+
+### Figure helpers
+
+| Subject | Status |
+|---|---|
+| Phylogenetic tree | In BioSketch |
+| Pedigree (family tree) | In BioSketch |
+| Globe | In BioSketch |
+| Hourglass | In BioSketch |

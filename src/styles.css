@@ -356,6 +356,24 @@ h2 {
   cursor: default;
 }
 
+.canvas:focus {
+  outline: none;
+}
+
+.canvas:focus-visible {
+  outline: 2px solid var(--accent, #2f6f5e);
+  outline-offset: -2px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .canvas.tool-pan {
   cursor: grab;
 }
@@ -425,8 +443,26 @@ h2 {
   fill: var(--select);
 }
 
+.handle.point {
+  fill: #fff;
+  stroke: #c2410c;
+  cursor: move;
+}
+
+.handle.label {
+  fill: #fff1cf;
+  stroke: #c98f12;
+  cursor: move;
+}
+
 .handle-hit {
   fill: transparent;
+}
+
+.guide {
+  stroke: #e0389a;
+  stroke-width: 1;
+  stroke-dasharray: 5 3;
 }
 
 .marquee {
@@ -509,6 +545,27 @@ h2 {
   border-radius: 999px;
   background: #fff;
   font-size: 12px;
+}
+
+.pack-choice {
+  margin-top: 8px;
+}
+
+.pack-choice select {
+  width: 100%;
+}
+
+.icon-licence {
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted, #5b6470);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.chip.pack {
+  border-style: dashed;
 }
 
 .chip.active {
@@ -747,6 +804,131 @@ input[type='checkbox'] {
   background: var(--accent-weak);
   color: var(--accent);
   font-weight: 650;
+}
+
+.segmented.wrap {
+  flex-wrap: wrap;
+}
+
+.segmented.wrap button {
+  flex: 1 0 auto;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: -1px;
+}
+
+.between {
+  align-self: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.bracket-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.bracket-row .text-line {
+  min-width: 0;
+}
+
+.bracket-row select {
+  min-width: 0;
+  width: 100%;
+}
+
+.table-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 10;
+}
+
+.chart-summary {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  font-size: 12.5px;
+}
+
+.chart-summary li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.color.small {
+  width: 26px;
+  height: 22px;
+  flex: none;
+}
+
+.shape-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.shape-picker button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+}
+
+.shape-picker button.active {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+
+.symbols {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.symbols summary {
+  cursor: pointer;
+  color: var(--muted, #6b7785);
+}
+
+.symbol-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 6px;
+}
+
+.symbol {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.symbol:hover {
+  background: var(--accent-weak);
+}
+
+.segmented.line-styles button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 6px 7px;
 }
 
 .segmented.big {
@@ -1038,6 +1220,21 @@ input[type='checkbox'] {
   margin: 2px 0 0;
 }
 
+.outcome-title {
+  margin: 14px 0 4px;
+  font-size: 14px;
+}
+
+.outcome-list {
+  margin: 0 0 6px;
+  padding-left: 20px;
+  line-height: 1.45;
+}
+
+.outcome-list li {
+  margin: 3px 0;
+}
+
 .request-text {
   margin-top: 6px;
   font-size: 12.5px;
@@ -1052,6 +1249,50 @@ input[type='checkbox'] {
 .request-text textarea {
   font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text);
+}
+
+.figure-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.figure-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.figure-list li:last-child {
+  border-bottom: 0;
+}
+
+.figure-list li.current {
+  background: var(--accent-weak);
+}
+
+.figure-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.figure-info strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.figure-info small {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .help-grid {
@@ -1120,9 +1361,83 @@ kbd {
 
 /* ---------- touch devices: larger targets ---------- */
 
+.objects > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.object-list {
+  max-height: 320px;
+  margin: 8px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.object-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+}
+
+.object-row.selected {
+  background: var(--accent-weak);
+}
+
+.object-row.dim .object-name {
+  color: var(--muted);
+}
+
+.object-name {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 6px;
+  border: 0;
+  background: none;
+  overflow: hidden;
+  font-size: 12.5px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.object-rename {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  font-size: 12.5px;
+}
+
+.object-tool {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+}
+
+.object-tool.on {
+  color: var(--accent);
+}
+
 @media (pointer: coarse) {
   :root {
     --rail: 58px;
+  }
+  .object-name,
+  .object-tool,
+  .object-rename {
+    height: 40px;
+  }
+  .object-tool {
+    width: 40px;
   }
   .tool-btn {
     width: 46px;
@@ -1136,7 +1451,26 @@ kbd {
     height: 40px;
   }
   .btn.small {
-    height: 36px;
+    height: 40px;
+  }
+  .segmented button {
+    min-height: 40px;
+  }
+  .check {
+    min-height: 40px;
+  }
+  .shape-picker button {
+    width: 44px;
+    height: 40px;
+  }
+  .color.small {
+    width: 44px;
+    height: 40px;
+  }
+  .symbol {
+    width: 40px;
+    height: 40px;
+    font-size: 17px;
   }
   .icon-only {
     width: 40px;
@@ -1150,11 +1484,11 @@ kbd {
   select,
   .text-line,
   .search {
-    height: 38px;
+    height: 40px;
   }
   .color {
     width: 44px;
-    height: 38px;
+    height: 40px;
   }
   .menu-item {
     padding: 12px 10px;

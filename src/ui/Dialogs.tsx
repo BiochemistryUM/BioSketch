@@ -3,7 +3,20 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { addCustomIcon, addIcon } from '../actions'
 import { extractColors, parseSvgFile, prefixIds, type ParsedSvg } from '../icons/svg'
-import { attributionLines, attributionText, download, exportRect, fileBase, renderPng, renderSvg, type ExportOptions } from '../io/export'
+import {
+  attributionLines,
+  attributionText,
+  download,
+  exportRect,
+  fileBase,
+  printFigure,
+  renderPptx,
+  renderPng,
+  renderSvg,
+  scaleForDpi,
+  smallestTextPt,
+  type ExportOptions,
+} from '../io/export'
 import { serializeDoc } from '../io/files'
 import { uid } from '../model/doc'
 import { toast, useEditor } from '../store'
@@ -52,6 +65,13 @@ export function ExportDialog() {
   const [busy, setBusy] = useState(false)
 
   const rect = exportRect(doc, opts.area, opts.includeSketch)
+  // With a printed width set, offer the resolutions journals ask for.
+  const dpiScales = [300, 600].flatMap((dpi) => {
+    const s = scaleForDpi(doc, dpi)
+    return s ? [{ value: s, label: `${dpi} dpi` }] : []
+  })
+  const scales = [...[1, 2, 3, 4].map((s) => ({ value: s, label: `${s}×` })), ...dpiScales]
+  const smallest = smallestTextPt(doc)
   const credits = attributionLines(doc)
   const creditText = attributionText(doc)
   const preview = useMemo(() => {
@@ -70,6 +90,17 @@ export function ExportDialog() {
       toast('PNG downloaded')
     } catch (e) {
       toast(e instanceof Error ? e.message : 'The image could not be created.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const savePptx = async () => {
+    setBusy(true)
+    try {
+      download(await renderPptx(doc, opts), `${fileBase(doc)}.pptx`)
+      toast('PowerPoint file downloaded')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'The PowerPoint file could not be created.')
     } finally {
       setBusy(false)
     }
@@ -108,15 +139,23 @@ export function ExportDialog() {
             <button className="btn primary" onClick={saveSvg}>
               <Icon name="export" size={16} /> SVG (vector)
             </button>
-            <p className="hint">Best for journals and for further editing in Inkscape or Illustrator.</p>
+            <p className="hint">Best for further editing in Inkscape or Illustrator.</p>
+            <button className="btn primary" onClick={() => printFigure(doc, opts)}>
+              <Icon name="pdf" size={16} /> PDF (vector)
+            </button>
+            <p className="hint">Opens the print window: choose “Save as PDF” there. The page is set to the figure’s size.</p>
+            <button className="btn primary" onClick={savePptx} disabled={busy}>
+              <Icon name="template" size={16} /> PowerPoint (slide)
+            </button>
+            <p className="hint">One slide with the figure as a sharp picture you can resize. It is not editable shape by shape in PowerPoint.</p>
             <div className="row">
               <button className="btn primary" onClick={savePng} disabled={busy}>
                 <Icon name="export" size={16} /> {busy ? 'Rendering…' : 'PNG (image)'}
               </button>
               <select aria-label="PNG resolution" value={scale} onChange={(e) => setScale(Number(e.target.value))}>
-                {[1, 2, 3, 4].map((s) => (
-                  <option key={s} value={s}>
-                    {s}× · {Math.round(rect.w * s)} × {Math.round(rect.h * s)} px
+                {scales.map((s) => (
+                  <option key={s.label} value={s.value}>
+                    {s.label} · {Math.round(rect.w * s.value)} × {Math.round(rect.h * s.value)} px
                   </option>
                 ))}
               </select>
@@ -134,6 +173,16 @@ export function ExportDialog() {
         </div>
       </div>
       <section className="credits">
+        <h2>Print size</h2>
+        {doc.widthMm ? (
+          <p className={smallest !== null && smallest < 5 ? 'notice' : 'hint'}>
+            Printed at {doc.widthMm} mm wide ({Math.round(((doc.widthMm * doc.height) / doc.width) * 10) / 10} mm high).
+            {smallest !== null &&
+              ` The smallest text will be ${smallest} pt${smallest < 5 ? ', which is below the 5 pt most journals accept. Make the labels larger or the figure wider.' : '.'}`}
+          </p>
+        ) : (
+          <p className="hint">No printed width is set. Set one under Page in the right-hand panel (with nothing selected) to check text sizes and export at 300 or 600 dpi.</p>
+        )}
         <h2>Attribution</h2>
         {credits.length ? (
           <>
@@ -273,10 +322,20 @@ export function HelpDialog() {
           <ul className="help-list">
             <li>Tap an icon in the library to place it, or drag it onto the page.</li>
             <li>Drag the corner handles to resize, the round handle to rotate. Hold Shift to change proportions or snap rotation.</li>
-            <li>Double-tap a label to edit it.</li>
-            <li>With the arrow tool, drag from one icon to another. Attached arrows follow their icons.</li>
+            <li>Double-tap a label to edit it. In labels, Ca^{'{2+}'} gives a superscript, H_{'{2}'}O a subscript, *italic* and **bold**.</li>
+            <li>Select several objects to resize or turn them together. Pink lines appear when an object lines up with another.</li>
+            <li>Double-tap one object in a group to select it alone. “Split into parts” does the same for the pieces of an icon.</li>
+            <li>Page › Icon style switches the built-in icons between “Outlined” and “Flat cartoon” for the whole figure.</li>
+            <li>“Reshape” shows the points of an icon’s outline: drag them to change its shape. The sliders set how thick lines and outlines are.</li>
+            <li>The search box looks through every icon, including the collections under “More icons”. Icons marked CC BY need a credit, which the export writes for you.</li>
+            <li>“Objects” at the bottom of the right-hand panel lists everything on the page: select, rename, hide or lock from there.</li>
+            <li>“Divide the page into panels” adds lettered frames to line things up in. The frames are guides and are left out of exports.</li>
+            <li>With a keyboard: click the page, then Tab moves from object to object, the arrow keys move it (Shift for bigger steps), Enter edits a text.</li>
+            <li>With the arrow tool, drag from one icon to another. Attached arrows follow their icons, and can be straight, curved or right-angled.</li>
+            <li>Lock a background so it stays put; “Unlock all” is in the right-hand panel when nothing is selected.</li>
+            <li>Drag in or paste your own pictures. File › My figures keeps every figure you have made in this browser.</li>
             <li>With the membrane brush, draw a line. Finish near the start to close it into a cell.</li>
-            <li>Sketch with the pen, then use “AI” to turn the sketch into a clean figure.</li>
+            <li>Sketch with the pen, then use “AI” to turn the sketch into a clean figure, or to change a figure you already have.</li>
           </ul>
           <h2>Touch and Apple Pencil</h2>
           <ul className="help-list">

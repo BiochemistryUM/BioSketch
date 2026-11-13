@@ -1,11 +1,26 @@
-// Autosave: the current figure is kept in the browser (IndexedDB) so a reload or a closed tab loses nothing.
+// Saved figures. Every figure is kept in the browser (IndexedDB, falling back to localStorage in
+// private windows), so a reload or a closed tab loses nothing and several figures can be kept.
 
 import type { FigDoc } from '../model/types'
-import { serializeDoc, parseDoc } from './files'
+import { parseDoc, serializeDoc } from './files'
+
+export interface FigureMeta {
+  id: string
+  name: string
+  /** Time of the last save, in milliseconds since 1970. */
+  updated: number
+  /** Number of objects on the page, shown in the list of figures. */
+  objects: number
+}
 
 const DB_NAME = 'biosketch'
 const STORE = 'kv'
-const KEY = 'current-figure'
+const LS_PREFIX = 'biosketch.'
+const INDEX = 'index'
+const CURRENT = 'current'
+/** Where the single figure of earlier versions was kept. */
+const LEGACY = 'current-figure'
+const figKey = (id: string): string => `fig:${id}`
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -16,13 +31,13 @@ function openDb(): Promise<IDBDatabase> {
   })
 }
 
-async function idbSet(value: string): Promise<void> {
+async function idb<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> {
   const db = await openDb()
   try {
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, 'readwrite')
-      tx.objectStore(STORE).put(value, KEY)
-      tx.oncomplete = () => resolve()
+    return await new Promise<T>((resolve, reject) => {
+      const tx = db.transaction(STORE, mode)
+      const req = run(tx.objectStore(STORE))
+      tx.oncomplete = () => resolve(req.result)
       tx.onerror = () => reject(tx.error)
       tx.onabort = () => reject(tx.error)
     })
@@ -31,28 +46,27 @@ async function idbSet(value: string): Promise<void> {
   }
 }
 
-async function idbGet(): Promise<string | null> {
-  const db = await openDb()
+async function kvGet(key: string): Promise<string | null> {
   try {
-    return await new Promise((resolve, reject) => {
-      const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(KEY)
-      req.onsuccess = () => resolve(typeof req.result === 'string' ? req.result : null)
-      req.onerror = () => reject(req.error)
-    })
-  } finally {
-    db.close()
+    const value = await idb('readonly', (s) => s.get(key))
+    if (typeof value === 'string') return value
+  } catch {
+    /* fall through to localStorage */
+  }
+  try {
+    return localStorage.getItem(LS_PREFIX + key)
+  } catch {
+    return null
   }
 }
 
-/** Returns false when the figure could not be stored (private window, storage full). */
-export async function saveCurrent(doc: FigDoc): Promise<boolean> {
-  const text = serializeDoc(doc)
+async function kvSet(key: string, value: string): Promise<boolean> {
   try {
-    await idbSet(text)
+    await idb('readwrite', (s) => s.put(value, key))
     return true
   } catch {
     try {
-      localStorage.setItem(KEY, text)
+      localStorage.setItem(LS_PREFIX + key, value)
       return true
     } catch {
       return false
@@ -60,20 +74,43 @@ export async function saveCurrent(doc: FigDoc): Promise<boolean> {
   }
 }
 
-export async function loadCurrent(): Promise<FigDoc | null> {
-  let text: string | null = null
+async function kvDel(key: string): Promise<void> {
   try {
-    text = await idbGet()
+    await idb('readwrite', (s) => s.delete(key))
   } catch {
-    /* fall through to localStorage */
+    /* nothing stored there */
   }
-  if (!text) {
-    try {
-      text = localStorage.getItem(KEY)
-    } catch {
-      text = null
-    }
+  try {
+    localStorage.removeItem(LS_PREFIX + key)
+  } catch {
+    /* storage unavailable */
   }
+}
+
+const newId = (): string => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
+
+export async function listFigures(): Promise<FigureMeta[]> {
+  try {
+    const list: unknown = JSON.parse((await kvGet(INDEX)) ?? '[]')
+    if (!Array.isArray(list)) return []
+    return list
+      .filter((m): m is FigureMeta => !!m && typeof m.id === 'string' && typeof m.name === 'string' && typeof m.updated === 'number')
+      .sort((a, b) => b.updated - a.updated)
+  } catch {
+    return []
+  }
+}
+
+/** Save a figure under its id. Returns false when the browser refuses to store it. */
+export async function saveFigure(id: string, doc: FigDoc): Promise<boolean> {
+  if (!(await kvSet(figKey(id), serializeDoc(doc)))) return false
+  const meta: FigureMeta = { id, name: doc.name, updated: Date.now(), objects: doc.nodes.length }
+  const others = (await listFigures()).filter((m) => m.id !== id)
+  return kvSet(INDEX, JSON.stringify([meta, ...others]))
+}
+
+export async function loadFigure(id: string): Promise<FigDoc | null> {
+  const text = await kvGet(figKey(id))
   if (!text) return null
   try {
     return parseDoc(text)
@@ -81,3 +118,45 @@ export async function loadCurrent(): Promise<FigDoc | null> {
     return null
   }
 }
+
+export async function deleteFigure(id: string): Promise<void> {
+  await kvDel(figKey(id))
+  await kvSet(INDEX, JSON.stringify((await listFigures()).filter((m) => m.id !== id)))
+}
+
+export const setCurrentFigure = (id: string): Promise<boolean> => kvSet(CURRENT, id)
+
+/**
+ * What to open when the app starts: the figure that was open last time, else the most recent one,
+ * else a new empty figure. A figure saved by an earlier version of BioSketch is carried over once.
+ */
+export async function loadStartup(): Promise<{ id: string; doc: FigDoc | null }> {
+  let figures = await listFigures()
+  if (!figures.length) {
+    let legacy = await kvGet(LEGACY)
+    if (!legacy) {
+      try {
+        legacy = localStorage.getItem(LEGACY)
+      } catch {
+        legacy = null
+      }
+    }
+    if (legacy) {
+      try {
+        const id = newId()
+        if (await saveFigure(id, parseDoc(legacy))) {
+          await kvDel(LEGACY)
+          figures = await listFigures()
+        }
+      } catch {
+        /* the old figure is unreadable; start fresh */
+      }
+    }
+  }
+  const wanted = await kvGet(CURRENT)
+  const pick = figures.find((m) => m.id === wanted) ?? figures[0]
+  if (!pick) return { id: newId(), doc: null }
+  return { id: pick.id, doc: await loadFigure(pick.id) }
+}
+
+export { newId as newFigureId }

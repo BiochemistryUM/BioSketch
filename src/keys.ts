@@ -4,17 +4,21 @@ import {
   copySelection,
   deleteSelection,
   duplicateSelection,
+  editSelectedText,
   fitView,
   groupSelection,
   nudge,
   orderSelection,
   pasteClipboard,
   selectAll,
+  selectStep,
   setTool,
   ungroupSelection,
   zoomBy,
 } from './actions'
 import { input } from './canvas/input'
+import { finishReshape } from './icons/reshape'
+import { placeImageFile } from './io/images'
 import { useEditor, type Tool } from './store'
 import { saveFile } from './ui/TopBar'
 
@@ -47,6 +51,14 @@ export function installKeyboard(): () => void {
       return
     }
 
+    // With the page itself focused, Tab walks through the objects. Past the last one (or before the
+    // first, with Shift) it moves on to the panels, so the keyboard is never trapped on the page.
+    if (e.key === 'Tab' && !mod && !e.altKey) {
+      const onPage = !!(e.target as Element | null)?.closest?.('.canvas')
+      if (onPage && selectStep(e.shiftKey ? -1 : 1)) e.preventDefault()
+      return
+    }
+
     if (mod) {
       const handled = (() => {
         switch (key) {
@@ -65,8 +77,8 @@ export function installKeyboard(): () => void {
             deleteSelection()
             return true
           case 'v':
-            pasteClipboard()
-            return true
+            // Handled by the paste event below, which can also see pictures on the clipboard.
+            return false
           case 'd':
             duplicateSelection()
             return true
@@ -106,8 +118,13 @@ export function installKeyboard(): () => void {
         deleteSelection()
         e.preventDefault()
         return
+      case 'Enter':
+        // On a focused button Enter presses the button; otherwise it opens the selected text for typing.
+        if (isControl(e.target) || !editSelectedText()) return
+        break
       case 'Escape':
-        if (s.selection.length) s.set({ selection: [] })
+        if (s.reshape) finishReshape()
+        else if (s.selection.length) s.set({ selection: [] })
         else setTool('select')
         return
       case 'ArrowLeft':
@@ -140,6 +157,15 @@ export function installKeyboard(): () => void {
   const onBlur = () => {
     input.space = false
   }
+  // Paste: a picture copied from elsewhere is placed on the page; otherwise objects copied in BioSketch.
+  const onPaste = (e: ClipboardEvent) => {
+    if (isTyping(e.target) || useEditor.getState().dialog) return
+    const picture = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/'))
+    e.preventDefault()
+    if (picture) void placeImageFile(picture)
+    else pasteClipboard()
+  }
+  window.addEventListener('paste', onPaste)
   // After a mouse or touch click, a toolbar button would keep keyboard focus and swallow the next
   // Space (pan) or shortcut. Release it. Clicks made from the keyboard (detail 0) keep their focus.
   const onClick = (e: MouseEvent) => {
@@ -151,6 +177,7 @@ export function installKeyboard(): () => void {
   window.addEventListener('keyup', onKeyUp)
   window.addEventListener('blur', onBlur)
   return () => {
+    window.removeEventListener('paste', onPaste)
     window.removeEventListener('click', onClick)
     window.removeEventListener('keydown', onKeyDown)
     window.removeEventListener('keyup', onKeyUp)

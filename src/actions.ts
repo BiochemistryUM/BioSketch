@@ -1,26 +1,30 @@
 // Editor commands. Menus, buttons and keyboard shortcuts all call these.
 
 import { getIcon } from './icons/library'
+import { findPackIcon } from './icons/packs'
 import {
   alignNodes,
   cloneNodes,
   distributeNodes,
   duplicateNodes,
-  emptyDoc,
   expandGroups,
   freezeEndpoints,
   groupNodes,
+  nextPanelLetter,
   removeNodes,
   reorder,
+  stepSelection,
   ungroupNodes,
   updateNodes,
   uid,
   type AlignMode,
   type OrderMode,
 } from './model/doc'
-import { clamp } from './model/geometry'
-import { translateNode } from './model/nodes'
-import type { FigDoc, FigNode, IconDef, IconNode, Point, TextNode } from './model/types'
+import { clamp, rectCenter, unionRects } from './model/geometry'
+import { findNode, getRect, translateNode } from './model/nodes'
+import { panelNodes, type PanelLayout } from './model/panels'
+import type { ChartNode, FigDoc, FigNode, IconDef, IconNode, Point, Rect, TextNode } from './model/types'
+import { isPickable } from './model/types'
 import { toast, useEditor, type Tool, type View } from './store'
 
 const S = () => useEditor.getState()
@@ -76,7 +80,169 @@ export function pasteClipboard(): void {
 
 export function selectAll(): void {
   const s = S()
-  s.set({ tool: 'select', selection: s.doc.nodes.filter((n) => s.showSketch || n.type !== 'stroke').map((n) => n.id) })
+  s.set({ tool: 'select', selection: s.doc.nodes.filter((n) => isPickable(n) && (s.showSketch || n.type !== 'stroke')).map((n) => n.id) })
+}
+
+/** Scroll the page so that this part of the figure is on screen (the zoom stays as it is). */
+export function reveal(rect: Rect): void {
+  const { view, canvasSize } = S()
+  const left = rect.x * view.zoom + view.x
+  const top = rect.y * view.zoom + view.y
+  const right = left + rect.w * view.zoom
+  const bottom = top + rect.h * view.zoom
+  // Something that is already in full view stays where it is; anything else is brought to the middle.
+  if (left >= 0 && top >= 0 && right <= canvasSize.w && bottom <= canvasSize.h) return
+  const c = rectCenter(rect)
+  S().set({ view: { ...view, x: canvasSize.w / 2 - c.x * view.zoom, y: canvasSize.h / 2 - c.y * view.zoom } })
+}
+
+/** Select these objects and bring them into view. */
+export function selectAndReveal(ids: string[]): void {
+  const s = S()
+  const nodes = ids.flatMap((id) => findNode(s.doc, id) ?? [])
+  s.set({ tool: 'select', selection: nodes.map((n) => n.id), editingTextId: null })
+  if (nodes.length) reveal(unionRects(nodes.map((n) => getRect(n, s.doc))))
+}
+
+/** Keyboard selection: move to the next or previous object. False when there is none in that direction. */
+export function selectStep(dir: 1 | -1): boolean {
+  const s = S()
+  const next = stepSelection(s.doc, s.selection, dir, s.showSketch)
+  if (!next) {
+    if (s.selection.length) s.set({ selection: [] })
+    return false
+  }
+  selectAndReveal(next)
+  return true
+}
+
+/** Start typing in the selected text, when exactly one text is selected. */
+export function editSelectedText(): boolean {
+  const s = S()
+  const node = s.selection.length === 1 ? findNode(s.doc, s.selection[0]) : undefined
+  if (node?.type !== 'text') return false
+  s.set({ editingTextId: node.id })
+  return true
+}
+
+/** Lock or unlock, hide or show these objects. Objects that can no longer be picked up leave the selection. */
+export function setNodeFlag(ids: string[], flag: 'locked' | 'hidden', on: boolean): void {
+  const s = S()
+  const set = new Set(ids)
+  s.commit(
+    (doc) =>
+      updateNodes(doc, ids, (n) => {
+        const { [flag]: _drop, ...rest } = n
+        return (on ? { ...rest, [flag]: true } : rest) as FigNode
+      }),
+    { select: on ? s.selection.filter((id) => !set.has(id)) : s.selection },
+  )
+}
+
+/** Show every hidden object again. */
+export function showAll(): void {
+  const hidden = S().doc.nodes.filter((n) => n.hidden).map((n) => n.id)
+  if (hidden.length) setNodeFlag(hidden, 'hidden', false)
+}
+
+/** Give an object a name of the user's own; an empty name brings the automatic one back. */
+export function renameNode(id: string, name: string): void {
+  const clean = name.trim().slice(0, 60)
+  S().commit((doc) =>
+    updateNodes(doc, [id], (n) => {
+      const { name: _drop, ...rest } = n
+      return (clean ? { ...rest, name: clean } : rest) as FigNode
+    }),
+  )
+}
+
+/** Lock the selected objects in place: they can no longer be picked up until unlocked. */
+export function lockSelection(): void {
+  const { selection, commit } = S()
+  commit((doc) => updateNodes(doc, selection, (n) => ({ ...n, locked: true })), { select: [] })
+  toast('Locked. Use “Unlock all” in the page settings to edit these objects again.')
+}
+
+export function unlockAll(): void {
+  const s = S()
+  // Panel frames stay locked: they are guides, removed with their own button.
+  const ids = s.doc.nodes.filter((n) => n.locked && !n.guide).map((n) => n.id)
+  s.commit(
+    (doc) =>
+      updateNodes(doc, ids, (n) => {
+        const { locked: _drop, ...rest } = n
+        return rest as FigNode
+      }),
+    { select: ids },
+  )
+}
+
+/** The numbers a new chart starts with, so there is something to look at before the scientist pastes their own. */
+export const SAMPLE_CHART: ChartNode['groups'] = [
+  { name: 'Control', values: [4.1, 3.8, 4.6, 4.3] },
+  { name: 'Treated', values: [6.9, 7.4, 6.1, 7.8] },
+  { name: 'Rescue', values: [5, 4.7, 5.6, 5.2] },
+]
+
+/** Add a chart with example numbers in the middle of the view, selected, so its numbers can be replaced in the panel. */
+export function addChart(): void {
+  const s = S()
+  const [w, h] = [360, 260]
+  const centre = { x: (s.canvasSize.w / 2 - s.view.x) / s.view.zoom, y: (s.canvasSize.h / 2 - s.view.y) / s.view.zoom }
+  const node: ChartNode = {
+    id: uid(),
+    type: 'chart',
+    x: Math.round(centre.x - w / 2),
+    y: Math.round(centre.y - h / 2),
+    w,
+    h,
+    rotation: 0,
+    kind: 'bar',
+    groups: SAMPLE_CHART.map((g) => ({ ...g, values: [...g.values] })),
+    error: 'sd',
+    points: true,
+  }
+  s.commit((doc) => ({ ...doc, nodes: [...doc.nodes, node] }), { select: [node.id] })
+  s.set({ tool: 'select' })
+  toast('Chart added with example numbers. Paste your own under “Numbers” in the panel.')
+}
+
+/** Add the next panel letter (A, B, C…) as a bold label near the top-left of the view. */
+export function addPanelLetter(): void {
+  const s = S()
+  const letter = nextPanelLetter(s.doc)
+  // Each new letter lands a little to the right of the last, so they never sit on top of each other.
+  const step = (letter.charCodeAt(0) - 65) * 44
+  const node: TextNode = {
+    id: uid(),
+    type: 'text',
+    x: Math.round((40 + step - s.view.x) / s.view.zoom),
+    y: Math.round((30 - s.view.y) / s.view.zoom),
+    text: letter,
+    fontSize: 28,
+    fill: '#1f2933',
+    bold: true,
+    align: 'left',
+    rotation: 0,
+  }
+  s.commit((doc) => ({ ...doc, nodes: [...doc.nodes, node] }), { select: [node.id] })
+  s.set({ tool: 'select' })
+}
+
+/** Divide the page into panels: a frame (a guide, not exported) and a letter for each. */
+export function addPanels(layout: PanelLayout): void {
+  const s = S()
+  const nodes = panelNodes(s.doc, layout)
+  const frames = nodes.filter((n) => n.guide)
+  // Frames go to the back so they never cover what is already on the page; letters go on top.
+  s.commit((doc) => ({ ...doc, nodes: [...frames, ...doc.nodes, ...nodes.filter((n) => !n.guide)] }), { select: [] })
+  s.set({ tool: 'select' })
+  toast('Panel frames added. They are guides: they show here and are left out of exports.')
+}
+
+/** Remove every guide (panel frame) from the page. */
+export function removeGuides(): void {
+  S().commit((doc) => ({ ...doc, nodes: doc.nodes.filter((n) => !n.guide) }), { select: [] })
 }
 
 export function groupSelection(): void {
@@ -130,7 +296,9 @@ export function viewCenter(): Point {
 
 export function addIcon(iconId: string, at?: Point): string | null {
   const s = S()
-  const def = getIcon(s.doc, iconId)
+  // An icon from a pack is copied into the figure when first used, so the figure stays self-contained.
+  const fromPack = getIcon(s.doc, iconId) ? undefined : findPackIcon(iconId)
+  const def = getIcon(s.doc, iconId) ?? fromPack
   if (!def) return null
   const [w, h] = def.viewBox
   // Imported icons can have any coordinate size; bring them to a sensible size on the page.
@@ -147,7 +315,14 @@ export function addIcon(iconId: string, at?: Point): string | null {
     h: h * scale,
     rotation: 0,
   }
-  s.commit((doc) => ({ ...doc, nodes: [...doc.nodes, node] }), { select: [node.id] })
+  s.commit(
+    (doc) => ({
+      ...doc,
+      nodes: [...doc.nodes, node],
+      ...(fromPack ? { customIcons: { ...doc.customIcons, [fromPack.id]: { ...fromPack, category: 'Imported' } } } : {}),
+    }),
+    { select: [node.id] },
+  )
   s.set({ tool: 'select' })
   return node.id
 }
@@ -206,11 +381,6 @@ export function fitView(): void {
   const pad = Math.min(48, canvasSize.w * 0.06)
   const zoom = clamp(Math.min((canvasSize.w - 2 * pad) / doc.width, (canvasSize.h - 2 * pad) / doc.height), MIN_ZOOM, 2)
   S().set({ view: { zoom, x: (canvasSize.w - doc.width * zoom) / 2, y: (canvasSize.h - doc.height * zoom) / 2 } })
-}
-
-export function newDocument(): void {
-  S().loadDoc(emptyDoc())
-  toast('Started a new figure')
 }
 
 export function expandSelection(ids: string[]): string[] {

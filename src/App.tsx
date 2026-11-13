@@ -1,10 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Canvas } from './canvas/Canvas'
+import { inPreferredStyle } from './figures'
+import { getIcon } from './icons/library'
 import { installKeyboard } from './keys'
+import { nodeLabel } from './model/describe'
+import { findNode } from './model/nodes'
 import { useEditor } from './store'
 import { TEMPLATES } from './templates'
 import { AiDialog } from './ui/AiDialog'
 import { ExportDialog, HelpDialog, ImportIconDialog } from './ui/Dialogs'
+import { FiguresDialog } from './ui/FiguresDialog'
 import { LibraryPanel } from './ui/LibraryPanel'
 import { PropertiesPanel } from './ui/PropertiesPanel'
 import { ToolRail } from './ui/ToolRail'
@@ -21,7 +26,7 @@ function EmptyState() {
       <p>Tap an icon in the library to place it, sketch with the pen, or begin from an example.</p>
       <div className="row wrap center">
         {TEMPLATES.map((t) => (
-          <button key={t.id} className="btn" onClick={() => useEditor.getState().loadDoc(t.build())}>
+          <button key={t.id} className="btn" onClick={() => useEditor.getState().loadDoc(inPreferredStyle(t.build()))}>
             {t.name}
           </button>
         ))}
@@ -29,6 +34,21 @@ function EmptyState() {
           How it works
         </button>
       </div>
+    </div>
+  )
+}
+
+/** Says in words what is selected, for people who use a screen reader. */
+function SelectionStatus() {
+  const text = useEditor((s) => {
+    if (!s.selection.length) return ''
+    if (s.selection.length > 1) return `${s.selection.length} objects selected`
+    const node = findNode(s.doc, s.selection[0])
+    return node ? `Selected: ${nodeLabel(node, node.type === 'icon' ? getIcon(s.doc, node.iconId)?.name : undefined)}` : ''
+  })
+  return (
+    <div className="sr-only" role="status" aria-live="polite">
+      {text}
     </div>
   )
 }
@@ -62,6 +82,8 @@ export function App() {
       {dialog === 'ai' && <AiDialog />}
       {dialog === 'import-icon' && <ImportIconDialog />}
       {dialog === 'help' && <HelpDialog />}
+      {dialog === 'figures' && <FiguresDialog />}
+      <SelectionStatus />
       <div className="toast-region" role="status" aria-live="polite">
         {toastText && <div className="toast">{toastText}</div>}
       </div>

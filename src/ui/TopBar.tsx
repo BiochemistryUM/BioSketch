@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { fitView, newDocument, patchDoc, zoomBy } from '../actions'
+import { fitView, patchDoc, zoomBy } from '../actions'
+import { inPreferredStyle, newFigure } from '../figures'
 import { download, fileBase } from '../io/export'
 import { parseDoc, serializeDoc } from '../io/files'
 import { toast, useEditor } from '../store'
@@ -26,13 +27,6 @@ export function saveFile(): void {
   const doc = useEditor.getState().doc
   download(serializeDoc(doc), `${fileBase(doc)}.biosketch.json`, 'application/json')
   toast('Figure file downloaded')
-}
-
-/** Replace the current figure, asking first when there is something to lose. */
-function replaceFigure(action: () => void): void {
-  const hasWork = useEditor.getState().doc.nodes.length > 0
-  if (hasWork && !window.confirm('Replace the current figure? Save it first if you want to keep it.')) return
-  action()
 }
 
 function FileMenu() {
@@ -71,8 +65,8 @@ function FileMenu() {
     if (!file) return
     try {
       const doc = parseDoc(await file.text())
-      useEditor.getState().loadDoc(doc)
-      toast(`Opened “${doc.name}”`)
+      await newFigure(doc)
+      toast(`Opened “${doc.name}” as a new figure`)
     } catch (e) {
       toast(e instanceof Error ? e.message : 'This file could not be opened.')
     }
@@ -86,10 +80,12 @@ function FileMenu() {
       </button>
       {open && (
         <div className="menu" role="menu">
-          {item('New figure', 'newFile', () => replaceFigure(newDocument))}
-          {item('Open figure file…', 'open', () => replaceFigure(() => fileRef.current?.click()))}
+          {item('New figure', 'newFile', () => void newFigure())}
+          {item('My figures…', 'figures', () => useEditor.setState({ dialog: 'figures' }))}
+          <div className="menu-sep" />
+          {item('Open figure file…', 'open', () => fileRef.current?.click())}
           {item('Save figure file', 'save', saveFile)}
-          <div className="menu-label">Examples</div>
+          <div className="menu-label">Start from an example</div>
           {TEMPLATES.map((t) => (
             <button
               key={t.id}
@@ -97,7 +93,7 @@ function FileMenu() {
               className="menu-item two-line"
               onClick={() => {
                 setOpen(false)
-                replaceFigure(() => useEditor.getState().loadDoc(t.build()))
+                void newFigure(inPreferredStyle(t.build()))
               }}
             >
               <Icon name="template" size={16} />

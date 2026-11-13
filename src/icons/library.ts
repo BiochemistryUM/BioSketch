@@ -3,12 +3,19 @@
 //
 // Style rules (keep new icons consistent): flat pastel fill, darker outline of the same hue,
 // 2.5 px outline, round joins, no gradients, plain hex colours so parts can be recoloured.
+// The "Flat cartoon" look (style.ts) is redrawn from these same drawings shape by shape, so it
+// depends on the rules: every shape is one self-closing element with its own fill and stroke
+// (none set on a group), and a tube is two lines on one path, the wide one underneath.
 
 import type { FigDoc, IconDef } from '../model/types'
 import { C, FONT, def, r1, ribbon } from './draw'
+import { styleIcon } from './style'
 import { CELL_ICONS } from './pack-cells'
+import { EXTRA_ICONS } from './pack-extra'
 import { LAB_ICONS } from './pack-lab'
 import { MOLECULE_ICONS } from './pack-molecules'
+import { ORGAN_ICONS } from './pack-organs'
+import { ORGANISM_ICONS } from './pack-organisms'
 import { ORGANELLE_ICONS } from './pack-organelles'
 import { PROTEIN_ICONS } from './pack-proteins'
 import { TISSUE_ICONS } from './pack-tissues'
@@ -313,22 +320,42 @@ const CORE_ICONS: IconDef[] = [
 ]
 
 /** Every built-in icon: the core set followed by the themed packs. */
-export const BUILTIN_ICONS: IconDef[] = [...CORE_ICONS, ...CELL_ICONS, ...TISSUE_ICONS, ...ORGANELLE_ICONS, ...PROTEIN_ICONS, ...MOLECULE_ICONS, ...LAB_ICONS]
+export const BUILTIN_ICONS: IconDef[] = [...CORE_ICONS, ...CELL_ICONS, ...TISSUE_ICONS, ...ORGANELLE_ICONS, ...PROTEIN_ICONS, ...MOLECULE_ICONS, ...LAB_ICONS, ...EXTRA_ICONS, ...ORGAN_ICONS, ...ORGANISM_ICONS]
 
 export const CATEGORIES: string[] = [...new Set(BUILTIN_ICONS.map((i) => i.category))]
 
 const BY_ID = new Map(BUILTIN_ICONS.map((i) => [i.id, i]))
 
 /** Find an icon by id: built-in first, then icons imported into this figure. */
-export function getIcon(doc: Pick<FigDoc, 'customIcons'> | null, id: string): IconDef | undefined {
-  return BY_ID.get(id) ?? doc?.customIcons[id]
+/** An icon by id: a built-in one, in the figure's icon style, or one stored with the figure. */
+export function getIcon(doc: Pick<FigDoc, 'customIcons' | 'iconStyle'> | null, id: string): IconDef | undefined {
+  const builtin = BY_ID.get(id)
+  return builtin ? styleIcon(builtin, doc?.iconStyle) : doc?.customIcons[id]
+}
+
+/** A test for "does this text contain every word of the search?", or null when the search is empty. */
+export function searchTest(query: string): ((text: string) => boolean) | null {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) return null
+  return (text) => {
+    const hay = text.toLowerCase()
+    return words.every((w) => hay.includes(w))
+  }
+}
+
+/** Matches in the name come first, then matches that are only in the category or keywords. */
+export function nameFirst<T>(items: T[], inName: (item: T) => boolean): T[] {
+  return [...items.filter(inName), ...items.filter((i) => !inName(i))]
 }
 
 export function searchIcons(icons: IconDef[], query: string): IconDef[] {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-  if (!words.length) return icons
-  return icons.filter((icon) => {
-    const hay = `${icon.name} ${icon.category} ${icon.tags.join(' ')}`.toLowerCase()
-    return words.every((w) => hay.includes(w))
-  })
+  const test = searchTest(query)
+  if (!test) return icons
+  return nameFirst(
+    icons.filter((icon) => test(`${icon.name} ${icon.category} ${icon.tags.join(' ')}`)),
+    (icon) => test(icon.name),
+  )
 }
+
+/** Public-domain artwork needs no credit line; everything else does. */
+export const isPublicDomain = (licence: string): boolean => /^(cc0|public domain)/i.test(licence.trim())

@@ -15,7 +15,8 @@ describe('request for the Claude app', () => {
   it('carries the instructions, the icon list, the task and the answer format', () => {
     const text = buildChatRequest(false, 'glycolysis in the cytoplasm')
     expect(text).toContain('Icon catalogue')
-    expect(text).toContain('mitochondrion — Mitochondrion')
+    expect(text).toContain('mitochondrion')
+    expect(text.length).toBeLessThan(14000)
     expect(text).toContain('glycolysis in the cytoplasm')
     expect(text).toContain('single code block')
     expect(text).not.toContain('attached image')

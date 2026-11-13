@@ -28,10 +28,15 @@ const answer = {
 
 describe('AI scenes', () => {
   it('describes every library icon to the model', () => {
-    const lines = iconCatalogue().split('\n')
-    expect(lines).toHaveLength(BUILTIN_ICONS.length)
-    expect(SYSTEM_PROMPT).toContain('mitochondrion — Mitochondrion')
-    expect(SCENE_SCHEMA.required).toEqual(['title', 'elements', 'connectors'])
+    const catalogue = iconCatalogue()
+    // One line per category; every icon id appears, with its name only where the id does not explain itself.
+    expect(catalogue.split('\n')).toHaveLength(new Set(BUILTIN_ICONS.map((i) => i.category)).size)
+    for (const icon of BUILTIN_ICONS) expect(catalogue, icon.id).toMatch(new RegExp(`(^|[ ,:])${icon.id}([ ,(]|$)`, 'm'))
+    expect(catalogue).toContain(', mitochondrion,')
+    expect(catalogue).toContain('na-k-pump (Sodium-potassium pump)')
+    expect(catalogue.length).toBeLessThan(9000)
+    expect(SYSTEM_PROMPT).toContain(catalogue)
+    expect(SCENE_SCHEMA.required).toEqual(['title', 'elements', 'connectors', 'notes'])
   })
 
   it('keeps valid parts of an answer and drops the rest', () => {
@@ -72,9 +77,12 @@ describe('AI scenes', () => {
     expect(r.x + r.w / 2).toBeCloseTo(360)
     expect(r.y + r.h / 2).toBeCloseTo(240)
 
-    // A named protein and an unknown icon both become labelled boxes.
+    // A named protein and an unknown icon both become boxes with their words inside.
     expect(shapes).toHaveLength(2)
-    expect(texts.map((t) => t.text)).toEqual(expect.arrayContaining(['EGFR', 'ERK', 'flux-capacitor', 'Proliferation', 'Kinase signalling', 'Cell']))
+    expect(shapes.map((s) => s.label?.text)).toEqual(['ERK', 'flux-capacitor'])
+    expect(shapes.every((s) => !s.groupId && s.label?.bold)).toBe(true)
+    expect(texts.map((t) => t.text)).toEqual(expect.arrayContaining(['EGFR', 'Proliferation', 'Kinase signalling', 'Cell']))
+    expect(texts.map((t) => t.text)).not.toContain('ERK')
 
     // Cell outline and membrane come first so they sit behind everything.
     expect(membranes).toHaveLength(2)

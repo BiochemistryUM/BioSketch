@@ -1,7 +1,25 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  addIcon, alignSelection, copySelection, deleteSelection, duplicateSelection, groupSelection, nudge, pasteClipboard, patchSelection,
-  selectAll, setTool, zoomBy,
+  addIcon,
+  addPanels,
+  alignSelection,
+  copySelection,
+  deleteSelection,
+  duplicateSelection,
+  editSelectedText,
+  groupSelection,
+  nudge,
+  pasteClipboard,
+  patchSelection,
+  removeGuides,
+  renameNode,
+  selectAll,
+  selectStep,
+  setNodeFlag,
+  setTool,
+  showAll,
+  unlockAll,
+  zoomBy,
 } from '../src/actions'
 import { addNodes, emptyDoc } from '../src/model/doc'
 import type { IconNode, ShapeNode } from '../src/model/types'
@@ -135,5 +153,74 @@ describe('commands', () => {
     expect(E().view.zoom).toBe(8)
     zoomBy(0.00001)
     expect(E().view.zoom).toBe(0.1)
+  })
+})
+
+describe('objects list, keyboard selection and panels', () => {
+  const E = () => useEditor.getState()
+  const rect = (id: string, x: number, extra: Partial<ShapeNode> = {}): ShapeNode => ({ id, type: 'shape', shape: 'rect', x, y: 0, w: 50, h: 50, rotation: 0, fill: '#ffffff', stroke: '#000000', strokeWidth: 1, ...extra })
+
+  beforeEach(() => {
+    E().loadDoc({ ...emptyDoc(), nodes: [rect('a', 0), rect('b', 100), rect('c', 5000)] })
+    E().set({ view: { x: 0, y: 0, zoom: 1 }, canvasSize: { w: 800, h: 600 }, selection: [] })
+  })
+
+  it('hides and locks objects, taking them out of the selection, and brings them back', () => {
+    E().set({ selection: ['a', 'b'] })
+    setNodeFlag(['a'], 'hidden', true)
+    expect(E().doc.nodes[0].hidden).toBe(true)
+    expect(E().selection).toEqual(['b'])
+    setNodeFlag(['b'], 'locked', true)
+    expect(E().selection).toEqual([])
+    setNodeFlag(['b'], 'locked', false)
+    expect('locked' in E().doc.nodes[1]).toBe(false)
+    showAll()
+    expect(E().doc.nodes.some((n) => n.hidden)).toBe(false)
+    E().undo()
+    expect(E().doc.nodes[0].hidden).toBe(true)
+  })
+
+  it('renames an object, and an empty name brings the automatic one back', () => {
+    renameNode('a', '  EGFR dimer  ')
+    expect(E().doc.nodes[0].name).toBe('EGFR dimer')
+    renameNode('a', '   ')
+    expect('name' in E().doc.nodes[0]).toBe(false)
+  })
+
+  it('steps through objects with the keyboard and scrolls a far one into view', () => {
+    expect(selectStep(1)).toBe(true)
+    expect(E().selection).toEqual(['a'])
+    expect(E().view.x).toBe(0)
+    selectStep(1)
+    expect(selectStep(1)).toBe(true)
+    expect(E().selection).toEqual(['c'])
+    // The third box sits far to the right: the page is scrolled so that it is in the middle.
+    expect(E().view.x).toBe(400 - 5025)
+    expect(selectStep(1)).toBe(false)
+    expect(E().selection).toEqual([])
+    expect(selectStep(-1)).toBe(true)
+    expect(E().selection).toEqual(['c'])
+  })
+
+  it('opens the selected text for typing with Enter, and nothing else', () => {
+    expect(editSelectedText()).toBe(false)
+    E().loadDoc({ ...emptyDoc(), nodes: [{ id: 't', type: 'text', x: 0, y: 0, text: 'Label', fontSize: 16, fill: '#000000', align: 'left', rotation: 0 }, rect('a', 100)] })
+    E().set({ selection: ['a'] })
+    expect(editSelectedText()).toBe(false)
+    E().set({ selection: ['t'] })
+    expect(editSelectedText()).toBe(true)
+    expect(E().editingTextId).toBe('t')
+  })
+
+  it('adds panel frames behind everything, keeps them when unlocking all, and removes them on request', () => {
+    addPanels('1x2')
+    const nodes = E().doc.nodes
+    expect(nodes.slice(0, 2).every((n) => n.guide && n.locked)).toBe(true)
+    expect(nodes.slice(-2).map((n) => (n.type === 'text' ? n.text : ''))).toEqual(['A', 'B'])
+    unlockAll()
+    expect(E().doc.nodes.filter((n) => n.guide && n.locked)).toHaveLength(2)
+    removeGuides()
+    expect(E().doc.nodes.some((n) => n.guide)).toBe(false)
+    expect(E().doc.nodes).toHaveLength(5)
   })
 })

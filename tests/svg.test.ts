@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BUILTIN_ICONS, getIcon, searchIcons } from '../src/icons/library'
-import { extractColors, iconMarkup, isHexColor, normalizeHex, parseSvgFile, prefixIds, recolor, sanitizeBody } from '../src/icons/svg'
+import { extractColors, iconMarkup, isHexColor, normalizeHex, parseSvgFile, prefixIds, recolor, sanitizeBody, scaleStrokes } from '../src/icons/svg'
 import { TEMPLATES } from '../src/templates'
 
 const count = (markup: string): number => {
@@ -71,6 +71,62 @@ describe('sanitising imported SVG', () => {
   })
 })
 
+describe('files from drawing programs', () => {
+  const svg = (inner: string, attrs = 'viewBox="0 0 10 10"') => `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ${attrs}>${inner}</svg>`
+
+  it('keeps the drawing inside a <switch> wrapper and inside links', () => {
+    const body = parseSvgFile(svg('<switch><foreignObject width="1" height="1"><p>x</p></foreignObject><g><rect width="4" height="4" fill="#ff0000"/></g></switch><a xlink:href="https://example.org"><circle r="2"/></a>')).body
+    expect(body).toContain('<rect')
+    expect(body).toContain('<circle')
+    expect(body).not.toMatch(/switch|foreignObject|example\.org|<a[ >]/)
+  })
+
+  it('keeps arrowheads (markers) but cleans what is inside them', () => {
+    const body = parseSvgFile(svg('<defs><marker id="tip" onload="alert(1)"><path d="M0 0L4 2L0 4z"/><script>alert(1)</script></marker></defs><path d="M0 5h8" marker-end="url(#tip)"/>')).body
+    expect(body).toContain('<marker id="tip">')
+    expect(body).toContain('marker-end="url(#tip)"')
+    expect(body).not.toMatch(/script|onload/)
+  })
+
+  it('drops effects whose definition was removed, as attribute and inside style', () => {
+    const body = parseSvgFile(
+      svg('<defs><filter id="blur"><feGaussianBlur stdDeviation="2"/></filter><clipPath id="cut"><rect width="5" height="5"/></clipPath></defs>' +
+        '<circle r="3" filter="url(#blur)" clip-path="url(#cut)" fill="#00ff00"/><rect width="2" height="2" style="fill:#0000ff;filter:url(#blur);opacity:0.5"/>'),
+    ).body
+    expect(body).not.toContain('blur')
+    expect(body).toContain('clip-path="url(#cut)"')
+    expect(body).toMatch(/style="fill:#0000ff;opacity:0.5"/)
+    // The same holds for markup stored in a figure file.
+    expect(sanitizeBody('<circle r="3" filter="url(#gone)" fill="url(#alsoGone)"/>')).toBe('<circle r="3" fill="url(#alsoGone)"/>')
+  })
+
+  it('reads a page size given in millimetres when there is no viewBox', () => {
+    const [w, h] = parseSvgFile(svg('<path d="M0 0h1"/>', 'width="210mm" height="1in"')).viewBox
+    expect(w).toBeCloseTo(793.7, 1)
+    expect(h).toBe(96)
+    expect(parseSvgFile(svg('<path d="M0 0h1"/>', 'width="100%" height="50"')).viewBox).toEqual([100, 100])
+  })
+})
+
+describe('outline thickness of an icon', () => {
+  const body = '<path d="M0 0h9" stroke="#000000" stroke-width="2"/><circle r="3" style="stroke:#000000;stroke-width:0.5px"/><path d="M0 5h9" stroke="#000000"/>'
+
+  it('multiplies every stated width and sets the width of outlines that state none', () => {
+    expect(scaleStrokes(body, 1.5)).toBe('<g stroke-width="1.5"><path d="M0 0h9" stroke="#000000" stroke-width="3"/><circle r="3" style="stroke:#000000;stroke-width:0.75px"/><path d="M0 5h9" stroke="#000000"/></g>')
+  })
+
+  it('leaves the icon as drawn for 1, nothing, or a value that makes no sense', () => {
+    for (const factor of [1, undefined, 0, -2, Number.NaN, Infinity]) expect(scaleStrokes(body, factor)).toBe(body)
+  })
+
+  it('is applied when an icon is drawn, together with recolouring', () => {
+    const def = { ...BUILTIN_ICONS[0], body }
+    const markup = iconMarkup(def, { '#000000': '#ff0000' }, 'n1', 2)
+    expect(markup).toContain('stroke-width="4"')
+    expect(markup).toContain('stroke="#ff0000"')
+  })
+})
+
 describe('recolouring', () => {
   const body = '<rect fill="#FF0000" stroke="#0f0"/><rect fill="url(#abc)"/><use href="#fff"/>'
 
@@ -106,6 +162,14 @@ describe('recolouring', () => {
     expect(out).toContain('url(#n1-g)')
     expect(out).toContain('href="#n1-g"')
     expect(out).toContain('url(#other)')
+  })
+})
+
+describe('search order', () => {
+  it('lists icons named after the search word before those that only have it as a keyword', () => {
+    const icon = (name: string, tags: string[]) => ({ ...BUILTIN_ICONS[0], id: name, name, tags, category: 'Test' })
+    const found = searchIcons([icon('Nanoparticle', ['delivery']), icon('Healthy liver', []), icon('Liposome', ['delivery']), icon('Liver lobule', [])], 'liver')
+    expect(found.map((i) => i.name)).toEqual(['Healthy liver', 'Liver lobule', 'Nanoparticle', 'Liposome'])
   })
 })
 

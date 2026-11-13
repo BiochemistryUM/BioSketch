@@ -16,6 +16,8 @@ export interface SceneRequest {
   model: string
   /** What the scientist wants drawn, or notes about the sketch. May be empty when a sketch is sent. */
   description: string
+  /** The full request text, when it is not simply "draw this" (used when revising a figure). */
+  task?: string
   /** PNG of the sketch, base64 without the data-URL prefix. */
   imageBase64?: string
   signal?: AbortSignal
@@ -30,7 +32,7 @@ export async function requestScene(req: SceneRequest): Promise<Scene> {
   // which is the case `dangerouslyAllowBrowser` exists for.
   const client = new Anthropic({ apiKey: req.apiKey, dangerouslyAllowBrowser: true, maxRetries: 1 })
 
-  const task = taskText(!!req.imageBase64, req.description)
+  const task = req.task ?? taskText(!!req.imageBase64, req.description)
 
   try {
     const response = await client.beta.messages.create(

@@ -8,6 +8,7 @@ const PATHS = {
   select: 'M5 3l14 8-6 2-2 6z',
   pan: 'M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3',
   text: 'M5 6V4h14v2M12 4v16M9 20h6',
+  chart: 'M4 4v16h16M8 16v-5M12 16V8M16 16v-7',
   shape: 'M3 4h11v11H3zM21 16.5a4.5 4.5 0 1 1-9 0a4.5 4.5 0 0 1 9 0z',
   connector: 'M4 19L18 6M18 6h-7M18 6v7',
   membrane: lipids,
@@ -50,6 +51,11 @@ const PATHS = {
   help: 'M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 1-1 1.7M12 17h.01M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18z',
   fit: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
   swap: 'M4 8h14l-3-3M20 16H6l3 3',
+  lock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3',
+  unlock: 'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 6.8-1.2',
+  image: 'M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15.5 9.5h.01',
+  figures: 'M8 8h12v12H8zM4 16V4h12',
+  pdf: 'M6 3h8l4 4v14H6zM14 3v4h4M9 13h6M9 17h6',
 } as const
 
 export type IconName = keyof typeof PATHS
