@@ -2,39 +2,28 @@
 
 import { flushSave, markSaved } from './io/autosave'
 import { deleteFigure, listFigures, loadFigure, newFigureId, saveFigure, setCurrentFigure, type FigureMeta } from './io/storage'
+import { missingIconsNote } from './icons/library'
+import { packList } from './icons/packs'
 import { emptyDoc } from './model/doc'
 import type { FigDoc } from './model/types'
 import { toast, useEditor } from './store'
+import { buildTemplate, type Template } from './templates'
 
-const STYLE_KEY = 'biosketch.icon-style'
-
-/** The icon style chosen last, which new figures start with. */
-export function preferredStyle(): FigDoc['iconStyle'] {
+/**
+ * An example as a new figure, with its icons fetched from the collections. Null, with a message
+ * on screen, when they could not be fetched.
+ */
+export async function exampleDoc(template: Template): Promise<FigDoc | null> {
   try {
-    return localStorage.getItem(STYLE_KEY) === 'flat' ? 'flat' : undefined
-  } catch {
-    return undefined
+    return await buildTemplate(template, await packList())
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'The example could not be opened.')
+    return null
   }
 }
 
-export function rememberStyle(style: FigDoc['iconStyle']): void {
-  try {
-    if (style) localStorage.setItem(STYLE_KEY, style)
-    else localStorage.removeItem(STYLE_KEY)
-  } catch {
-    // Without storage the choice simply applies to this figure only.
-  }
-}
-
-/** A new figure (empty or an example) in the icon style chosen last. */
-export function inPreferredStyle(doc: FigDoc): FigDoc {
-  const { iconStyle: _drop, ...rest } = doc
-  const style = preferredStyle()
-  return style ? { ...rest, iconStyle: style } : rest
-}
-
-/** True for a figure nobody has touched: a new, empty one, whatever icon style it started in. */
-const untouched = (doc: FigDoc): boolean => JSON.stringify({ ...doc, iconStyle: undefined }) === JSON.stringify(emptyDoc())
+/** True for a figure nobody has touched: still exactly a new, empty one. */
+const untouched = (doc: FigDoc): boolean => JSON.stringify(doc) === JSON.stringify(emptyDoc())
 
 /** Make `doc` the open figure under `id`. The figure that was open is saved first. */
 async function show(id: string, doc: FigDoc, alreadyStored: boolean): Promise<void> {
@@ -47,10 +36,12 @@ async function show(id: string, doc: FigDoc, alreadyStored: boolean): Promise<vo
   if (!alreadyStored) await saveFigure(id, doc)
   markSaved(doc)
   await setCurrentFigure(id)
+  const note = missingIconsNote(doc)
+  if (note) toast(note)
 }
 
 /** Start a new figure (empty, or from an example or an opened file). The previous one stays saved. */
-export async function newFigure(doc: FigDoc = inPreferredStyle(emptyDoc())): Promise<void> {
+export async function newFigure(doc: FigDoc = emptyDoc()): Promise<void> {
   await show(newFigureId(), doc, false)
 }
 

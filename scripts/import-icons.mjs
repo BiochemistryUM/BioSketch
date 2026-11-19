@@ -35,7 +35,8 @@ function parseArgs(argv) {
 }
 
 async function* svgFiles(dir) {
-  for (const entry of await readdir(dir, { withFileTypes: true })) {
+  // In name order, so that the same folder always gives the same ids.
+  for (const entry of (await readdir(dir, { withFileTypes: true })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
     const path = join(dir, entry.name)
     if (entry.isDirectory()) yield* svgFiles(path)
     else if (entry.isFile() && extname(entry.name).toLowerCase() === '.svg') yield path
@@ -78,6 +79,7 @@ async function main() {
   const icons = []
   const skipped = []
   const used = new Set()
+  const named = new Map()
   try {
     const { parseSvgFile } = await vite.ssrLoadModule('/src/icons/svg.ts')
     for await (const file of svgFiles(root)) {
@@ -86,7 +88,8 @@ async function main() {
       try {
         const text = await readFile(file, 'utf8')
         // Photographs and other bitmaps inside an SVG are removed by the cleaning, which would leave a hole.
-        if (/<image[\s>]/i.test(text)) throw new Error('contains an embedded picture')
+        // (Some programs write every element with a prefix, <ns0:image>.)
+        if (/<(?:[\w-]+:)?image[\s>]/i.test(text)) throw new Error('contains an embedded picture')
         const parsed = parseSvgFile(text)
         if (parsed.body.length > maxBytes) throw new Error(`larger than ${maxBytes / 1000} kB after cleaning`)
         const crop = Array.isArray(info.crop) && info.crop.length === 4 && info.crop.every(Number.isFinite) && info.crop[2] > 0 && info.crop[3] > 0 ? info.crop : null
@@ -94,7 +97,11 @@ async function main() {
           parsed.body = `<g transform="translate(${-crop[0]} ${-crop[1]})">${parsed.body}</g>`
           parsed.viewBox = [crop[2], crop[3]]
         }
-        const name = info.name ?? words(basename(file, extname(file)))
+        let name = info.name ?? words(basename(file, extname(file)))
+        // Several drawings of one subject: the second is "Macrophage 2", so that names tell them apart like ids do.
+        const nth = (named.get(name.toLowerCase()) ?? 0) + 1
+        named.set(name.toLowerCase(), nth)
+        if (nth > 1) name = `${name} ${nth}`
         let id = slug(name) || 'icon'
         for (let n = 2; used.has(id); n++) id = `${(slug(name) || 'icon').slice(0, 30)}-${n}`
         used.add(id)

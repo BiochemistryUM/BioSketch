@@ -7,8 +7,8 @@ import { rectCenter } from '../model/geometry'
 import { getRect, scaleNode, translateNode } from '../model/nodes'
 import type { ConnectorNode, FigDoc, FigNode, TextNode } from '../model/types'
 import { isPickable } from '../model/types'
-import { BUILTIN_ICONS } from '../icons/library'
-import { sceneToNodes, type Scene, type SceneElement } from './scene'
+import { packOf } from '../icons/packs'
+import { iconsUsed, sceneToNodes, type IconLookup, type Scene, type SceneElement } from './scene'
 
 interface Tracked {
   element: SceneElement
@@ -25,12 +25,13 @@ export interface Snapshot {
   connectors: Map<string, string>
 }
 
-const BUILTIN = new Set(BUILTIN_ICONS.map((i) => i.id))
+/** Icons the model is told about: those from a collection, whose id names the collection and the subject. */
+const isNamedIcon = (id: string): boolean => !!packOf(id)
 const r1 = (v: number): number => Math.round(v * 10) / 10
 
 /**
  * Describe the page as a scene. Left out (and therefore left untouched by a revision): pictures,
- * sketch strokes, imported icons and pieces of split icons, locked or hidden objects, and arrows with a free end.
+ * sketch strokes, icons imported from a file and pieces of split icons, locked or hidden objects, and arrows with a free end.
  */
 export function docToScene(doc: FigDoc): Snapshot {
   const ux = 1000 / doc.width
@@ -61,7 +62,7 @@ export function docToScene(doc: FigDoc): Snapshot {
     // A shape's label is the text grouped with it, or else the words written inside it.
     let label = labelOf.get(n.id)?.text ?? (n.type === 'shape' ? (n.label?.text ?? '') : '')
     if (n.type === 'icon') {
-      if (!BUILTIN.has(n.iconId)) continue
+      if (!isNamedIcon(n.iconId)) continue
       kind = 'icon'
       icon = n.iconId
     } else if (n.type === 'shape') {
@@ -107,8 +108,12 @@ export function reviseTaskText(current: Scene, instruction: string): string {
   )
 }
 
-/** Apply the model's revised scene to the page as moves, resizes, relabels, deletions and additions. */
-export function applyRevision(doc: FigDoc, before: Snapshot, after: Scene): FigDoc {
+/**
+ * Apply the model's revised scene to the page as moves, resizes, relabels, deletions and additions.
+ * `icons` finds the drawings the answer names (see sceneIcons); those that end up on the page are
+ * stored with the figure.
+ */
+export function applyRevision(doc: FigDoc, before: Snapshot, after: Scene, icons: IconLookup = () => undefined): FigDoc {
   const sx = doc.width / 1000
   const sy = doc.height / 1000
   const kept = new Map(after.elements.map((e) => [e.id, e]))
@@ -124,6 +129,7 @@ export function applyRevision(doc: FigDoc, before: Snapshot, after: Scene): FigD
 
   const known = new Map<string, string>()
   const newLabels: FigNode[] = []
+  const swapped: FigNode[] = []
   for (const [id, t] of before.elements) {
     const now = kept.get(id)
     if (!now) continue
@@ -145,14 +151,17 @@ export function applyRevision(doc: FigDoc, before: Snapshot, after: Scene): FigD
       }
     }
 
-    if (was.kind === 'icon' && now.kind === 'icon' && now.icon !== was.icon && BUILTIN.has(now.icon)) {
+    const picture = was.kind === 'icon' && now.kind === 'icon' && now.icon !== was.icon ? icons(now.icon) : undefined
+    if (picture) {
       // Same element, different picture: keep its place and height, take the new icon's proportions.
-      const [vw, vh] = BUILTIN_ICONS.find((i) => i.id === now.icon)!.viewBox
+      const [vw, vh] = picture.viewBox
       next = updateNodes(next, [t.anchorId], (n) => {
         if (n.type !== 'icon') return n
         const w = (n.h * vw) / vh
         const { colors: _old, ...rest } = n
-        return { ...rest, iconId: now.icon, x: n.x + n.w / 2 - w / 2, w }
+        const changed = { ...rest, iconId: picture.id, x: n.x + n.w / 2 - w / 2, w }
+        swapped.push(changed)
+        return changed
       })
     }
 
@@ -208,6 +217,11 @@ export function applyRevision(doc: FigDoc, before: Snapshot, after: Scene): FigD
     },
     doc,
     known,
+    icons,
   )
-  return additions.length || newLabels.length ? { ...next, nodes: [...next.nodes, ...newLabels, ...additions] } : next
+  // Drawings that are new to the figure are stored with it, like any icon placed from a collection.
+  const drawings = iconsUsed([...swapped, ...additions], icons)
+  const fresh = Object.keys(drawings).some((id) => !next.customIcons[id])
+  if (!additions.length && !newLabels.length && !fresh) return next
+  return { ...next, nodes: [...next.nodes, ...newLabels, ...additions], ...(fresh ? { customIcons: { ...drawings, ...next.customIcons } } : {}) }
 }

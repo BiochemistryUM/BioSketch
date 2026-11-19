@@ -5,9 +5,12 @@ import { describe, expect, it } from 'vitest'
 import { buildChatRequest, readChatAnswer } from '../src/ai/bridge'
 import { tidyScene } from '../src/ai/layout'
 import { docToScene } from '../src/ai/revise'
-import { elementBox, parseScene, sceneToNodes, SYSTEM_PROMPT, type Scene, type SceneElement } from '../src/ai/scene'
+import { elementBox, parseScene, sceneToNodes, systemPrompt, type Scene, type SceneElement } from '../src/ai/scene'
 import { emptyDoc } from '../src/model/doc'
 import type { ConnectorNode, ShapeNode, TextNode } from '../src/model/types'
+import { PACKS, packIcons } from './helpers'
+
+const SYSTEM = systemPrompt(PACKS)
 
 const PAGE = { width: 1200, height: 800 }
 const el = (id: string, kind: SceneElement['kind'], x: number, y: number, w: number, h: number, extra: Partial<SceneElement> = {}): SceneElement => ({
@@ -69,30 +72,30 @@ describe('layout check', () => {
       el('cellwall', 'cell', 500, 500, 700, 700),
       el('zoom', 'frame', 500, 500, 600, 600),
       el('bilayer', 'membrane', 500, 300, 500, 40),
-      el('pump', 'icon', 500, 300, 90, 140, { icon: 'transporter', label: '' }),
-      el('mito', 'icon', 500, 600, 300, 200, { icon: 'mitochondrion', label: '' }),
+      el('pump', 'icon', 500, 300, 90, 140, { icon: 'nih-molecules--protein-pore', label: '' }),
+      el('mito', 'icon', 500, 600, 300, 200, { icon: 'nih-cells--mitochondria', label: '' }),
       el('mark', 'box', 520, 600, 60, 40, { label: '' }),
     )
-    expect(tidyScene(scene, PAGE)).toEqual({ scene, fixes: [] })
+    expect(tidyScene(scene, PAGE, packIcons)).toEqual({ scene, fixes: [] })
   })
 
   it('does not take a half-covered box, or anything on a box, for something meant to be there', () => {
     // An icon lying half across a box hides the box's words: that is an accident.
-    const half = sceneOf(el('vkh2', 'box', 820, 690, 230, 60), el('ros', 'icon', 830, 720, 90, 90, { icon: 'ros', label: 'ROS' }))
-    expect(tidyScene(half, PAGE).fixes).toEqual(['Moved “VKH2” and “ROS” apart: they were on top of each other.'])
+    const half = sceneOf(el('vkh2', 'box', 820, 690, 230, 60), el('ros', 'icon', 830, 720, 90, 90, { icon: 'nih-cells--mitochondria', label: 'ROS' }))
+    expect(tidyScene(half, PAGE, packIcons).fixes).toEqual(['Moved “VKH2” and “ROS” apart: they were on top of each other.'])
     // So is a small box right in the middle of a big one, although a small box on a big picture is not.
     const onBox = sceneOf(el('big', 'box', 500, 500, 400, 140), el('small', 'box', 500, 500, 70, 40))
     expect(tidyScene(onBox, PAGE).fixes).toHaveLength(1)
-    const onPicture = sceneOf(el('cellpic', 'icon', 500, 500, 400, 400, { icon: 'cell', label: '' }), el('small', 'box', 560, 520, 70, 40))
-    expect(tidyScene(onPicture, PAGE).fixes).toEqual([])
+    const onPicture = sceneOf(el('cellpic', 'icon', 500, 500, 400, 400, { icon: 'nih-cells--macrophage', label: '' }), el('small', 'box', 560, 520, 70, 40))
+    expect(tidyScene(onPicture, PAGE, packIcons).fixes).toEqual([])
   })
 
   it('counts the label under an icon as part of it', () => {
     // The text sits where the icon's label is drawn, just below the icon itself.
-    const scene = sceneOf(el('mito', 'icon', 500, 500, 130, 65, { icon: 'mitochondrion', label: 'Mitochondrion' }), el('note', 'text', 500, 545, 200, 40, { label: 'makes ATP' }))
-    expect(tidyScene(scene, PAGE).fixes).toHaveLength(1)
+    const scene = sceneOf(el('mito', 'icon', 500, 500, 130, 65, { icon: 'nih-cells--mitochondria', label: 'Mitochondrion' }), el('note', 'text', 500, 545, 200, 40, { label: 'makes ATP' }))
+    expect(tidyScene(scene, PAGE, packIcons).fixes).toHaveLength(1)
     const bare = sceneOf({ ...scene.elements[0], label: '' }, scene.elements[1])
-    expect(tidyScene(bare, PAGE).fixes).toEqual([])
+    expect(tidyScene(bare, PAGE, packIcons).fixes).toEqual([])
   })
 
   it('brings an element that hangs off the page back onto it', () => {
@@ -106,8 +109,8 @@ describe('layout check', () => {
   })
 
   it('names an unlabelled icon by what it shows', () => {
-    const scene = sceneOf(el('a', 'icon', 500, 500, 120, 120, { icon: 'nucleus', label: '' }), el('b', 'icon', 510, 500, 120, 120, { icon: 'lysosome', label: '' }))
-    expect(tidyScene(scene, PAGE).fixes[0]).toBe('Moved “Nucleus” and “Lysosome” apart: they were on top of each other.')
+    const scene = sceneOf(el('a', 'icon', 500, 500, 120, 120, { icon: 'nih-cells--cell-nucleus', label: '' }), el('b', 'icon', 510, 500, 120, 120, { icon: 'nih-cells--ribosome', label: '' }))
+    expect(tidyScene(scene, PAGE, packIcons).fixes[0]).toBe('Moved “cell nucleus” and “ribosome” apart: they were on top of each other.')
   })
 })
 
@@ -127,7 +130,7 @@ describe('notes from the AI', () => {
   })
 
   it('are asked for in the instructions and read back from a pasted answer', () => {
-    expect(SYSTEM_PROMPT).toContain('"notes"')
+    expect(SYSTEM).toContain('"notes"')
     const scene = readChatAnswer('```json\n{"title":"","elements":[{"id":"a","kind":"box","icon":"","label":"A","x":500,"y":500,"w":110,"h":55}],"connectors":[],"notes":["I assumed the protein sits in the inner membrane."]}\n```')
     expect(scene.notes).toEqual(['I assumed the protein sits in the inner membrane.'])
   })
@@ -164,8 +167,8 @@ describe('frames', () => {
 
 describe('plan first', () => {
   it('asks Claude to describe its plan and wait before it builds', () => {
-    const plain = buildChatRequest(false, 'glycolysis')
-    const planned = buildChatRequest(false, 'glycolysis', undefined, true)
+    const plain = buildChatRequest(SYSTEM, false, 'glycolysis')
+    const planned = buildChatRequest(SYSTEM, false, 'glycolysis', undefined, true)
     expect(plain).toContain('Answer format: reply with one JSON object')
     expect(plain).not.toContain('Step 1')
     expect(planned).toContain('Step 1, your first reply: no JSON yet.')
@@ -176,7 +179,7 @@ describe('plan first', () => {
       expect(text).toContain('"notes": []')
       expect(text).toContain('"kind" of an element is one of: icon, box, ellipse, text, membrane, cell, frame.')
     }
-    expect(planned.length).toBeLessThan(16000)
+    expect(planned.length).toBeLessThan(26000)
   })
 
   it('reads the figure from the end of a pasted conversation', () => {

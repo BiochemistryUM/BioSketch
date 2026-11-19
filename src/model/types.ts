@@ -116,7 +116,19 @@ export interface Endpoint {
   x: number
   y: number
   nodeId?: string
+  /**
+   * A fixed place on the attached node, for an end that is not simply aimed at the node's middle:
+   * across and down the node's box, from -1 (left edge, top edge) to 1 (right edge, bottom edge).
+   * Pathway files state it. An end attached by hand has none.
+   */
+  port?: Point
 }
+
+/**
+ * Which way a right-angled line leaves its start and reaches its end: 'h' sideways, 'v' up or down.
+ * 'hv' and 'vh' are lines with one corner.
+ */
+export type ElbowLegs = 'hh' | 'vv' | 'hv' | 'vh'
 
 export interface ConnectorNode extends NodeBase {
   type: 'connector'
@@ -136,6 +148,8 @@ export interface ConnectorNode extends NodeBase {
   label?: string
   /** 'elbow' draws right-angled segments; absent = a straight or curved line. */
   route?: 'elbow'
+  /** The way a right-angled line runs at its two ends. Absent = the same way at both, chosen by where the ends are. */
+  legs?: ElbowLegs
   /** How far the label was dragged from its default place beside the line. */
   labelOffset?: Point
 }
@@ -225,6 +239,36 @@ export interface ChartRefLine {
 /** Where the legend stands when it is not at the right of the plot. */
 export type LegendPlace = 'top' | 'bottom' | 'inside' | 'insideLeft' | 'none'
 
+/** A number written at every group of a chart: its mean, its median or how many values it has. */
+export interface ChartValueLabels {
+  show: 'mean' | 'median' | 'n'
+  /** Written above what is drawn for the group. Absent = inside the bar of a bar chart where it fits, above otherwise. */
+  above?: boolean
+  /** Digits after the decimal point, 0 to 6. Absent = three significant figures. */
+  decimals?: number
+  /** Colour of the numbers. Absent = dark, or white inside a dark bar. */
+  color?: string
+}
+
+/**
+ * Which points of a scatter chart have their name written, out of those named in the table.
+ * Absent = every point whose row has a name, as the table says.
+ */
+export interface ChartPointNames {
+  /** 'table': every named point; 'top': the `top` points ranked by `by`; 'none': no names at all. */
+  show: 'table' | 'top' | 'none'
+  /** How many points 'top' names, 1 to 100. Absent = 10. */
+  top?: number
+  /** How 'top' ranks points: far from x = 0 and the bottom of the plot together (a volcano plot), highest, or furthest from x = 0. Absent = 'distance'. */
+  by?: 'distance' | 'y' | 'x'
+  /** Only points right of x = 0 ('up'), left of it ('down'), or the top number on each side ('each'). Absent = both sides together. */
+  side?: 'up' | 'down' | 'each'
+  /** Names of the series whose points may be named. Absent = every series. */
+  series?: string[]
+  /** Names of points written whatever the ranking (genes the scientist wants to point out). */
+  always?: string[]
+}
+
 /** How the scientist wants the groups of a chart compared, and with which family of test. */
 export interface ChartTest {
   /** Compare means (t test, analysis of variance) or ranks (Mann-Whitney, Kruskal-Wallis and their paired forms). Absent = no test is run. */
@@ -233,6 +277,8 @@ export interface ChartTest {
   paired?: boolean
   /** With several groups: compare each group with the first only, not every pair. */
   versusFirst?: boolean
+  /** A chart with categories and series (two factors): compare the categories within each series; absent = the series within each category. */
+  across?: boolean
   /** Brackets show stars instead of the p value. */
   stars?: boolean
 }
@@ -251,6 +297,8 @@ export interface ChartNode extends NodeBase {
   error?: 'sd' | 'sem'
   /** Draw every value as a point (a dot chart always does). */
   points?: boolean
+  /** A bar chart with categories and series: the bars of one category stand on top of each other instead of side by side. */
+  stacked?: boolean
   /** How large the points are, as a multiple of their usual size (0.25 to 4). Absent = 1. */
   pointSize?: number
   /** How solid the points of single values are, 0.1 to 1. Absent = 1 (not transparent). */
@@ -271,8 +319,10 @@ export interface ChartNode extends NodeBase {
   xMin?: number
   xMax?: number
   xLog?: boolean
-  /** Scatter charts: draw the least-squares straight line through each series. */
+  /** Scatter charts: draw a fitted line through each series: the least-squares straight line, unless `curve` says otherwise. */
   fit?: boolean
+  /** What `fit` draws: 'dose' is a dose-response curve (four-parameter logistic along the logarithm of x). Absent = a straight line. */
+  curve?: 'dose'
   brackets?: ChartBracket[]
   /** The palette that colours groups without a colour of their own (an id of `PALETTES`). Absent = the usual colours. */
   palette?: string
@@ -280,6 +330,10 @@ export interface ChartNode extends NodeBase {
   refLines?: ChartRefLine[]
   /** Where the legend stands. Absent = at the right of the plot. */
   legend?: LegendPlace
+  /** A number written at every group (not in a scatter chart). Absent = none. */
+  valueLabels?: ChartValueLabels
+  /** Scatter charts: which named points have their name written. Absent = all of them. */
+  pointNames?: ChartPointNames
   /** The statistical test for the groups. Its results are never stored: they are worked out from the numbers. */
   test?: ChartTest
 }
@@ -308,8 +362,6 @@ export interface FigDoc {
   height: number
   /** Printed width of the page in millimetres (journal column width). Absent = not set. */
   widthMm?: number
-  /** The look of the built-in icons in this figure: absent = outlined pastel, 'flat' = flat cartoon. */
-  iconStyle?: 'flat'
   background: string
   /** Drawing order: first is at the back. */
   nodes: FigNode[]

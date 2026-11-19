@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useState } from 'react'
 import { anchorsOf, parsePath } from '../icons/path'
 import { finishReshape, reshapablePaths } from '../icons/reshape'
 import { add, boxCorners, rectCenter, rotate, unionRects } from '../model/geometry'
-import { connectorLabelPos, connectorMid, findNode, getBox, getRect, resolveConnector } from '../model/nodes'
+import { connectorLabelPos, connectorMid, findNode, getBox, getRect, hasOneCorner, resolveConnector } from '../model/nodes'
 import type { Point, Rect } from '../model/types'
 import { useEditor } from '../store'
 
@@ -110,7 +110,7 @@ export function Overlay({ marquee, attachHint, guides }: Props) {
       const lab = labelAt ? toScreen({ x: labelAt.x, y: labelAt.y - 5 }) : null
       parts.push(
         <g key="connector">
-          {grip('bend', mid, <rect className="handle bend" data-handle="bend" x={mid.x - 6} y={mid.y - 6} width={12} height={12} transform={`rotate(45 ${mid.x} ${mid.y})`} />)}
+          {!hasOneCorner(node) && grip('bend', mid, <rect className="handle bend" data-handle="bend" x={mid.x - 6} y={mid.y - 6} width={12} height={12} transform={`rotate(45 ${mid.x} ${mid.y})`} />)}
           {grip('ep:from', from, <circle className={`handle${node.from.nodeId ? ' attached' : ''}`} data-handle="ep:from" cx={from.x} cy={from.y} r={6} />)}
           {grip('ep:to', to, <circle className={`handle${node.to.nodeId ? ' attached' : ''}`} data-handle="ep:to" cx={to.x} cy={to.y} r={6} />)}
           {lab && grip('lab', lab, <circle className="handle label" data-handle="lab" cx={lab.x} cy={lab.y} r={5} />, 16)}

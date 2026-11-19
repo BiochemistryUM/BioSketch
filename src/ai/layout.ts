@@ -4,8 +4,7 @@
 // moved apart. No AI is involved: this is plain geometry, so it costs nothing and works the same
 // on both routes.
 
-import { elementBox, type ElementKind, type Scene, type SceneElement } from './scene'
-import { getIcon } from '../icons/library'
+import { elementBox, type ElementKind, type IconLookup, type Scene, type SceneElement } from './scene'
 
 export interface Tidied {
   scene: Scene
@@ -49,8 +48,8 @@ function within(small: Box, large: Box): boolean {
 }
 
 /** What to call an element when telling the scientist about it. */
-function nameOf(e: SceneElement): string {
-  const words = e.label.trim() || (e.kind === 'icon' ? (getIcon(null, e.icon)?.name ?? e.icon) : '')
+function nameOf(e: SceneElement, icons: IconLookup): string {
+  const words = e.label.trim() || (e.kind === 'icon' ? (icons(e.icon)?.name ?? e.icon) : '')
   return words ? `\u201c${words}\u201d` : `a ${e.kind === 'icon' ? 'shape' : e.kind}`
 }
 
@@ -58,14 +57,14 @@ function nameOf(e: SceneElement): string {
  * Repair the layout of a scene for a page of the given size. The scene that comes back has the
  * same elements, some of them moved; `fixes` says which and why.
  */
-export function tidyScene(scene: Scene, page: { width: number; height: number }): Tidied {
-  const boxes = scene.elements.map((e) => elementBox(e, page))
+export function tidyScene(scene: Scene, page: { width: number; height: number }, icons: IconLookup = () => undefined): Tidied {
+  const boxes = scene.elements.map((e) => elementBox(e, page, true, icons))
   const start = boxes.map((b) => ({ x: b.x, y: b.y }))
   // The drawing without its label, where it is now: something lying on the drawing of a larger
   // thing is on purpose, something lying on its label is not.
-  const drawings = scene.elements.map((e) => elementBox(e, page, false))
+  const drawings = scene.elements.map((e) => elementBox(e, page, false, icons))
   const drawing = (i: number): Box => ({ ...drawings[i], x: drawings[i].x + boxes[i].x - start[i].x, y: drawings[i].y + boxes[i].y - start[i].y })
-  const picture = scene.elements.map((e) => e.kind === 'icon' && !!getIcon(null, e.icon))
+  const picture = scene.elements.map((e) => e.kind === 'icon' && !!icons(e.icon))
   const nested = (i: number, j: number): boolean => {
     const [small, large] = area(drawings[i]) <= area(drawings[j]) ? [i, j] : [j, i]
     return picture[large] && within(drawing(small), drawing(large))
@@ -131,10 +130,10 @@ export function tidyScene(scene: Scene, page: { width: number; height: number })
   const fixes: string[] = []
   for (const key of apart) {
     const [i, j] = key.split(':').map(Number)
-    fixes.push(`Moved ${nameOf(scene.elements[i])} and ${nameOf(scene.elements[j])} apart: they were on top of each other.`)
+    fixes.push(`Moved ${nameOf(scene.elements[i], icons)} and ${nameOf(scene.elements[j], icons)} apart: they were on top of each other.`)
   }
   const inPair = new Set([...apart].flatMap((key) => key.split(':').map(Number)))
-  for (const i of offPage) if (!inPair.has(i)) fixes.push(`Moved ${nameOf(scene.elements[i])} back onto the page.`)
+  for (const i of offPage) if (!inPair.has(i)) fixes.push(`Moved ${nameOf(scene.elements[i], icons)} back onto the page.`)
   if (!fixes.length) return { scene, fixes }
 
   const round = (v: number): number => Math.round(v * 10) / 10

@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { removeNodes, updateNodes } from '../model/doc'
-import { SHAPE_LABEL_DEFAULT, fontStack, measureText, shapeLabelNode, shapeTextWidth } from '../model/nodes'
+import { growToFitLabel, SHAPE_LABEL_DEFAULT, fontStack, measureText, shapeLabelNode, shapeTextWidth } from '../model/nodes'
 import { LINE_HEIGHT, type FigNode } from '../model/types'
 import { useEditor } from '../store'
 
@@ -32,7 +32,8 @@ export function TextEditor({ id }: { id: string }) {
         updateNodes(d, [id], (n) => {
           if (n.type !== 'shape') return n
           const { label, ...rest } = n
-          return text.trim() ? { ...rest, label: { ...(label ?? SHAPE_LABEL_DEFAULT), text } } : rest
+          // A shape grows downwards when the words need more lines than fit.
+          return text.trim() ? growToFitLabel({ ...rest, label: { ...(label ?? SHAPE_LABEL_DEFAULT), text } }) : rest
         }),
       )
     } else if (!text.trim()) s.commit((d) => removeNodes(d, [id]), { select: s.selection.filter((x) => x !== id) })

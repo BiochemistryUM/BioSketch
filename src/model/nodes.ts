@@ -8,6 +8,7 @@ import {
   LINE_HEIGHT,
   type Box,
   type ConnectorNode,
+  type ElbowLegs,
   type Endpoint,
   type FigDoc,
   type FigNode,
@@ -168,6 +169,35 @@ export function shapeLabelNode(node: ShapeNode, label: ShapeLabel | undefined = 
   return { ...text, y: node.y + node.h * shapeTextArea(node.shape, node.w, node.h).middle - measureText(text).h / 2 }
 }
 
+/**
+ * The shape made tall enough for its words, when they need more lines than fit: it grows
+ * downwards, its top edge staying where it is (also when it is turned). A shape with room to
+ * spare, or without words, is handed back as it is: a shape never shrinks by itself. Used when
+ * the words or their size change, not when the scientist resizes the shape by hand.
+ */
+export function growToFitLabel(node: ShapeNode): ShapeNode {
+  if (!node.label?.text.trim()) return node
+  let grown = node
+  // A taller shape can leave more or less room across (a hexagon, a cylinder), so look again after growing.
+  for (let pass = 0; pass < 4; pass++) {
+    const label = shapeLabelNode(grown)
+    if (!label) break
+    const need = measureText(label).h + 2 * (SHAPE_TEXT_PAD + grown.strokeWidth / 2)
+    const share = shapeTextArea(grown.shape, grown.w, grown.h).height
+    if (need <= grown.h * share + 0.5) break
+    const h = Math.ceil(need / share)
+    // The middle of the top edge stays put: the centre moves down the shape's own axis by half the growth.
+    const turn = (grown.rotation * Math.PI) / 180
+    const by = (h - grown.h) / 2
+    const cx = grown.x + grown.w / 2 - Math.sin(turn) * by
+    const cy = grown.y + grown.h / 2 + Math.cos(turn) * by
+    grown = { ...grown, x: round1(cx - grown.w / 2), y: round1(cy - h / 2), h }
+  }
+  return grown
+}
+
+const round1 = (v: number): number => Math.round(v * 10) / 10
+
 // ---------- lookup ----------
 
 export const findNode = (doc: FigDoc, id: string | undefined): FigNode | undefined =>
@@ -197,10 +227,19 @@ interface Anchor {
   box: Box | null
 }
 
+/** Where a port lies: on the node's box (turned with it), a little outside an edge it sits on, like any attached end. */
+export function portPoint(box: Box, port: Point): Point {
+  const out = (v: number): number => (Math.abs(v) >= 0.999 ? Math.sign(v) * CONNECTOR_GAP : 0)
+  const local = { x: (port.x * box.w) / 2 + out(port.x), y: (port.y * box.h) / 2 + out(port.y) }
+  return add(rectCenter(box), rotate(local, box.rotation))
+}
+
 function anchorOf(ep: Endpoint, doc: FigDoc): Anchor {
   const node = findNode(doc, ep.nodeId)
   if (node && canAttach(node)) {
     const box = getBox(node, doc)
+    // An end with a port has its place on the node: from there on it behaves like a free end at that point.
+    if (ep.port) return { center: portPoint(box, ep.port), node: null, box: null }
     return { center: rectCenter(box), node, box }
   }
   return { center: { x: ep.x, y: ep.y }, node: null, box: null }
@@ -231,10 +270,20 @@ function clipToEdge(a: Anchor, toward: Point): Point {
 /** A right-angled connector runs sideways-down-sideways when its ends are further apart sideways. */
 const elbowIsHorizontal = (a: Point, b: Point): boolean => Math.abs(b.x - a.x) >= Math.abs(b.y - a.y)
 
-function resolveElbow(c: ConnectorNode, a: Anchor, b: Anchor): ResolvedConnector {
+/** Whether each end of a right-angled connector runs sideways (true) or up and down. */
+function elbowRuns(c: ConnectorNode, a: Anchor, b: Anchor): [boolean, boolean] {
+  if (c.legs) return [c.legs[0] === 'h', c.legs[1] === 'h']
   const horizontal = elbowIsHorizontal(a.center, b.center)
+  return [horizontal, horizontal]
+}
+
+/** True for a right-angled connector with one corner: it has no middle leg to move. */
+export const hasOneCorner = (c: Pick<ConnectorNode, 'route' | 'legs'>): boolean => c.route === 'elbow' && !!c.legs && c.legs[0] !== c.legs[1]
+
+function resolveElbow(c: ConnectorNode, a: Anchor, b: Anchor): ResolvedConnector {
+  const [startSideways, endSideways] = elbowRuns(c, a, b)
   // Leave each attached node from the middle of the side that faces the other end.
-  const exit = (anchor: Anchor, toward: Point): Point => {
+  const exit = (anchor: Anchor, toward: Point, horizontal: boolean): Point => {
     if (!anchor.box) return anchor.center
     // A shape with slanted sides is left where its outline really is on that side.
     if (anchor.node?.type === 'shape' && !anchor.box.rotation && outlineAlong(anchor.node.shape, anchor.box.w, anchor.box.h, { x: 1, y: 0 }) !== null) {
@@ -246,8 +295,11 @@ function resolveElbow(c: ConnectorNode, a: Anchor, b: Anchor): ResolvedConnector
     if (horizontal) return { x: toward.x >= anchor.center.x ? r.x + r.w + CONNECTOR_GAP : r.x - CONNECTOR_GAP, y: anchor.center.y }
     return { x: anchor.center.x, y: toward.y >= anchor.center.y ? r.y + r.h + CONNECTOR_GAP : r.y - CONNECTOR_GAP }
   }
-  const from = exit(a, b.center)
-  const to = exit(b, a.center)
+  const from = exit(a, b.center, startSideways)
+  const to = exit(b, a.center, endSideways)
+  // One corner: straight out of the start, then straight into the end.
+  if (startSideways !== endSideways) return { from, to, ctrl: null, via: [startSideways ? { x: to.x, y: from.y } : { x: from.x, y: to.y }] }
+  const horizontal = startSideways
   const offset = c.bend ? (horizontal ? c.bend.x : c.bend.y) : 0
   const via = horizontal
     ? [{ x: (from.x + to.x) / 2 + offset, y: from.y }, { x: (from.x + to.x) / 2 + offset, y: to.y }]
@@ -276,9 +328,10 @@ export function bendThrough(c: ConnectorNode, doc: FigDoc, handle: Point): Point
   const a = anchorOf(c.from, doc)
   const b = anchorOf(c.to, doc)
   if (c.route === 'elbow') {
+    if (hasOneCorner(c)) return undefined
     const { bend: _ignored, ...plain } = c
     const r = resolveElbow(plain, a, b)
-    const horizontal = elbowIsHorizontal(a.center, b.center)
+    const [horizontal] = elbowRuns(c, a, b)
     const offset = horizontal ? handle.x - (r.from.x + r.to.x) / 2 : handle.y - (r.from.y + r.to.y) / 2
     if (Math.abs(offset) < 3) return undefined
     return horizontal ? { x: round(offset, 1), y: 0 } : { x: 0, y: round(offset, 1) }
@@ -302,6 +355,22 @@ export function connectorLabelPos(
   return horizontal
     ? { x: at.x + off.x, y: at.y - 8 - c.strokeWidth / 2 + off.y, anchor: 'middle' }
     : { x: at.x + 9 + c.strokeWidth / 2 + off.x, y: at.y + 5 + off.y, anchor: 'start' }
+}
+
+/** Size of the words on an arrow, which is fixed. */
+export const ARROW_LABEL_SIZE = 14
+
+/**
+ * The words on an arrow as a label, drawn like any other label, so the marks for raised and
+ * lowered text, italics and bold work there too. Null when the arrow has no words. It carries the
+ * arrow's id, so a tap on the words is a tap on the arrow.
+ */
+export function connectorLabelNode(c: ConnectorNode, r: ResolvedConnector): TextNode | null {
+  const text = c.label?.trim()
+  if (!text) return null
+  const at = connectorLabelPos(c, r)
+  // `at.y` is the line the words stand on; a label is placed by its top.
+  return { id: c.id, type: 'text', x: at.x, y: at.y - ARROW_LABEL_SIZE * 0.92, text, fontSize: ARROW_LABEL_SIZE, fill: c.stroke, align: at.anchor === 'middle' ? 'center' : 'left', rotation: 0 }
 }
 
 // ---------- boxes ----------
@@ -453,11 +522,15 @@ export function rotateNodeAbout<T extends FigNode>(node: T, delta: number, origi
       }
     case 'connector': {
       const turn = (ep: Endpoint): Endpoint => ({ ...ep, ...rotate({ x: ep.x, y: ep.y }, delta, origin) })
+      // After a quarter turn, what ran sideways runs up and down.
+      const quarter = Math.abs(delta % 90) < 1e-6 && Math.round(delta / 90) % 2 !== 0
+      const swap = (leg: string): string => (leg === 'h' ? 'v' : 'h')
       return {
         ...node,
         from: turn(node.from),
         to: turn(node.to),
         ...(node.bend && node.route !== 'elbow' ? { bend: rotate(node.bend, delta) } : {}),
+        ...(node.legs && quarter ? { legs: (swap(node.legs[0]) + swap(node.legs[1])) as ElbowLegs } : {}),
       }
     }
   }

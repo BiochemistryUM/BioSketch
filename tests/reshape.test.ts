@@ -4,8 +4,6 @@
 import { describe, expect, it } from 'vitest'
 import { anchorsOf, curvesOnly, formatPath, moveAnchor, parsePath } from '../src/icons/path'
 import { countPoints, dropUnusedParts, movePoint, movePointInDoc, shapesToPaths } from '../src/icons/reshape'
-import { BUILTIN_ICONS } from '../src/icons/library'
-import { styleIcon } from '../src/icons/style'
 import { emptyDoc } from '../src/model/doc'
 import type { FigDoc, IconDef } from '../src/model/types'
 
@@ -127,12 +125,8 @@ describe('reshaping icon markup', () => {
     expect(countPoints(out)).toBe(4)
   })
 
-  it('treats the layers of a flat icon as one shape: one set of points, and all copies move together', () => {
-    const flat = styleIcon(BUILTIN_ICONS.find((i) => i.id === 'lysosome')!, 'flat')
-    const outlined = BUILTIN_ICONS.find((i) => i.id === 'lysosome')!
-    const body = shapesToPaths(flat.body)
-    // No more points than the outlined drawing has, although every shape is drawn in several layers.
-    expect(countPoints(body)).toBeLessThanOrEqual(countPoints(shapesToPaths(outlined.body)))
+  it('treats copies of one outline as one shape: one set of points, and all copies move together', () => {
+    // A drawing may draw an outline several times: filled, and again inside clip paths for shading.
     const layered = '<defs><clipPath id="a"><path d="M0 0L9 0L9 9Z"/></clipPath></defs><path d="M0 0L9 0L9 9Z" fill="#ff0000"/><g clip-path="url(#a)"><g transform="translate(-2 -2)"><path d="M0 0L9 0L9 9Z" fill="#00ff00"/></g></g><path d="M0 0L9 0L9 9Z" transform="rotate(90)" fill="#0000ff"/>'
     const moved = movePoint(layered, 0, 1, 3, 0)
     expect(moved.split('M0 0L12 0L9 9Z').length - 1).toBe(3)

@@ -1,13 +1,18 @@
 // Example figures, built from the same parts a user would use. They double as a demo of the format.
+// Their icons come from the NIH BioArt collections, so an example is ready once those drawings
+// have been fetched (buildTemplate); they are then stored in the figure like any placed icon.
 
-import { getIcon } from './icons/library'
+import { iconsUsed, type IconLookup } from './ai/scene'
+import { loadPack, packOf, type PackInfo } from './icons/packs'
 import { INK, outlinePoints, textLabel } from './model/build'
 import { emptyDoc, uid } from './model/doc'
-import type { ConnectorKind, ConnectorNode, FigDoc, FigNode, IconNode, MembraneNode, Point, ShapeNode } from './model/types'
+import type { ConnectorKind, ConnectorNode, FigDoc, FigNode, IconDef, IconNode, MembraneNode, Point, ShapeNode } from './model/types'
 
-function icon(iconId: string, cx: number, cy: number, scale = 1, extra: Partial<IconNode> = {}): IconNode {
-  const [w, h] = getIcon(null, iconId)?.viewBox ?? [80, 80]
-  return { id: uid(), type: 'icon', iconId, x: cx - (w * scale) / 2, y: cy - (h * scale) / 2, w: w * scale, h: h * scale, rotation: 0, ...extra }
+/** An icon of the given height, centred on a point. Without its drawing it is a square of that height. */
+function icon(icons: IconLookup, iconId: string, cx: number, cy: number, height: number): IconNode {
+  const [vw, vh] = icons(iconId)?.viewBox ?? [1, 1]
+  const w = (height * vw) / vh
+  return { id: uid(), type: 'icon', iconId, x: cx - w / 2, y: cy - height / 2, w, h: height, rotation: 0 }
 }
 
 const label = textLabel
@@ -34,7 +39,14 @@ const membrane = (points: Point[], closed: boolean, extra: Partial<MembraneNode>
   ...extra,
 })
 
-function signalling(): FigDoc {
+const RECEPTOR = 'nih-molecules--receptor-protein-10'
+const LIGAND = 'nih-molecules--cytokines'
+const DRUG = 'nih-lab--pill'
+const FACTOR = 'nih-molecules--irf3'
+const DNA = 'nih-molecules--dna'
+const PORE = 'nih-molecules--protein-pore'
+
+function signalling(icons: IconLookup): FigDoc {
   const title = label('Receptor tyrosine kinase signalling', 80, 28, { align: 'left', bold: true, fontSize: 26 })
   const plasma = membrane([{ x: 80, y: 230 }, { x: 1120, y: 230 }], false, { thickness: 26 })
   const nucleus = membrane(outline(840, 560, 210, 150, 16), true, { thickness: 16, headColor: '#9c86d6', tailColor: '#c9bbec', fill: '#f4f0fc' })
@@ -42,40 +54,42 @@ function signalling(): FigDoc {
   const inside = label('Cytoplasm', 1060, 280, { fontSize: 14, fill: '#6b7785', italic: true })
   const nucleusLabel = label('Nucleus', 840, 432, { fontSize: 14, fill: '#6b7785', italic: true })
 
-  const ligand = icon('ligand', 430, 100)
-  const ligandLabel = label('Growth factor', 520, 90)
-  const receptor = icon('receptor-dimer', 430, 232, 1.2)
+  const ligand = icon(icons, LIGAND, 430, 96, 64)
+  const ligandLabel = label('Growth factor', 540, 86)
+  const receptor = icon(icons, RECEPTOR, 430, 226, 150)
   const ras = pill('RAS', 430, 380, '#e3f3ef', '#1f8f84')
   const raf = pill('RAF', 430, 460, '#e3f3ef', '#1f8f84')
   const mek = pill('MEK', 430, 540, '#e3f3ef', '#1f8f84')
   const erk = pill('ERK', 430, 620, '#e3f3ef', '#1f8f84')
-  const drug = icon('pill', 190, 460, 0.9)
+  const drug = icon(icons, DRUG, 190, 452, 56)
   const drugLabel = label('RAF inhibitor', 190, 492)
-  const tf = icon('transcription-factor', 840, 530, 1.1)
-  const dna = icon('dna', 840, 600, 1.4)
-  const genes = label('Proliferation genes', 840, 648)
+  const tf = icon(icons, FACTOR, 760, 540, 84)
+  const tfLabel = label('Transcription factor', 760, 590, { fontSize: 14 })
+  const dna = icon(icons, DNA, 930, 560, 120)
+  const genes = label('Proliferation genes', 930, 628, { fontSize: 14 })
 
   return {
     ...emptyDoc('Receptor signalling (example)'),
     nodes: [
       plasma, nucleus, title, outside, inside, nucleusLabel,
-      ligand, ligandLabel, receptor, ras, raf, mek, erk, drug, drugLabel, tf, dna, genes,
+      ligand, ligandLabel, receptor, ras, raf, mek, erk, drug, drugLabel, tf, tfLabel, dna, genes,
       link(ligand, receptor),
       link(receptor, ras),
       link(ras, raf),
       link(raf, mek),
       link(mek, erk),
       link(erk, tf, 'arrow', { dashed: true, label: 'translocation' }),
+      link(tf, dna),
       link(drug, raf, 'inhibit', { stroke: '#c9403d' }),
     ],
   }
 }
 
-function ferroptosis(): FigDoc {
+function ferroptosis(icons: IconLookup): FigDoc {
   const cell = membrane(outline(600, 440, 500, 300, 28, 4), true, { thickness: 22, fill: '#fff8f1' })
   const title = label('Ferroptosis', 60, 18, { align: 'left', bold: true, fontSize: 26 })
 
-  const transporter = icon('transporter', 340, 144)
+  const transporter = icon(icons, PORE, 340, 144, 96)
   const transporterLabel = label('System xc⁻', 444, 100, { fontSize: 14 })
   const cystine = pill('Cystine', 340, 44, '#fff3d6', '#d39a1c')
   const cysteine = pill('Cysteine', 340, 270, '#fff3d6', '#d39a1c')
@@ -84,11 +98,10 @@ function ferroptosis(): FigDoc {
   const erastin = pill('Erastin', 150, 104, '#fde8e8', '#c9403d', 110)
   const rsl3 = pill('RSL3', 180, 540, '#fde8e8', '#c9403d', 100)
 
-  const iron = icon('iron', 640, 200, 1.1)
-  const ros = icon('ros', 640, 332)
+  const iron = pill('Fe^{2+}', 640, 210, '#f6dcc8', '#b5561f', 90)
+  const ros = pill('ROS', 640, 330, '#ffe1b0', '#e07b1a', 90)
   const perox = pill('Lipid peroxidation', 640, 450, '#ffe8d9', '#d9623a', 190, 50)
-  const lipid = icon('phospholipid', 640, 590, 0.9)
-  const lipidLabel = label('PUFA phospholipids', 760, 590, { fontSize: 14 })
+  const lipid = pill('PUFA phospholipids', 640, 580, '#fff3d6', '#d39a1c', 200)
   const death = pill('Ferroptosis', 920, 450, '#f8d0cf', '#c9403d', 140, 50)
 
   return {
@@ -96,7 +109,7 @@ function ferroptosis(): FigDoc {
     nodes: [
       cell, title,
       transporter, transporterLabel, cystine, cysteine, gsh, gpx4, erastin, rsl3,
-      iron, ros, perox, lipid, lipidLabel, death,
+      iron, ros, perox, lipid, death,
       link(cystine, transporter),
       link(transporter, cysteine),
       link(cysteine, gsh),
@@ -116,10 +129,30 @@ export interface Template {
   id: string
   name: string
   description: string
-  build: () => FigDoc
+  /** The icons the example uses, by their id in the collections. */
+  icons: string[]
+  /** The figure, given a way to find those drawings. It does not hold the drawings yet: see buildTemplate. */
+  build: (icons: IconLookup) => FigDoc
 }
 
 export const TEMPLATES: Template[] = [
-  { id: 'signalling', name: 'Receptor signalling', description: 'Membrane, receptor, kinase cascade, nucleus', build: signalling },
-  { id: 'ferroptosis', name: 'Ferroptosis pathway', description: 'Cell outline with a metabolic and cell-death pathway', build: ferroptosis },
+  { id: 'signalling', name: 'Receptor signalling', description: 'Membrane, receptor, kinase cascade, nucleus', icons: [RECEPTOR, LIGAND, DRUG, FACTOR, DNA], build: signalling },
+  { id: 'ferroptosis', name: 'Ferroptosis pathway', description: 'Cell outline with a metabolic and cell-death pathway', icons: [PORE], build: ferroptosis },
 ]
+
+/**
+ * An example as a complete figure: the collections its icons come from are fetched and the
+ * drawings stored in the figure. Rejects when a collection cannot be fetched.
+ */
+export async function buildTemplate(template: Template, packs: PackInfo[], load: (pack: PackInfo) => Promise<IconDef[]> = loadPack): Promise<FigDoc> {
+  const needed = new Set(template.icons.map(packOf))
+  const found = new Map<string, IconDef>()
+  for (const pack of packs.filter((p) => needed.has(p.id))) {
+    for (const def of await load(pack)) found.set(def.id, def)
+  }
+  const missing = template.icons.filter((id) => !found.has(id))
+  if (missing.length) throw new Error('The icons of this example could not be loaded. Check the connection and try again.')
+  const icons: IconLookup = (id) => found.get(id)
+  const doc = template.build(icons)
+  return { ...doc, customIcons: { ...doc.customIcons, ...iconsUsed(doc.nodes, icons) } }
+}

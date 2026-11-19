@@ -1,5 +1,7 @@
 # Icon wish list
 
+> **Superseded (19 November 2026).** BioSketch no longer draws icons of its own: the library offers only publicly available collections (NIH BioArt, Bioicons, Servier Medical Art), and the drawings marked "In BioSketch" below were deleted (they remain in git history). This list is kept as a record of subjects worth having; read "In BioSketch" as "was drawn for BioSketch, since removed", and the files it names (`pack-organs.ts` and others) no longer exist.
+
 A checklist of subjects worth having in the BioSketch library, compiled on 12 November 2026 from the subject areas covered by open icon collections. It lists names of biological things only; no artwork from any collection was copied or used as a drawing reference.
 
 **360 subjects:** 340 already in BioSketch, 0 to draw in the BioSketch style, 14 found only in the icon packs (Bioicons CC0 and Servier Medical Art), 6 still better imported from an open collection. The second video survey (last section) added 52 subjects, all now drawn; 13 of them are subjects the tables above used to list as "Icon pack" or "Import" (the main organs, thymus, human outline, fruit fly), so those rows now read "In BioSketch".

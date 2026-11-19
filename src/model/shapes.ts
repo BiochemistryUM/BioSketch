@@ -108,25 +108,29 @@ export function outlineAlong(shape: ShapeKind, w: number, h: number, direction: 
 }
 
 /**
- * Where the words inside a shape go: the share of its width a line may take, and how far down
- * (as a share of its height) their middle sits.
+ * Where the words inside a shape go: the share of its width a line may take, how far down (as a
+ * share of its height) their middle sits, and the share of its height lines of that width fit in
+ * (less where the outline slants or curves in above and below the middle).
  */
-export function shapeTextArea(shape: ShapeKind, w: number, h: number): { width: number; middle: number } {
+export function shapeTextArea(shape: ShapeKind, w: number, h: number): { width: number; middle: number; height: number } {
   switch (shape) {
     case 'ellipse':
-      return { width: 0.72, middle: 0.5 }
+      // A line 0.72 of the width wide fits where the ellipse is at least that wide.
+      return { width: 0.72, middle: 0.5, height: Math.sqrt(1 - 0.72 * 0.72) }
     case 'triangle':
-      return { width: 0.5, middle: 0.66 }
+      // Half the width is reached halfway down; the words are centred two thirds down.
+      return { width: 0.5, middle: 0.66, height: 0.32 }
     case 'diamond':
-      return { width: 0.5, middle: 0.5 }
+      return { width: 0.5, middle: 0.5, height: 0.5 }
     case 'hexagon':
       // Words sit across the middle, where a hexagon is widest: allow halfway between its flat top and its full width.
-      return { width: 1 - hexInset(w, h) / w, middle: 0.5 }
+      return { width: 1 - hexInset(w, h) / w, middle: 0.5, height: 0.5 }
     case 'cylinder':
-      return { width: 1, middle: 0.5 + cylinderRim(w, h) / h }
+      // Below the rim on top, above the curve at the bottom.
+      return { width: 1, middle: 0.5 + cylinderRim(w, h) / h, height: 1 - (3 * cylinderRim(w, h)) / h }
     case 'callout':
-      return { width: 1, middle: CALLOUT_BODY / 2 }
+      return { width: 1, middle: CALLOUT_BODY / 2, height: CALLOUT_BODY }
     default:
-      return { width: 1, middle: 0.5 }
+      return { width: 1, middle: 0.5, height: 1 }
   }
 }

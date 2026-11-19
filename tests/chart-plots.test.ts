@@ -4,7 +4,9 @@
 import { describe, expect, it } from 'vitest'
 import { renderSvg } from '../src/io/export'
 import { validateDoc } from '../src/io/files'
-import { CHART_COLOURS, axisFor, chartLayout, chartSeries, isGrouped, parseTable, scatterFits, tableText } from '../src/model/chart'
+import { CHART_COLOURS, axisFor, chartLayout, chartSeries, curveMethodsText, doseText, ec50Of, isGrouped, isStacked, parseTable, scatterFits, tableText } from '../src/model/chart'
+import doseRef from './stats-reference.json'
+import { applyInstruction } from '../src/model/chartCommands'
 import { nodeLabel } from '../src/model/describe'
 import { emptyDoc } from '../src/model/doc'
 import type { ChartNode, FigDoc, FigNode } from '../src/model/types'
@@ -383,5 +385,189 @@ describe('saving the new options', () => {
       expect(svg, node.kind).not.toMatch(/NaN|undefined|Infinity/)
       expect(svg, node.kind).toContain('<text')
     }
+  })
+})
+
+// The table above: WT has Vehicle 1.25 and Drug 2.25 (means), KO has Vehicle 3.25 and Drug 4.25.
+describe('stacked bars', () => {
+  const bars = (node: ChartNode) => chartLayout(node).rects
+  const foot = (r: { y: number; h: number }): number => r.y + r.h
+
+  it('stand on top of each other within a category, in the order of the legend', () => {
+    const side = bars(grouped())
+    const stack = bars(grouped({ stacked: true }))
+    expect(isStacked(grouped({ stacked: true }))).toBe(true)
+    expect(stack).toHaveLength(4)
+    // Side by side: four places across. Stacked: two, each holding two parts.
+    expect(new Set(side.map((r) => r.x)).size).toBe(4)
+    expect(new Set(stack.map((r) => r.x)).size).toBe(2)
+    const [wtVehicle, wtDrug, koVehicle, koDrug] = stack
+    expect(foot(wtDrug)).toBeCloseTo(wtVehicle.y, 0)
+    expect(foot(koDrug)).toBeCloseTo(koVehicle.y, 0)
+    expect(foot(wtVehicle)).toBeCloseTo(foot(koVehicle), 0)
+    // Each part is as tall as its mean: 1.25, 2.25, 3.25 and 4.25 on one scale.
+    const unit = wtVehicle.h / 1.25
+    expect(wtDrug.h / unit).toBeCloseTo(2.25, 1)
+    expect(koVehicle.h / unit).toBeCloseTo(3.25, 1)
+    expect(koDrug.h / unit).toBeCloseTo(4.25, 1)
+    // The axis reaches the tallest stack (7.5), not only the tallest mean.
+    expect(Math.max(...tickLabels(chartLayout(grouped({ stacked: true }))).map(Number))).toBeGreaterThanOrEqual(7.5)
+    expect([wtVehicle.fill, wtDrug.fill]).toEqual([koVehicle.fill, koDrug.fill])
+  })
+
+  it('hang means below zero under the base line', () => {
+    const groups = parseTable('A\tA\nUp\tDown\n2\t-1\n4\t-3')
+    const [up, down] = bars(chart({ groups, stacked: true }))
+    expect(foot(up)).toBeCloseTo(down.y, 0)
+    expect(down.h / up.h).toBeCloseTo(2 / 3, 1)
+  })
+
+  it('show means only, and say so when error bars or single values were asked for', () => {
+    const plain = chartLayout(grouped({ stacked: true }))
+    expect(plain.circles).toHaveLength(0)
+    expect(plain.notes).toEqual([])
+    const asked = chartLayout(grouped({ stacked: true, error: 'sd', points: true }))
+    expect(asked.circles).toHaveLength(0)
+    expect(asked.lines).toHaveLength(plain.lines.length)
+    expect(asked.notes).toContain('Stacked bars show the mean of each series only: error bars and single values are left out.')
+  })
+
+  it('need categories and a linear axis: otherwise the bars stand side by side', () => {
+    expect(isStacked(chart({ stacked: true }))).toBe(false)
+    expect(bars(chart({ stacked: true }))).toEqual(bars(chart()))
+    const log = chartLayout(grouped({ stacked: true, yLog: true }))
+    expect(new Set(log.rects.map((r) => r.x)).size).toBe(4)
+    expect(log.notes.some((n) => n.startsWith('Bars cannot be stacked on a logarithmic axis'))).toBe(true)
+    expect(isStacked(grouped({ stacked: true, kind: 'box' }))).toBe(false)
+  })
+
+  it('write a number inside each part where it fits, and say which were left out', () => {
+    const roomy = chartLayout(grouped({ stacked: true, w: 500, h: 420, valueLabels: { show: 'mean' } }))
+    expect(['1.25', '2.25', '3.25', '4.25'].every((v) => roomy.texts.some((t) => t.text === v))).toBe(true)
+    const part = roomy.rects[0]
+    const label = roomy.texts.find((t) => t.text === '1.25')!
+    expect(label.y).toBeGreaterThanOrEqual(part.y)
+    expect(label.y).toBeLessThanOrEqual(part.y + part.h)
+    const tight = chartLayout(grouped({ stacked: true, w: 200, h: 130, valueLabels: { show: 'mean' } }))
+    expect(tight.notes.some((n) => /not fit in (its part|their parts) of the stacked bar/.test(n))).toBe(true)
+  })
+
+  it('take brackets between categories, above the whole stack, but not between two parts of one bar', () => {
+    const between = chartLayout(grouped({ stacked: true, brackets: [{ from: 0, to: 2, label: 'across' }, { from: 0, to: 1, label: 'within' }] }))
+    expect(between.texts.some((t) => t.text === 'across')).toBe(true)
+    expect(between.texts.some((t) => t.text === 'within')).toBe(false)
+    const top = Math.min(...between.rects.map((r) => r.y))
+    expect(between.texts.find((t) => t.text === 'across')!.y).toBeLessThan(top)
+  })
+
+  it('are kept in a saved figure, for a bar chart only', () => {
+    expect(saved(grouped({ stacked: true })).stacked).toBe(true)
+    expect(saved({ ...grouped({ stacked: true }), kind: 'box' }).stacked).toBeUndefined()
+    expect(saved({ ...grouped(), stacked: 'yes' }).stacked).toBeUndefined()
+    expect(renderSvg(docOf(grouped({ stacked: true })), options).svg).toContain('<rect')
+  })
+
+  it('can be asked for in the instruction box', () => {
+    const on = applyInstruction(grouped(), 'stack the bars')
+    expect(on.node.stacked).toBe(true)
+    expect(on.done).toEqual(['The bars of each category are stacked.'])
+    expect(on.unclear).toEqual([])
+    expect(applyInstruction(grouped(), 'stacked bar chart').node.stacked).toBe(true)
+    const fromBoxes = applyInstruction(grouped({ kind: 'box' }), 'stacked bars')
+    expect([fromBoxes.node.kind, fromBoxes.node.stacked]).toEqual(['bar', true])
+    expect(fromBoxes.done).toEqual(['The chart is now a bar chart; the bars of each category are stacked.'])
+    for (const words of ['bars side by side', 'unstack the bars', 'do not stack the bars', 'no stacking']) {
+      const off = applyInstruction(grouped({ stacked: true }), words)
+      expect(off.node.stacked, words).toBeUndefined()
+      expect(off.done, words).toEqual(['The bars of a category stand side by side.'])
+      expect(off.unclear, words).toEqual([])
+    }
+    const plain = applyInstruction(chart(), 'stack the bars')
+    expect(plain.node.stacked).toBeUndefined()
+    expect(plain.unclear[0]).toContain('Stacking needs a table with categories and series')
+    expect(applyInstruction(scatter(), 'stacked').unclear[0]).toContain('not in a scatter chart')
+  })
+})
+
+// The data of scripts/stats-reference.R: a rising curve, and a falling one with three values per dose.
+describe('a dose-response curve on a scatter chart', () => {
+  type DoseRef = { x: number[]; y: number[]; A: number; B: number; xmid: number; seXmid: number; tcrit: number }
+  const sets = doseRef.dose as unknown as Record<'rise' | 'fall', DoseRef>
+  const dose = (extra: Partial<ChartNode> = {}): ChartNode =>
+    chart({ kind: 'scatter', fit: true, curve: 'dose', xLog: true, groups: [{ name: 'Agonist', values: sets.rise.y, xs: sets.rise.x }, { name: 'Inhibitor', values: sets.fall.y, xs: sets.fall.x }], ...extra })
+
+  it('is fitted to each series and reported with its EC50 and the 95 % interval R gives', () => {
+    const [rise, fall] = scatterFits(dose())
+    expect(rise.dose!.logEc50).toBeCloseTo(sets.rise.xmid, 5)
+    expect(fall.dose!.hill).toBeLessThan(0)
+    const { ec50, low, high } = ec50Of(rise.dose!)
+    expect(ec50).toBeCloseTo(10 ** sets.rise.xmid, 4)
+    expect(low!).toBeCloseTo(10 ** (sets.rise.xmid - sets.rise.tcrit * sets.rise.seXmid), 3)
+    expect(high!).toBeCloseTo(10 ** (sets.rise.xmid + sets.rise.tcrit * sets.rise.seXmid), 3)
+    expect(doseText(rise.dose!)).toMatch(/^EC50 = 1\.93 \(95 % CI 1\.83 to 2\.04\), Hill slope 1\.19, bottom 2\.07, top 96\.9, R² = 0\.9999$/)
+    expect(doseText(fall.dose!)).toMatch(/^IC50 = 5\.41 \(95 % CI [\d.]+ to [\d.]+\), Hill slope -1\.11, bottom 3\.96, top 100, R² = 0\.9955$/)
+    // No curve is worked out unless one is asked for.
+    expect(scatterFits(dose({ curve: undefined }))[0].dose).toBeNull()
+    expect(scatterFits(dose({ fit: undefined }))[0].dose).toBeNull()
+  })
+
+  it('is drawn as a curve through the doses of its series, in place of the straight line', () => {
+    const curved = chartLayout(dose())
+    const straight = chartLayout(dose({ curve: undefined }))
+    const long = (d: ReturnType<typeof chartLayout>) => d.paths.filter((p) => p.d.split('L').length > 40)
+    expect(long(curved)).toHaveLength(2)
+    expect(long(straight)).toHaveLength(0)
+    expect(curved.paths.filter((p) => p.d.split('L').length === 2)).toHaveLength(0)
+    expect(curved.notes).toEqual([])
+    // It rises from left to right for the agonist: the last point is higher on the page (a smaller y).
+    const [first, last] = [long(curved)[0].d.split('L')[0].slice(1), long(curved)[0].d.split('L').pop()!].map((p) => p.split(' ').map(Number))
+    expect(last[0]).toBeGreaterThan(first[0])
+    expect(last[1]).toBeLessThan(first[1])
+    expect(renderSvg(docOf(dose()), options).svg).toContain('<path')
+  })
+
+  it('says what it could not do: no curve, doses of zero, an EC50 beyond the doses, a plain x axis', () => {
+    const flat = chartLayout(dose({ groups: [{ name: 'Flat', values: [1, 2, 3, 4, 5, 6], xs: [1, 2, 4, 8, 16, 32] }] }))
+    expect(flat.notes.some((n) => n.startsWith('No dose-response curve could be fitted to Flat'))).toBe(true)
+    const zero = chartLayout(dose({ groups: [{ name: 'Agonist', values: [2, ...sets.rise.y], xs: [0, ...sets.rise.x] }], xLog: false }))
+    expect(zero.notes.some((n) => n.startsWith('1 point has a dose of zero or below and is left out of the curve'))).toBe(true)
+    expect(zero.notes.some((n) => n.startsWith('A dose-response curve is usually shown on a logarithmic x axis'))).toBe(true)
+    // Only the lower half of the curve was measured: the middle is estimated beyond the highest dose.
+    const half = sets.rise.x.map((x, i) => [x, sets.rise.y[i]] as const).filter(([x]) => x <= 1)
+    const partial = dose({ groups: [{ name: 'Agonist', values: [...half.map((p) => p[1]), 31, 32], xs: [...half.map((p) => p[0]), 1.2, 1.4] }] })
+    const fit = scatterFits(partial)[0].dose
+    if (fit && fit.logEc50 > Math.log10(1.4)) expect(chartLayout(partial).notes.some((n) => n.includes('lies outside the doses that were tested'))).toBe(true)
+  })
+
+  it('is kept in a saved figure together with the fit, and only for a scatter chart', () => {
+    expect(saved(dose()).curve).toBe('dose')
+    expect(saved({ ...dose(), fit: undefined }).curve).toBeUndefined()
+    expect(saved({ ...dose(), curve: 'spline' }).curve).toBeUndefined()
+    expect(saved({ ...chart(), fit: true, curve: 'dose' }).curve).toBeUndefined()
+  })
+
+  it('has a text for the methods that names the equation, every curve and R', () => {
+    const text = curveMethodsText(dose())!
+    expect(text).toContain('y = bottom + (top − bottom) / (1 + 10^((log EC50 − log x) × Hill slope))')
+    expect(text).toContain('Agonist: EC50 = 1.93 (95 % CI 1.83 to 2.04), Hill slope 1.19, bottom 2.07, top 96.9, R² = 0.9999, n = 9')
+    expect(text).toContain('Inhibitor: IC50 = 5.41')
+    expect(text).toContain('R 4.4 (nls with the model SSfpl)')
+    expect(curveMethodsText(dose({ curve: undefined }))).toBeNull()
+    expect(curveMethodsText(chart())).toBeNull()
+  })
+
+  it('can be asked for in the instruction box, and swapped for a straight line', () => {
+    for (const words of ['fit a dose-response curve', 'dose response', '4PL fit', 'four-parameter logistic curve', 'sigmoidal curve', 'show the EC50', 'IC50 curve']) {
+      const r = applyInstruction(dose({ fit: undefined, curve: undefined }), words)
+      expect([r.node.fit, r.node.curve], words).toEqual([true, 'dose'])
+      expect(r.unclear, words).toEqual([])
+      expect(r.done, words).toEqual(['A dose-response curve (four-parameter logistic) is fitted to each series; its EC50 is listed under the table.'])
+    }
+    const line = applyInstruction(dose(), 'fit a regression line')
+    expect([line.node.fit, line.node.curve]).toEqual([true, undefined])
+    const off = applyInstruction(dose(), 'remove the dose-response curve')
+    expect([off.node.fit, off.node.curve]).toEqual([undefined, undefined])
+    expect(applyInstruction(dose(), 'no fitted line').node.curve).toBeUndefined()
+    expect(applyInstruction(chart(), 'dose-response curve').unclear[0]).toContain('needs a scatter chart')
   })
 })

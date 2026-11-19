@@ -3,8 +3,10 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { getIcon, isPublicDomain } from '../icons/library'
+import { hasMixing } from '../icons/svg'
 import { contentRect, usedIconIds } from '../model/doc'
-import type { FigDoc, Rect } from '../model/types'
+import { ARROW_LABEL_SIZE } from '../model/nodes'
+import type { FigDoc, FigNode, ImageNode, Rect } from '../model/types'
 import { DocNodes } from '../render/DocNodes'
 import { buildPptx } from './pptx'
 
@@ -74,8 +76,6 @@ export function attributionText(doc: FigDoc): string {
 export const mmPerUnit = (doc: FigDoc): number | null => (doc.widthMm && doc.width > 0 ? doc.widthMm / doc.width : null)
 
 const MM_PER_POINT = 25.4 / 72
-/** Size of arrow labels, which is fixed. */
-const ARROW_LABEL_SIZE = 14
 
 /**
  * The smallest text in the figure, in printed points, when a printed width is set.
@@ -97,17 +97,33 @@ export function scaleForDpi(doc: FigDoc, dpi: number): number | null {
   return k ? (dpi * k) / 25.4 : null
 }
 
-export function renderSvg(doc: FigDoc, opts: ExportOptions): { svg: string; width: number; height: number } {
+/**
+ * Links inside the figure (a placed picture, a shape an icon draws twice, a gradient built on
+ * another) in their older spelling, `xlink:href`. Browsers read both spellings; Illustrator,
+ * Office, older Inkscape and the converters journals run read only the older one, and a file
+ * with the newer one opens there with those parts missing.
+ */
+export const olderLinks = (markup: string): string => markup.replace(/<[^<>]+>/g, (tag) => tag.replace(/(\s)href="/g, '$1xlink:href="'))
+
+/**
+ * `sized: false` states the size in figure units even when a printed width is set (see `forPixels`).
+ * `credited` is the figure whose icons are named in the credit, when `doc` no longer holds them all
+ * (see `iconsAsPictures`).
+ */
+export function renderSvg(doc: FigDoc, opts: ExportOptions, sized = true, credited: FigDoc = doc): { svg: string; width: number; height: number } {
   const r = exportRect(doc, opts.area, opts.includeSketch)
-  const body = renderToStaticMarkup(createElement(DocNodes, { doc, hideSketch: !opts.includeSketch })).replace(/ data-id="[^"]*"/g, '')
-  const credit = attributionText(doc)
+  // Drawn inside an <svg> element, so that React knows these are SVG elements (it warns about
+  // <linearGradient> otherwise); only what is inside it is kept.
+  const drawn = renderToStaticMarkup(createElement('svg', null, createElement(DocNodes, { doc, hideSketch: !opts.includeSketch })))
+  const body = olderLinks(drawn.replace(/^<svg>/, '').replace(/<\/svg>$/, '').replace(/ data-id="[^"]*"/g, ''))
+  const credit = attributionText(credited)
   // With a printed width set, the file states its real size, so it opens at the right size elsewhere.
-  const k = mmPerUnit(doc)
+  const k = sized ? mmPerUnit(doc) : null
   const size = (units: number): string => (k ? `${Math.round(units * k * 100) / 100}mm` : String(units))
   const background = opts.transparent ? '' : `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="${escapeXml(doc.background)}"/>`
   const svg =
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${size(r.w)}" height="${size(r.h)}" viewBox="${r.x} ${r.y} ${r.w} ${r.h}">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${size(r.w)}" height="${size(r.h)}" viewBox="${r.x} ${r.y} ${r.w} ${r.h}">` +
     `<title>${escapeXml(doc.name)}</title>` +
     (credit ? `<desc>${escapeXml(credit)}</desc>` : '') +
     background +
@@ -141,8 +157,15 @@ async function rasterize(svg: string, width: number, height: number, scale: numb
   }
 }
 
+/**
+ * The figure as the browser turns it into pixels: sized in whole figure units. A size in
+ * millimetres is a fraction of a pixel wider than the picture the browser makes of it, which
+ * leaves a faintly see-through line of pixels along the edges of the PNG.
+ */
+const forPixels = (doc: FigDoc, opts: ExportOptions): { svg: string; width: number; height: number } => renderSvg(doc, opts, false)
+
 export async function renderPng(doc: FigDoc, opts: ExportOptions, scale: number): Promise<Blob> {
-  const { svg, width, height } = renderSvg(doc, opts)
+  const { svg, width, height } = forPixels(doc, opts)
   const canvas = await rasterize(svg, width, height, scale)
   return new Promise((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('The image could not be saved.'))), 'image/png'),
@@ -151,32 +174,78 @@ export async function renderPng(doc: FigDoc, opts: ExportOptions, scale: number)
 
 /** A PNG of the page (with the sketch) as base64, no larger than `maxSide` pixels. Used for the AI. */
 export async function renderPngBase64(doc: FigDoc, maxSide: number): Promise<string> {
-  const { svg, width, height } = renderSvg(doc, { area: 'page', transparent: false, includeSketch: true })
+  const { svg, width, height } = forPixels(doc, { area: 'page', transparent: false, includeSketch: true })
   const canvas = await rasterize(svg, width, height, Math.min(1, maxSide / Math.max(width, height)))
   return canvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '')
 }
 
-export function download(data: Blob | string, filename: string, type = 'application/octet-stream'): void {
-  const blob = typeof data === 'string' ? new Blob([data], { type }) : data
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+export { download, fileBase } from './download'
+
+/** Makes a PNG, as a data URL, of an SVG file `width` × `height` units large, with `scale` pixels to the unit. */
+export type ToPng = (svg: string, width: number, height: number, scale: number) => Promise<string>
+
+const viaCanvas: ToPng = async (svg, width, height, scale) => (await rasterize(svg, width, height, scale)).toDataURL('image/png')
+
+/** True when PowerPoint cannot draw this object as the page shows it: an icon shaded with shapes that mix. */
+export const needsPicture = (doc: FigDoc, node: FigNode): boolean =>
+  node.type === 'icon' && !node.hidden && !node.guide && hasMixing(getIcon(doc, node.iconId)?.body ?? '')
+
+/**
+ * PowerPoint draws the SVG of a slide itself, but it does not know shapes that mix with what is
+ * beneath them (`mix-blend-mode`): it paints them as plain covering shapes, so a shadow becomes a
+ * grey patch and a tint a solid colour. For PowerPoint every icon shaded that way is therefore
+ * replaced by a picture of itself, as the browser draws it; it keeps its place, size, turn and
+ * the arrows attached to it. Everything else stays as it is drawn. An icon whose picture cannot be
+ * made is left as it is.
+ */
+export async function iconsAsPictures(doc: FigDoc, pixelsPerUnit: number, toPng: ToPng = viaCanvas): Promise<FigDoc> {
+  if (!doc.nodes.some((node) => needsPicture(doc, node))) return doc
+  const made = new Map<string, string>()
+  const nodes: FigNode[] = []
+  for (const node of doc.nodes) {
+    if (node.type !== 'icon' || !needsPicture(doc, node)) {
+      nodes.push(node)
+      continue
+    }
+    const { type: _type, iconId, flipX, flipY, colors, strokeScale, ...placed } = node
+    // The same icon, coloured and sized the same, is drawn once however often it stands in the figure.
+    const key = JSON.stringify([iconId, colors ?? null, strokeScale ?? null, !!flipX, !!flipY, node.w, node.h])
+    let src = made.get(key)
+    if (src === undefined) {
+      // The icon alone on a see-through page of its own size, drawn by the one renderer; its turn and
+      // its transparency stay with the picture that takes its place.
+      const alone: FigDoc = { ...doc, width: node.w, height: node.h, widthMm: undefined, nodes: [{ ...node, x: 0, y: 0, rotation: 0, opacity: undefined, locked: undefined, groupId: undefined }] }
+      const { svg } = renderSvg(alone, { area: 'page', transparent: true, includeSketch: false }, false)
+      try {
+        src = await toPng(svg, node.w, node.h, pixelsPerUnit)
+      } catch {
+        src = ''
+      }
+      made.set(key, src)
+    }
+    if (!src.startsWith('data:image/png;base64,')) {
+      nodes.push(node)
+      continue
+    }
+    const picture: ImageNode = { ...placed, type: 'image', src }
+    nodes.push(picture)
+  }
+  return { ...doc, nodes }
 }
 
-export function fileBase(doc: FigDoc): string {
-  return doc.name.trim().replace(/[^\w\- ]+/g, '').replace(/\s+/g, '-').toLowerCase() || 'figure'
+/** The SVG stored in a PowerPoint file: the figure, with the icons PowerPoint cannot draw as pictures. */
+export async function svgForPowerPoint(doc: FigDoc, opts: ExportOptions, pixelsPerUnit: number, toPng: ToPng = viaCanvas): Promise<{ svg: string; width: number; height: number }> {
+  return renderSvg(await iconsAsPictures(doc, pixelsPerUnit, toPng), opts, true, doc)
 }
 
 /** A PowerPoint file with the figure on one slide, as a vector picture with a PNG beside it for older programs. */
 export async function renderPptx(doc: FigDoc, opts: ExportOptions): Promise<Blob> {
-  const { svg, width, height } = renderSvg(doc, opts)
+  const r = exportRect(doc, opts.area, opts.includeSketch)
   // The PNG is only the fallback; about 2400 pixels on the long side is sharp on any projector.
-  const png = await renderPng(doc, opts, Math.min(3, 2400 / Math.max(width, height)))
+  const scale = Math.min(3, 2400 / Math.max(r.w, r.h))
+  const png = await renderPng(doc, opts, scale)
+  // Icons that become pictures get twice as many pixels, so they stay sharp when the slide is enlarged.
+  const { svg, width, height } = await svgForPowerPoint(doc, opts, scale * 2)
   const file = buildPptx({ title: doc.name, width, height, png: new Uint8Array(await png.arrayBuffer()), svg })
   return new Blob([file.buffer as ArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' })
 }

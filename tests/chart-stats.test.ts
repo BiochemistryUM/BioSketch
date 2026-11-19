@@ -2,7 +2,9 @@
 // (quantile type 7, boxplot fences on those quartiles, bw.nrd0, dnorm kernel, lm).
 
 import { describe, expect, it } from 'vitest'
-import { bandwidth, boxStats, density, fitLine, quantile } from '../src/model/chartStats'
+import { doseResponseAt, fitDose, bandwidth, boxStats, density, fitLine, quantile } from '../src/model/chartStats'
+import { tCritical } from '../src/model/distributions'
+import doseRef from './stats-reference.json'
 
 const X = [2.1, 3.4, 3.9, 4.4, 5.0, 5.6, 6.1, 7.3, 9.8, 14.2]
 const Y = [1.2, 2.9, 3.1, 4.8, 4.9, 6.4, 6.2, 8.1, 9.9, 15.1]
@@ -79,5 +81,75 @@ describe('fitted line', () => {
     expect(fitLine([[2, 1], [2, 5]])).toBeNull()
     expect(fitLine([])).toBeNull()
     expect(fitLine([[1, 2], [NaN, 3], [2, 4]])).toMatchObject({ slope: 2, n: 2 })
+  })
+})
+
+// Reference: R 4.4, nls(y ~ SSfpl(log10(x), A, B, xmid, scal)), written by scripts/stats-reference.R.
+describe('a dose-response curve (four-parameter logistic)', () => {
+  type DoseRef = { x: number[]; y: number[]; A: number; B: number; xmid: number; scal: number; seXmid: number; sse: number; r2: number; tcrit: number }
+  const sets = doseRef.dose as unknown as Record<'rise' | 'fall' | 'shallow', DoseRef>
+  const points = (r: DoseRef): [number, number][] => r.x.map((x, i) => [Math.log10(x), r.y[i]])
+  const near = (got: number, want: number, rel: number, what: string) => expect(Math.abs(got - want), `${what}: ${got} against ${want}`).toBeLessThanOrEqual(rel * Math.max(1, Math.abs(want)))
+
+  it('is the curve R fits: plateaus, middle, slope, how well it fits, and the standard error of the middle', () => {
+    for (const name of ['rise', 'fall', 'shallow'] as const) {
+      const r = sets[name]
+      const fit = fitDose(points(r))!
+      expect(fit, name).not.toBeNull()
+      near(fit.bottom, Math.min(r.A, r.B), 1e-5, `${name} bottom`)
+      near(fit.top, Math.max(r.A, r.B), 1e-5, `${name} top`)
+      near(fit.logEc50, r.xmid, 1e-5, `${name} log EC50`)
+      // R's `scal` is the width of the curve in natural-log steps; the Hill slope is its inverse per decade.
+      near(fit.hill, (r.B >= r.A ? 1 : -1) / (r.scal * Math.LN10), 1e-5, `${name} hill`)
+      near(fit.r2, r.r2, 1e-7, `${name} R²`)
+      near(fit.seLogEc50!, r.seXmid, 1e-4, `${name} standard error`)
+      expect(fit.n).toBe(r.x.length)
+    }
+    // Rising curves have a slope above zero, a falling one below; the top is always the higher plateau.
+    expect(fitDose(points(sets.rise))!.hill).toBeGreaterThan(0)
+    expect(fitDose(points(sets.fall))!.hill).toBeLessThan(0)
+    expect(fitDose(points(sets.fall))!.top).toBeGreaterThan(fitDose(points(sets.fall))!.bottom)
+  })
+
+  it('gives the same curve whatever order the points come in, and halfway between the plateaus at the EC50', () => {
+    const r = sets.fall
+    const fit = fitDose(points(r))!
+    const shuffled = fitDose([...points(r)].reverse())!
+    near(shuffled.logEc50, fit.logEc50, 1e-7, 'log EC50')
+    near(shuffled.hill, fit.hill, 1e-7, 'hill')
+    expect(doseResponseAt(fit, fit.logEc50)).toBeCloseTo((fit.top + fit.bottom) / 2, 9)
+    expect(doseResponseAt(fit, -50)).toBeCloseTo(fit.top, 6)
+    expect(doseResponseAt(fit, 50)).toBeCloseTo(fit.bottom, 6)
+  })
+
+  it('recovers a curve that passes through every point', () => {
+    const truth = { bottom: 5, top: 80, logEc50: 0.4, hill: 1.3 }
+    const exact = fitDose([-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2].map((lx) => [lx, doseResponseAt(truth, lx)]))!
+    near(exact.bottom, 5, 1e-6, 'bottom')
+    near(exact.top, 80, 1e-6, 'top')
+    near(exact.logEc50, 0.4, 1e-6, 'log EC50')
+    near(exact.hill, 1.3, 1e-6, 'hill')
+    expect(exact.r2).toBeCloseTo(1, 9)
+  })
+
+  it('gives no curve where the data define none, as R stops with an error there', () => {
+    // Too few points, too few doses, a response that never changes.
+    expect(fitDose([[0, 1], [1, 2], [2, 3], [3, 4]])).toBeNull()
+    expect(fitDose([[0, 1], [0, 2], [1, 3], [1, 4], [2, 5], [2, 6]])).toBeNull()
+    expect(fitDose([[0, 5], [1, 5], [2, 5], [3, 5], [4, 5]])).toBeNull()
+    // A jump between two doses: any steepness fits equally, so there is no single slope.
+    expect(fitDose([[-2, 0], [-1, 0], [0, 0], [1, 10], [2, 10], [3, 10]])).toBeNull()
+    // Points that are not numbers are ignored.
+    expect(fitDose([...points(sets.rise), [NaN, 3], [1, Infinity]])!.n).toBe(sets.rise.x.length)
+  })
+})
+
+describe('the factor of a confidence interval', () => {
+  it('is R’s qt', () => {
+    const want = (doseRef.dose as unknown as { qt: number[] }).qt
+    const got = [tCritical(0.05, 1), tCritical(0.05, 5), tCritical(0.05, 20), tCritical(0.01, 3), tCritical(0.1, 200)]
+    got.forEach((g, i) => expect(Math.abs(g - want[i])).toBeLessThan(1e-8 * want[i]))
+    expect(tCritical(0, 5)).toBeNaN()
+    expect(tCritical(0.05, 0)).toBeNaN()
   })
 })

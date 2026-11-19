@@ -9,10 +9,10 @@
 // Every reader below looks for its phrase in a clause, makes its change and takes its words out;
 // words left over that are not small talk ("please", "the", "make") are reported back.
 
-import { CHART_FONT, MAX_REF_LINES, POINT_OPACITY_MIN, POINT_SIZE_MAX, POINT_SIZE_MIN, chartAdvice, chartSamples, chartSeries, crossTable, hasPoints, isGrouped, pointStyle, usable, withTestBrackets } from './chart'
+import { TWO_FACTOR_ONLY, CHART_FONT, MAX_POINT_LABELS, MAX_REF_LINES, POINT_NAMES_TOP, POINT_OPACITY_MIN, POINT_SIZE_MAX, POINT_SIZE_MIN, VALUE_DECIMALS_MAX, chartAdvice, chartSamples, chartSeries, crossTable, hasPoints, isGrouped, pointNamesIn, pointStyle, usable, usablePointNames, usableValueLabels, usualValueLabel, withTestBrackets } from './chart'
 import { TEST_NAMES, testFor } from './chartTests'
 import { PALETTES } from './palettes'
-import type { ChartGroup, ChartKind, ChartNode, ChartRefLine, ChartTest, LegendPlace, PointShape } from './types'
+import type { ChartGroup, ChartKind, ChartNode, ChartPointNames, ChartRefLine, ChartTest, ChartValueLabels, LegendPlace, PointShape } from './types'
 
 export interface InstructionResult {
   node: ChartNode
@@ -35,6 +35,8 @@ export const INSTRUCTION_EXAMPLES = [
   'squares for Treated',
   'Control points smaller and 60% transparent',
   'make Treated red',
+  'write the mean in each bar, in white',
+  'show n above the bars',
   'colour-blind friendly colours',
   'title: Cell viability',
   'y label: Viable cells (%)',
@@ -72,6 +74,8 @@ interface Reading {
   unclear: string[]
   /** The group the sentence was last speaking of. */
   carried?: string
+  /** The sentence was last speaking of the numbers written at the groups. */
+  labels?: boolean
 }
 
 /** Find `pattern` in what is left of the clause, take its words out, and return the match. */
@@ -139,13 +143,14 @@ function readTitle(r: Reading, raw: string): boolean {
 
 const setTest = (node: ChartNode, change: Partial<ChartTest>): ChartNode => {
   const next = { ...(node.test ?? {}), ...change }
-  const kept: ChartTest = { ...(next.by ? { by: next.by } : {}), ...(next.paired ? { paired: true } : {}), ...(next.versusFirst ? { versusFirst: true } : {}), ...(next.stars ? { stars: true } : {}) }
+  const kept: ChartTest = { ...(next.by ? { by: next.by } : {}), ...(next.paired ? { paired: true } : {}), ...(next.versusFirst ? { versusFirst: true } : {}), ...(next.across ? { across: true } : {}), ...(next.stars ? { stars: true } : {}) }
   return { ...node, test: Object.keys(kept).length ? kept : undefined }
 }
 
 /** The name of the test the chart now runs, as it stands inside a sentence. */
 function testName(node: ChartNode): string {
   if (!node.test?.by) return 'no test'
+  if (isGrouped(node)) return 'a two-way analysis of variance (ANOVA), as the table has categories and series'
   const k = chartSamples(node).samples.length
   const name = TEST_NAMES[testFor(k, node.test.by, !!node.test.paired)]
   // Tests named after people keep their capital.
@@ -154,8 +159,10 @@ function testName(node: ChartNode): string {
 
 function readTest(r: Reading) {
   const scatter = r.node.kind === 'scatter'
-  const refuse = (what: string) => r.unclear.push(scatter ? `${what} needs groups to compare; a scatter chart has series of points instead.` : `${what} is not offered for a chart with categories and series (two factors).`)
-  const possible = !scatter && !isGrouped(r.node)
+  const refuse = (what: string) => r.unclear.push(`${what} needs groups to compare; a scatter chart has series of points instead.`)
+  const possible = !scatter
+  // Categories and series: two factors, for which there is the two-way analysis of variance only.
+  const two = !scatter && isGrouped(r.node)
 
   // "compare A and B": a bracket between the two, following the test.
   const compare = has(r, /\b(?:compare|brackets?|comparison)\b/)
@@ -188,11 +195,15 @@ function readTest(r: Reading) {
   const unpaired = take(r, /\b(?:un-?paired|not paired|independent|separate samples?)\b/)
   const paired = !unpaired && take(r, /\b(?:paired|matched|repeated[- ]measures?|same (?:samples?|animals?|patients?|subjects?))\b/)
   const ranks = take(r, /\b(?:mann[- –]?whitney|wilcoxon(?:\s+(?:signed[- ]rank|rank[- ]sum))?|kruskal(?:[- –]?wallis)?|friedman|non-?parametric|rank(?:s|[- ]based)?(?:\s+tests?)?|u[- ]test)\b/)
-  const means = !ranks && take(r, /\b(?:welch(?:'s)?\s+)?(?:(?:student(?:'s)?\s+)?t[- ]?tests?|(?:one[- ]way\s+)?anova|analysis of variance|tukey|parametric(?:\s+tests?)?|compare (?:the )?means)\b/)
+  const means = !ranks && take(r, /\b(?:welch(?:'s)?\s+)?(?:(?:student(?:'s)?\s+)?t[- ]?tests?|(?:(?:one|two)[- ]way\s+)?(?:anova|analysis of variance)|tukey|parametric(?:\s+tests?)?|compare (?:the )?means)\b/)
   const suggested = !ranks && !means && take(r, /\b(?:(?:suggested|recommended|best|right|appropriate|fitting)\s+tests?|(?:run|do|add|use|show)\s+(?:a\s+|the\s+)?(?:statistical\s+)?tests?|test (?:the )?(?:groups|difference|significance)|statistics|significance(?:\s+tests?)?)\b/)
   if (unpaired || paired || ranks || means || suggested) {
     if (!possible) refuse('A test')
-    else {
+    else if (two && (ranks || paired)) r.unclear.push(TWO_FACTOR_ONLY)
+    else if (two) {
+      r.node = setTest(r.node, { by: chartAdvice(r.node).by ?? undefined, paired: false })
+      r.done.push(r.node.test?.by ? `The categories and the series are compared with ${testName(r.node)}.` : (chartAdvice(r.node).why[0] ?? 'No test can be suggested for this table yet.'))
+    } else {
       if (unpaired || paired) r.node = setTest(r.node, { paired: !!paired })
       if (ranks || means) r.node = setTest(r.node, { by: ranks ? 'ranks' : 'means' })
       else if (suggested || !r.node.test?.by) r.node = setTest(r.node, { by: chartAdvice(r.node).by ?? undefined })
@@ -201,7 +212,12 @@ function readTest(r: Reading) {
   }
   const first = take(r, /\b(?:(?:each|every|all)\s+(?:group\s+)?)?(?:against|versus|vs\.?|with|to)\s+(?:the\s+)?(?:control|first(?:\s+group)?)\b/)
   const every = !first && take(r, /\b(?:all|every)\s+pairs?\b|\bpairwise\b/)
-  if ((first || every) && possible) {
+  const within = two && take(r, /\b(?:compare\s+)?(?:the\s+)?(categories|series)\s+(?:with)?in\s+(?:each|every)\s+(?:series|category)\b/)
+  if (within) {
+    r.node = setTest(r.node, { across: within[1] === 'categories' })
+    r.done.push(within[1] === 'categories' ? 'Pairs: the categories are compared within each series.' : 'Pairs: the series are compared within each category.')
+  }
+  if ((first || every) && possible && !two) {
     r.node = setTest(r.node, { versusFirst: !!first })
     r.done.push(first ? 'Each group is compared with the first.' : 'Every pair of groups is compared.')
   }
@@ -253,7 +269,52 @@ function readErrorBars(r: Reading) {
   r.done.push(error ? `Error bars show the ${error === 'sem' ? 'standard error of the mean' : 'standard deviation'}.` : 'Error bars are hidden.')
 }
 
+function readStack(r: Reading) {
+  const m = take(r, /\b(?:(?:do not|don't|no|not|without|remove|stop)\s+)?(?:un-?)?stack(?:ed|ing|s)?(?:\s+(?:the\s+)?(?:bars?|columns?)(?:[- ](?:charts?|plots?|graphs?))?)?(?:\s+(?:up|on top of each other))?|\b(?:(?:bars?|columns?)\s+)?(?:side[- ]by[- ]side|next to each other)\b/)
+  if (!m) return
+  if (r.node.kind === 'scatter') {
+    r.unclear.push('Bars can be stacked in a bar chart, not in a scatter chart.')
+    return
+  }
+  const stacked = !/\b(?:do not|don't|no|not|without|remove|stop)\b|\bun-?stack|side[- ]by[- ]side|next to each other/.test(m[0])
+  if (!stacked) {
+    r.node = without(r.node, 'stacked')
+    r.done.push('The bars of a category stand side by side.')
+    return
+  }
+  if (!isGrouped(r.node)) {
+    r.unclear.push('Stacking needs a table with categories and series: two rows of names at the top, the category above and the series below.')
+    return
+  }
+  const wasBars = r.node.kind === 'bar'
+  r.node = { ...r.node, kind: 'bar', stacked: true }
+  r.done.push(`${wasBars ? 'The' : 'The chart is now a bar chart; the'} bars of each category are stacked${r.node.yLog ? ' (on a logarithmic axis they still stand side by side)' : ''}.`)
+}
+
+/** Words that ask for a dose-response curve. */
+const DOSE_CURVE = /(?:\b(?:remove|delete|no|without|hide|drop)\s+)?(?:\b(?:the|a|an)\s+)?(?:\b(?:fit(?:ted)?|draw)\s+)?(?:\b(?:the|a|an)\s+)?(?:\bdose[- ]?response(?:\s+(?:curve|fit|line))?|\b(?:4|four)[- ]?(?:pl\b|parameter(?:s)?(?:\s+logistic)?(?:\s+(?:curve|fit))?)|\bsigmoid(?:al)?(?:\s+(?:curve|fit|line))?|\blogistic(?:\s+(?:curve|fit))|\bhill(?:\s+(?:curve|equation|fit|slope))?|\b[ei]c[- ]?50\b(?:\s+(?:curve|fit))?)/
+
+function readDoseCurve(r: Reading): boolean {
+  const m = take(r, DOSE_CURVE)
+  if (!m) return false
+  // "fit a dose-response curve": the word "fit" belongs to this request, not to a straight line.
+  take(r, /\b(?:fit(?:ted)?|curve)\b/)
+  if (r.node.kind !== 'scatter') {
+    r.unclear.push('A dose-response curve needs a scatter chart, with the doses in the first column of the table.')
+    return true
+  }
+  if (/\b(?:remove|delete|no|without|hide|drop)\b/.test(m[0])) {
+    r.node = without(r.node, 'fit', 'curve')
+    r.done.push('The fitted curve is removed.')
+    return true
+  }
+  r.node = { ...r.node, fit: true, curve: 'dose' }
+  r.done.push('A dose-response curve (four-parameter logistic) is fitted to each series; its EC50 is listed under the table.')
+  return true
+}
+
 function readFit(r: Reading) {
+  if (readDoseCurve(r)) return
   const m = take(r, /(?:\b(?:remove|delete|no|without|hide|drop)\s+)?(?:\b(?:the|a)\s+)?(?:\b(?:linear|fitted|straight)\s+)*\b(?:regression|trend ?line|best[- ]fit|line of best fit|fit(?:ted)?)\b(?:\s+(?:a|the))?(?:\s+(?:straight|linear|regression|fitted))*(?:\s+line)?/)
   if (!m) return
   if (r.node.kind !== 'scatter') {
@@ -261,7 +322,7 @@ function readFit(r: Reading) {
     return
   }
   const fit = !/\b(?:remove|delete|no|without|hide|drop)\b/.test(m[0])
-  r.node = { ...r.node, fit: fit || undefined }
+  r.node = fit ? { ...without(r.node, 'curve'), fit: true } : without(r.node, 'fit', 'curve')
   r.done.push(fit ? 'A straight line is fitted to each series (least squares).' : 'The fitted line is removed.')
 }
 
@@ -357,7 +418,8 @@ function readLines(r: Reading, label: string | undefined) {
   const m = take(r, /(?:\b(?:remove|delete|clear|no|without|hide)\s+(?:all\s+)?(?:the\s+)?)?(?:\b(?:vertical|upright|horizontal|dotted|dashed|solid|reference|threshold|guide|straight|thin)\s+)*\b(?:lines?|thresholds?|cut-?offs?|limit|mark)\b[^¦]*/)
   if (!m) return
   const text = m[0]
-  const values = [...text.matchAll(new RegExp(NUM, 'g'))].map((x) => toNumber(x[0])).filter(usable)
+  // "± 1" is a line on either side of zero, as fold-change thresholds are usually written.
+  const values = [...text.matchAll(new RegExp(`(±\\s*)?(${NUM})`, 'g'))].flatMap((x) => (x[1] ? [-toNumber(x[2]), toNumber(x[2])] : [toNumber(x[2])])).filter(usable)
   if (/\b(?:remove|delete|clear|no|without|hide)\b/.test(text)) {
     const kept = values.length ? lines.filter((l) => !values.includes(l.value)) : []
     r.node = { ...r.node, refLines: kept.length ? kept : undefined }
@@ -381,6 +443,229 @@ function readLines(r: Reading, label: string | undefined) {
   }
   r.node = { ...r.node, refLines: [...lines, ...added] }
   r.done.push(`Added ${added.length === 1 ? `${upright ? 'an upright' : 'a'} ${dash ?? 'dashed'} line` : `${added.length} ${dash ?? 'dashed'} ${upright ? 'upright ' : ''}lines`} ${upright ? 'at x' : scatter ? 'across at y' : 'across at'} ${scatter || upright ? '= ' : ''}${added.map((l) => l.value).join(' and ')}${label ? `, labelled “${label}”` : ''}.`)
+}
+
+const COLOUR_WORD = `#[0-9a-f]{6}\\b|\\b(?:${Object.keys(COLOURS).join('|')})\\b`
+const LETTERING = '(?:text|font|lettering|letters|writing|numbers?|figures|labels?)'
+const STAT = '(?:means?|averages?|medians?|n|counts?|sample sizes?|numbers? of (?:values|replicates|samples|observations|points|animals|cells))'
+/** A word for what stands on the chart for one group, where it is not the name of a kind of chart ("in each box", not "box plot"). */
+const COLUMN = '(?:bars?|columns?|box(?:es)?|violins?|groups?)\\b(?![- ]?(?:plots?|charts?|graphs?))'
+const LABEL_NOTE = 'Only the numbers written at the groups can be given a colour of their own; the rest of the chart’s lettering is always dark. Ask for the numbers first, for example “write the mean in each bar”.'
+const DECIMALS_NOTE = 'Decimals can be set for the numbers written at the groups. Ask for the numbers first, for example “write the mean in each bar”.'
+
+/** The words of a clause that no reader took and that are not small talk. */
+const leftOver = (rest: string): string[] =>
+  rest
+    .replace(/¦/g, ' ')
+    .split(/[^\p{L}\p{N}#%.+-]+/u)
+    .filter((w) => w && !SMALL_TALK.has(w) && /[\p{L}\p{N}]/u.test(w))
+
+/** True when the clause names a series of the chart. Its words are left where they are. */
+const namesSeries = (r: Reading): boolean => chartSeries(r.node).some((s) => s.name.trim() && new RegExp(`(^|[^\\p{L}\\p{N}])${escape(s.name.toLowerCase())}($|[^\\p{L}\\p{N}])`, 'u').test(r.rest))
+
+/**
+ * A clause that reads like a title but speaks of the numbers written at the groups: "value label
+ * white" (not a y axis called "white"), and "remove the label" when the chart has such numbers
+ * and no title of that kind to remove.
+ */
+function aboutValueLabels(node: ChartNode, raw: string): boolean {
+  const clear = /^(?:please\s+)?(?:remove|delete|no|clear|hide)\s+(?:the\s+)?(value[- ]?)?label$/i.exec(raw.trim())
+  if (clear) return !!node.valueLabels && !(clear[1] ? node.yLabel : node.title)
+  const setting = `(?:${COLOUR_WORD}|\\b(?:above|over|inside|on top|off|none|hidden|mean|median|average|n)\\b|\\d\\s+decimals?)`
+  return new RegExp(`^(?:please\\s+)?(?:(?:set|make|change)\\s+)?(?:the\\s+)?value[- ]?label\\s+(?:(?:in|to|is|the|colou?r|with)\\s+)*${setting}(?:\\s+(?:text|colou?r))?$`, 'i').test(raw.trim())
+}
+
+const INSTRUCTION_WORDS = /^(?:top|only|just|side|sides|down|left|right|most|highest|largest|biggest|names?|labels?|genes?|hide|remove|none|no|off|significant|regulated|up-?regulated|down-?regulated|increased|decreased|positive|negative|higher|lower|change|fold|extreme|far|out|from|among|x|y|p)$/
+/** "top" alone is the legend's or the axis's ("legend at the top"); "top 10" is about names. */
+const TOP_N = /\btop\s+\d+\b|\b\d+\s+(?:most|best|strongest|largest|biggest)\b/
+const NAME_WORDS = /\b(?:names?|named|labels?|labell?(?:ed|ing)|annotat(?:e|ed|ions?))\b/
+
+/** The setting for names of points, in words. */
+export function describePointNames(node: ChartNode): string {
+  const s = usablePointNames(node.pointNames) ?? { show: 'table' as const }
+  if (s.show === 'none') return 'No names of points are written.'
+  const rank = s.by === 'y' ? 'the highest' : s.by === 'x' ? 'furthest from x = 0' : 'furthest out from x = 0 and the bottom'
+  const n = s.top ?? POINT_NAMES_TOP
+  const which =
+    s.show === 'top'
+      ? `the ${s.side === 'each' ? `${n} on each side of x = 0` : `${n} ${n === 1 ? 'point' : 'points'}`} ${rank}`
+      : s.series && !s.series.length
+        ? ''
+        : 'every point named in the table'
+  const side = s.side === 'up' ? ', right of x = 0 only' : s.side === 'down' ? ', left of x = 0 only' : ''
+  const from = s.series?.length ? `, from ${s.series.join(' and ')}` : ''
+  const always = s.always?.length ? `${which ? '; always ' : ''}${s.always.slice(0, 12).join(', ')}${s.always.length > 12 ? ` and ${s.always.length - 12} more` : ''}` : ''
+  return `Names are written for ${which}${which ? side + from : ''}${always}.`
+}
+
+/**
+ * Names of points of a scatter chart: "name the top 10 genes", "label up and down regulated
+ * genes", "top 5 on each side, most significant", "label Egf and Lif", "hide names". Names of
+ * points the clause gives are always written; with "only" they are the only ones.
+ */
+function readPointNames(r: Reading) {
+  if (r.node.kind !== 'scatter') return
+  const top = TOP_N
+  const known = pointNamesIn(r.node.groups)
+  const knownSet = new Map(known.map((n) => [n.toLowerCase(), n]))
+  // A gene that is also a word of instructions ("SET", "MAX", "Top") is not taken for the word.
+  const genes = r.rest.split(/[^\p{L}\p{N}._-]+/u).filter((w) => w && knownSet.has(w) && !SMALL_TALK.has(w) && !INSTRUCTION_WORDS.test(w))
+  if (!has(r, NAME_WORDS) && !has(r, top) && !(genes.length && has(r, /\b(?:only|just)\b/))) return
+  // "Label the points with the mean" asks for numbers at groups, which the next reader explains.
+  if (!genes.length && !has(r, top) && has(r, new RegExp(`\\b${STAT}\\b`))) return
+  const s: ChartPointNames = { ...(usablePointNames(r.node.pointNames) ?? { show: 'table' }) }
+  const off = has(r, /\b(?:no|remove|delete|without|hide|hidden|clear|none|off)\b/)
+  while (take(r, NAME_WORDS)) {
+    // Every word for names is taken out.
+  }
+  while (take(r, /\b(?:genes?|proteins?|transcripts?|metabolites?|hits?|samples?)\b/)) {
+    // So are the words for what is named.
+  }
+  if (off) {
+    take(r, /\b(?:no|remove|delete|without|hide|hidden|clear|none|off|all|the)\b/)
+    r.node = { ...r.node, pointNames: { show: 'none' } }
+    r.done.push(describePointNames(r.node))
+    return
+  }
+  const count = take(r, /\btop\s+(\d+)\b|\b(\d+)(?=\s+(?:most|best|strongest|largest|biggest|top)\b)/)
+  const topWord = count ?? take(r, /\btop\b/)
+  if (topWord) {
+    s.show = 'top'
+    const n = count ? Number(count[1] ?? count[2]) : NaN
+    if (Number.isInteger(n)) {
+      if (n >= 1 && n <= MAX_POINT_LABELS) s.top = n
+      else r.unclear.push(`A chart writes 1 to ${MAX_POINT_LABELS} names.`)
+    }
+  }
+  if (take(r, /\b(?:most significant|smallest p(?:[- ]values?)?|lowest p(?:[- ]values?)?|highest|by p(?:[- ]values?)?|by significance)\b/)) s.by = 'y'
+  else if (take(r, /\b(?:largest|biggest|greatest|strongest)\s+(?:fold[- ]?)?changes?\b|\bmost changed\b|\bby (?:fold[- ]?)?change\b|\bfurthest from (?:x\s*=\s*)?0\b/)) s.by = 'x'
+  else if (take(r, /\b(?:most extreme|far(?:thest)? out|most striking|volcano)\b/)) delete s.by
+  // Sides of x = 0: up and down in a volcano plot. Words that can only mean a side are read before
+  // the names of series; a bare "up" or "down" after them, as a series may be called "Up".
+  const each = take(r, /\b(?:on\s+)?(?:each|both|either)\s+sides?\b|\bper side\b|\bin each direction\b/)
+  const both = take(r, /\bup[- ]?\s*(?:and|&|\/|or)\s*down[- ]?regulated\b|\bdown[- ]?\s*(?:and|&|\/|or)\s*up[- ]?regulated\b/)
+  let up = both ?? take(r, /\bup[- ]?regulated\b|\bincreased\b|\bright(?: side)?\b|\bpositive\b|\bhigher\b/)
+  let down = both ?? take(r, /\bdown[- ]?regulated\b|\bdecreased\b|\bleft(?: side)?\b|\bnegative\b|\blower\b/)
+  // Series the clause names: only their points are named, in the order of the table.
+  const named: string[] = []
+  for (let found = seriesIn(r); found; found = seriesIn(r)) named.push(found.name)
+  const order = r.node.groups.map((g) => g.name)
+  if (named.length) s.series = [...new Set(named)].sort((a, b) => order.indexOf(a) - order.indexOf(b))
+  up ??= take(r, /\bup\b/)
+  down ??= take(r, /\bdown\b/)
+  take(r, /\b(?:regulated|side|of x = 0|and|or)\b/)
+  if (each || (up && down)) s.side = s.show === 'top' ? 'each' : undefined
+  else if (up) s.side = 'up'
+  else if (down) s.side = 'down'
+  else if (topWord || count) delete s.side
+  // Names of points the clause gives: written always; with "only", alone.
+  if (genes.length) {
+    const only = take(r, /\b(?:only|just)\b/)
+    for (const g of genes) r.rest = r.rest.replace(new RegExp(`(^|[^\\p{L}\\p{N}._-])${escape(g)}(?=$|[^\\p{L}\\p{N}._-])`, 'u'), '$1 ¦ ')
+    const given = genes.map((g) => knownSet.get(g) as string)
+    s.always = only ? given : [...new Set([...(s.always ?? []), ...given])]
+    if (only) {
+      s.show = 'table'
+      s.series = []
+      delete s.side
+    } else if (s.show === 'none') {
+      s.show = 'table'
+      s.series = []
+    }
+  } else if (!topWord && !named.length && !up && !down && !each && s.show === 'none') s.show = 'table'
+  else if (!topWord && !named.length && !up && !down && !each && s.show === 'top' && !s.by) {
+    // "show all names", "names from the table".
+    if (take(r, /\b(?:all|every|from the table|in the table)\b/)) s.show = 'table'
+  }
+  while (take(r, /\b(?:all|every|from|among|in|the|only|with|most|best|strongest|biggest|largest|top)\b/)) {
+    // Words that only join the request.
+  }
+  r.node = { ...r.node, pointNames: usablePointNames(s) }
+  r.done.push(describePointNames(r.node))
+  if (!known.length) r.unclear.push('No point has a name yet: put a column of names (genes, samples) before the x values in the table.')
+}
+
+/** A number written at every group: its mean, median or count, where it stands, its colour and its decimals. */
+function readValueLabels(r: Reading) {
+  const colourBesideLettering = new RegExp(`\\b${LETTERING}\\s+(?:(?:in|to|is|are|colou?r|colou?red)\\s+)*(?:${COLOUR_WORD})|(?:${COLOUR_WORD})\\s+${LETTERING}\\b`)
+  const where = `\\b(in|inside|within|into|on|onto|above|over|atop|at|for|of|to)\\s+(?:(?:the|each|every|all|top|of)\\s+)*${COLUMN}`
+  const labelWord = has(r, /\b(?:labels?|labell?ed|labell?ing|annotat(?:e|ed|ions?))\b/)
+  const shown = has(r, new RegExp(`\\b(?:show|write|add|display|print|put|give|state)\\s+(?:(?:the|a|each|every)\\s+)*${STAT}\\b`))
+  const placed = has(r, new RegExp(`\\b(?:${STAT}|numbers?|values?|figures)\\b[^¦]*?${where}`))
+  const lettering = has(r, colourBesideLettering)
+  // "…, in white" goes on about the numbers the sentence has just asked for.
+  const carried = !!r.labels && has(r, new RegExp(`${COLOUR_WORD}|\\b(?:automatic|auto|default|usual)\\s+colou?r\\b`)) && !namesSeries(r) && !has(r, /\b(?:points?|dots?|markers?|symbols?|bars?|box(?:es)?|violins?|lines?|groups?)\b/)
+  const decimals = has(r, /\bdecimals?\b|\bwhole numbers?\b/)
+  if (!labelWord && !shown && !placed && !lettering && !carried && !decimals) return
+  const before = r.rest
+
+  // Decimals first: "no decimals" is not a wish to remove the numbers.
+  const exact = take(r, new RegExp(`(\\d+)\\s*(?:decimals?(?:\\s+places?)?|digits? after the (?:decimal )?point)|\\bdecimals?\\s*(?:to|of|:|=)?\\s*(\\d+)`))
+  const whole = exact ? null : take(r, /\b(?:no|without|zero)\s+decimals?\b|\bwhole numbers?\b|\brounded\b/)
+  const digits = exact ? Number(exact[1] ?? exact[2]) : whole ? 0 : undefined
+
+  const spot = take(r, new RegExp(where))
+  const beyond = take(r, /\b(?:above|over|atop|on top(?: of)?|outside)\b/)
+  const within = take(r, /\b(?:inside|within)\b/)
+  const above = !!beyond || (!!spot && /^(?:above|over|atop)$/.test(spot[1])) || (!!spot && /\btop of\b/.test(spot[0]))
+  const inside = !above && (!!within || (!!spot && /^(?:in|inside|within|into)$/.test(spot[1])))
+  take(r, new RegExp(`\\b(?:label|annotate)\\s+(?:(?:the|each|every|all)\\s+)*${COLUMN}`))
+
+  const stat = take(r, new RegExp(`\\b${STAT}\\b`))
+  const show: ChartValueLabels['show'] | null = !stat ? null : /^(?:mean|average)/.test(stat[0]) ? 'mean' : /^median/.test(stat[0]) ? 'median' : 'n'
+
+  const usual = take(r, /\b(?:automatic|auto|default|usual)\s+(?:text\s+|label\s+)?colou?r\b/)
+  // A colour belongs to the numbers unless the clause also names a group ("label the bars and make Treated red").
+  const tint = usual || namesSeries(r) ? null : take(r, new RegExp(COLOUR_WORD))
+  const off = !!take(r, /\b(?:remove|delete|no|without|hide|drop|off|none|hidden)\b/)
+  while (take(r, /\b(?:text|font|lettering|letters|writing|numbers?|figures|labels?|labell?ed|labell?ing|annotat(?:e|ed|ions?)|write|written|print|state|colou?red|values?)\b/)) {
+    // The words that only say what the clause is about.
+  }
+  // The kind of chart the clause leaves behind: one it names is read after this.
+  const named = KINDS.find(([pattern]) => pattern.test(r.rest))
+  const kind = named?.[1] ?? r.node.kind
+  // A clause that merely holds the word "label" among words nobody knows ("rotate the labels 45
+  // degrees") is not a wish for numbers at the groups: it is left to be reported whole.
+  if (!shown && !placed && !lettering && !carried && !decimals && leftOver(named ? r.rest.replace(named[0], ' ') : r.rest).length) {
+    r.rest = before
+    return
+  }
+  r.labels = true
+  const now = usableValueLabels(r.node.valueLabels)
+  if (kind === 'scatter') {
+    r.unclear.push('Numbers at the groups need a chart with groups (bars, dots, boxes, violins or a line). A scatter chart writes names beside its points from a column of names in the table.')
+    return
+  }
+  if (off) {
+    r.node = { ...r.node, valueLabels: undefined }
+    r.done.push(now ? 'The numbers at the groups are removed.' : 'No numbers are written at the groups.')
+    return
+  }
+  // A clause that only speaks of the colour of lettering changes numbers that are there; it does not add them.
+  if (!now && !labelWord && !shown && !placed) {
+    r.unclear.push(tint || usual ? LABEL_NOTE : DECIMALS_NOTE)
+    return
+  }
+  const next: ChartValueLabels = { ...(now ?? { show: usualValueLabel(kind) }) }
+  if (show) next.show = show
+  if (above) next.above = true
+  if (inside) delete next.above
+  if (digits !== undefined) next.decimals = Math.min(VALUE_DECIMALS_MAX, digits)
+  if (usual) delete next.color
+  if (tint) next.color = tint[0].startsWith('#') ? tint[0] : COLOURS[tint[0]]
+  r.node = { ...r.node, valueLabels: next }
+  const colourName = tint && !tint[0].startsWith('#') ? tint[0] : (Object.keys(COLOURS).find((name) => COLOURS[name] === next.color) ?? next.color)
+  const decimalsText = next.decimals === 0 ? 'no decimals' : next.decimals === 1 ? 'one decimal' : `${next.decimals} decimals`
+  // Numbers that are there and only change their colour or decimals: say just that.
+  if (now && !show && !above && !inside && (tint || usual || digits !== undefined)) {
+    const changes = [tint ? `are ${colourName}` : usual ? 'take their usual colour' : '', digits !== undefined ? `have ${decimalsText}` : ''].filter(Boolean)
+    r.done.push(`The numbers at the groups ${changes.join(' and ')}.`)
+    return
+  }
+  const what = next.show === 'n' ? 'The number of values (n)' : `The ${next.show}`
+  const column = kind === 'bar' ? 'bar' : kind === 'box' ? 'box' : kind === 'violin' ? 'violin' : 'group'
+  const place = kind === 'bar' && !next.above ? 'inside its bar (above it where it does not fit)' : `above its ${column}`
+  r.done.push(`${what} of each group is written ${place}${next.color ? `, in ${colourName}` : ''}${next.decimals !== undefined && next.show !== 'n' ? `, with ${decimalsText}` : ''}.${next.show === 'median' && (kind === 'bar' || kind === 'dot' || kind === 'line') ? ` The ${kind === 'bar' ? 'bar itself' : kind === 'dot' ? 'line across the dots' : 'line'} shows the mean.` : ''}`)
 }
 
 function readText(r: Reading) {
@@ -464,16 +749,18 @@ function readPoints(r: Reading) {
   else if (named1) r.rest += ` ${named1.name.toLowerCase()}`
 }
 
+/** The words for each kind of chart. */
+const KINDS: [RegExp, ChartKind][] = [
+  [/\bbox(?:[- ]and[- ]whiskers?)?[- ]?(?:plots?|charts?|graphs?)?\b|\bboxes\b/, 'box'],
+  [/\bviolins?(?:[- ]?(?:plots?|charts?|graphs?))?\b/, 'violin'],
+  [/\bscatter(?:[- ]?(?:plots?|charts?|graphs?))?\b|\bvolcano(?:[- ]?plots?)?\b/, 'scatter'],
+  [/\b(?:dot|strip)[- ]?(?:plots?|charts?|graphs?)\b/, 'dot'],
+  [/\bline[- ]?(?:plots?|charts?|graphs?)\b/, 'line'],
+  [/\b(?:bar|column)[- ]?(?:plots?|charts?|graphs?)\b|\bbarplot\b|\bbars\b|\bcolumns\b/, 'bar'],
+]
+
 function readKind(r: Reading) {
-  const kinds: [RegExp, ChartKind][] = [
-    [/\bbox(?:[- ]and[- ]whiskers?)?[- ]?(?:plots?|charts?|graphs?)?\b|\bboxes\b/, 'box'],
-    [/\bviolins?(?:[- ]?(?:plots?|charts?|graphs?))?\b/, 'violin'],
-    [/\bscatter(?:[- ]?(?:plots?|charts?|graphs?))?\b|\bvolcano(?:[- ]?plots?)?\b/, 'scatter'],
-    [/\b(?:dot|strip)[- ]?(?:plots?|charts?|graphs?)\b/, 'dot'],
-    [/\bline[- ]?(?:plots?|charts?|graphs?)\b/, 'line'],
-    [/\b(?:bar|column)[- ]?(?:plots?|charts?|graphs?)\b|\bbarplot\b|\bbars\b|\bcolumns\b/, 'bar'],
-  ]
-  for (const [pattern, kind] of kinds) {
+  for (const [pattern, kind] of KINDS) {
     if (!take(r, pattern)) continue
     if (kind === r.node.kind) r.done.push(`The chart is already a ${KIND_NAMES[kind]}.`)
     else if ((kind === 'scatter') === (r.node.kind === 'scatter')) {
@@ -482,7 +769,7 @@ function readKind(r: Reading) {
     } else {
       // The other family of chart reads the table differently, as it does when chosen in the panel.
       const across = (r.node.refLines ?? []).filter((l) => l.axis === 'y')
-      r.node = { ...r.node, kind, groups: crossTable(r.node.groups, r.node.kind, kind), brackets: undefined, test: undefined, fit: undefined, xMin: undefined, xMax: undefined, xLog: undefined, refLines: across.length ? across : undefined }
+      r.node = { ...r.node, kind, groups: crossTable(r.node.groups, r.node.kind, kind), brackets: undefined, test: undefined, fit: undefined, curve: undefined, xMin: undefined, xMax: undefined, xLog: undefined, pointNames: undefined, refLines: across.length ? across : undefined }
       r.done.push(kind === 'scatter' ? 'The chart is now a scatter chart: the first column of the table is read as the x values.' : `The chart is now a ${KIND_NAMES[kind]}: the x values became the first group.`)
     }
     return
@@ -490,16 +777,22 @@ function readKind(r: Reading) {
 }
 
 /** Cut what the scientist wrote into sentences, and each sentence into clauses that ask for one thing or a few. */
-function clauses(text: string): string[][] {
+function clauses(text: string, scatter = false): string[][] {
   return text
     .split(/[\n;]+|\.(?=\s|$)/)
     .map((part) => {
       const p = part.trim()
       if (!p) return []
       // Titles hold any words; "compare A and B" and "from 0 and 10" hold an "and" of their own.
-      if (/^(?:please\s+)?(?:(?:set|make|change|call|name|write|remove|delete|no|clear|hide)\s+)?(?:the\s+)?(?:(?:x|y|value|chart|main|plot)[- ]?(?:axis)?[- ]?\s*)?(?:title|label|name)\b/i.test(p) || /^(?:please\s+)?label\s+(?:the\s+)?(?:x|y|value)\b/i.test(p)) return [p]
+      // "label the bars with the mean, in white" is no title: it is cut like any other sentence.
+      const atGroups = /^(?:please\s+)?label\s+(?:(?:the|each|every|all)\s+)*(?:bars?|columns?|box(?:es)?|violins?|groups?)\b/i.test(p)
+      if (!atGroups && (/^(?:please\s+)?(?:(?:set|make|change|call|name|write|remove|delete|no|clear|hide)\s+)?(?:the\s+)?(?:(?:x|y|value|chart|main|plot)[- ]?(?:axis)?[- ]?\s*)?(?:title|label|name)\b/i.test(p) || /^(?:please\s+)?label\s+(?:the\s+)?(?:x|y|value)\b/i.test(p))) return [p]
       if (/\b(?:compare|comparison|between)\b/i.test(p)) return [p]
-      return p.split(/\s*,\s+(?![-+−]?[\d.])|\s+(?:and then|and also|and|then|also|plus)\s+(?![-+−]?[\d.])/i).map((s) => s.trim()).filter(Boolean)
+      // "Names of the top 10 up and down genes", "label Egf and Lif": one request, whatever its "and".
+      if (scatter && (NAME_WORDS.test(p.toLowerCase()) || TOP_N.test(p.toLowerCase())) && !/\b(?:lines?|thresholds?|cut-?offs?|title)\b/i.test(p)) return [p]
+      // A number goes on with the clause before it ("lines at -1 and 1"), and so does a value
+      // named by its axis ("lines at x = -1 and x = 1").
+      return p.split(/\s*,\s+(?![-+−±]?[\d.]|[xy]\s*=)|\s+(?:and then|and also|and|then|also|plus)\s+(?![-+−±]?[\d.]|[xy]\s*=)/i).map((s) => s.trim()).filter(Boolean)
     })
 }
 
@@ -511,11 +804,12 @@ export function applyInstruction(node: ChartNode, text: string): InstructionResu
   const done: string[] = []
   const unclear: string[] = []
   let current = node
-  for (const sentence of clauses(text.slice(0, 2000))) {
+  for (const sentence of clauses(text.slice(0, 2000), node.kind === 'scatter')) {
     let carried: string | undefined
+    let labels: boolean | undefined
     for (const raw of sentence) {
-      const r: Reading = { node: current, rest: raw.toLowerCase().replace(/−/g, '-').replace(/[“”]/g, '"').replace(/[‘’]/g, "'"), done: [], unclear: [], carried }
-      if (!readTitle(r, raw)) {
+      const r: Reading = { node: current, rest: raw.toLowerCase().replace(/−/g, '-').replace(/[“”]/g, '"').replace(/[‘’]/g, "'"), done: [], unclear: [], carried, labels }
+      if (aboutValueLabels(current, raw) || !readTitle(r, raw)) {
         // The label of a line is taken out first, in the scientist's spelling: it may hold any words.
         let label: string | undefined
         if (/\b(?:lines?|thresholds?|cut-?offs?|limit|mark)\b/.test(r.rest)) {
@@ -528,23 +822,24 @@ export function applyInstruction(node: ChartNode, text: string): InstructionResu
         readPalette(r)
         readTest(r)
         readErrorBars(r)
+        readStack(r)
         readFit(r)
         readLegend(r)
+        readPointNames(r)
         readScale(r)
         readRange(r)
+        readValueLabels(r)
         readText(r)
         readLines(r, label)
         readPoints(r)
         readKind(r)
-        const left = r.rest
-          .replace(/¦/g, ' ')
-          .split(/[^\p{L}\p{N}#%.+-]+/u)
-          .filter((w) => w && !SMALL_TALK.has(w) && /[\p{L}\p{N}]/u.test(w))
+        const left = leftOver(r.rest)
         if (!r.done.length && !r.unclear.length) r.unclear.push(`Not understood: “${raw}”.`)
         else if (left.length) r.unclear.push(`Not understood in “${raw}”: “${left.join(' ')}”.`)
       }
       current = r.node
       carried = r.carried
+      labels = r.labels
       done.push(...r.done)
       unclear.push(...r.unclear)
     }

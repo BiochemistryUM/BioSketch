@@ -8,10 +8,11 @@ import { validateDoc } from '../src/io/files'
 import { dashArray, hasDots, lineStyleOf, lineStylePatch, type LineStyle } from '../src/model/dash'
 import { nodeLabel } from '../src/model/describe'
 import { emptyDoc, labelPartner } from '../src/model/doc'
-import { measureText, resolveConnector, scaleNode, shapeLabelNode, shapeTextWidth, wrapText } from '../src/model/nodes'
+import { growToFitLabel, measureText, resolveConnector, scaleNode, shapeLabelNode, shapeTextWidth, wrapText } from '../src/model/nodes'
 import { SYMBOL_GROUPS, formatRich, insertText, parseRich } from '../src/model/richtext'
 import { SHAPE_KINDS, outlineAlong, shapeCorners, shapePath, shapeTextArea } from '../src/model/shapes'
 import { TEMPLATES } from '../src/templates'
+import { example } from './helpers'
 import type { ConnectorNode, FigDoc, FigNode, ShapeKind, ShapeNode, TextNode } from '../src/model/types'
 
 const box = (extra: Partial<ShapeNode> = {}): ShapeNode => ({
@@ -223,7 +224,7 @@ describe('boxes made by BioSketch', () => {
 
   it('carry their names inside in the example figures', () => {
     for (const template of TEMPLATES) {
-      const shapes = template.build().nodes.filter((n): n is ShapeNode => n.type === 'shape')
+      const shapes = example(template).nodes.filter((n): n is ShapeNode => n.type === 'shape')
       expect(shapes.length, template.id).toBeGreaterThan(0)
       for (const shape of shapes) {
         expect(shape.label?.text, template.id).toBeTruthy()
@@ -295,7 +296,7 @@ describe('more kinds of shape', () => {
   })
 
   it('puts the words where the shape has room for them', () => {
-    expect(shapeTextArea('rect', 160, 80)).toEqual({ width: 1, middle: 0.5 })
+    expect(shapeTextArea('rect', 160, 80)).toEqual({ width: 1, middle: 0.5, height: 1 })
     expect(shapeTextArea('triangle', 160, 80).middle).toBeGreaterThan(0.6)
     expect(shapeTextArea('callout', 160, 80).middle).toBeLessThan(0.45)
     expect(shapeTextArea('cylinder', 160, 80).middle).toBeGreaterThan(0.5)
@@ -341,3 +342,61 @@ describe('symbols', () => {
   })
 })
 
+
+// In tests a letter is 0.55 of the font size wide and a line 1.25 of it high (see `measureText`).
+describe('a shape that grows with its words', () => {
+  const box = (extra: Partial<ShapeNode> = {}): ShapeNode => ({
+    id: 's', type: 'shape', shape: 'rect', x: 100, y: 50, w: 120, h: 40, rotation: 0, fill: '#ffffff', stroke: '#000000', strokeWidth: 2,
+    label: { text: 'one two three four five six seven', fontSize: 16, fill: '#000000' },
+    ...extra,
+  })
+  const linesOf = (node: ShapeNode): number => shapeLabelNode(node)!.text.split('\n').length
+
+  it('becomes tall enough for the lines the words need, growing downwards', () => {
+    const grown = growToFitLabel(box())
+    const lines = linesOf(grown)
+    expect(lines).toBeGreaterThan(2)
+    // Every line is 20 high; 9 units are kept free above and below (8, and half the outline).
+    expect(grown.h).toBe(lines * 20 + 18)
+    expect([grown.x, grown.y, grown.w]).toEqual([100, 50, 120])
+    // The words now sit inside the shape, top and bottom.
+    const label = shapeLabelNode(grown)!
+    expect(label.y).toBeGreaterThanOrEqual(grown.y + 9 - 0.5)
+    expect(label.y + lines * 20).toBeLessThanOrEqual(grown.y + grown.h - 9 + 0.5)
+  })
+
+  it('leaves a shape alone that has room, or no words, and never makes one smaller', () => {
+    const roomy = box({ h: 400 })
+    expect(growToFitLabel(roomy)).toBe(roomy)
+    const empty = box({ label: undefined })
+    expect(growToFitLabel(empty)).toBe(empty)
+    const blank = box({ label: { text: '   ', fontSize: 16, fill: '#000000' } })
+    expect(growToFitLabel(blank)).toBe(blank)
+    const once = growToFitLabel(box())
+    expect(growToFitLabel(once)).toBe(once)
+  })
+
+  it('keeps the top edge of a turned shape where it is', () => {
+    const turned = box({ rotation: 90 })
+    const grown = growToFitLabel(turned)
+    const topMiddle = (n: ShapeNode) => {
+      const a = (n.rotation * Math.PI) / 180
+      const [cx, cy] = [n.x + n.w / 2, n.y + n.h / 2]
+      return { x: cx + Math.sin(a) * (n.h / 2), y: cy - Math.cos(a) * (n.h / 2) }
+    }
+    expect(grown.h).toBeGreaterThan(turned.h)
+    expect(topMiddle(grown).x).toBeCloseTo(topMiddle(turned).x, 0)
+    expect(topMiddle(grown).y).toBeCloseTo(topMiddle(turned).y, 0)
+  })
+
+  it('grows more where the outline leaves less room: an ellipse, a diamond, a callout', () => {
+    const rect = growToFitLabel(box()).h
+    for (const shape of ['ellipse', 'diamond', 'callout', 'triangle', 'hexagon', 'cylinder'] as const) {
+      const grown = growToFitLabel(box({ shape, w: 200 }))
+      const label = shapeLabelNode(grown)!
+      const need = label.text.split('\n').length * 20 + 18
+      expect(grown.h * shapeTextArea(shape, grown.w, grown.h).height, shape).toBeGreaterThanOrEqual(need - 0.5)
+    }
+    expect(growToFitLabel(box({ shape: 'ellipse' })).h).toBeGreaterThan(rect)
+  })
+})

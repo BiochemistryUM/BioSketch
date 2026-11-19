@@ -8,15 +8,24 @@
 //    example the treatment);
 //  - scatter: the first column holds x, every further column the y values of one series.
 
-import { bandwidth, boxStats, density, fitLine, type BoxStats, type Fit } from './chartStats'
-import { analyse, pText, stars, suggest, type Advice, type Outcome } from './chartTests'
+import { bandwidth, boxStats, density, doseResponseAt, fitDose, fitLine, type BoxStats, type DoseFit, type Fit } from './chartStats'
+import { tCritical } from './distributions'
+import { analyseTwoWay, suggestTwoWay, type Factors } from './twoWay'
+import { STARS_KEY, analyse, pText, stars, suggest, type Advice, type Outcome, type TestId } from './chartTests'
 import { measureText, wrapText } from './nodes'
 import { PALETTES, paletteColours } from './palettes'
-import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartRefLine, ChartTest, LegendPlace, PointShape, TextNode } from './types'
+import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartPointNames, ChartRefLine, ChartTest, ChartValueLabels, LegendPlace, PointShape, Rect, TextNode } from './types'
 
 export const MAX_GROUPS = 24
 /** Values kept per group. Large enough for per-cell measurements; a table beyond it is cut and the scientist is told. */
 export const MAX_VALUES = 5000
+/**
+ * Points kept per series of a scatter chart. A volcano plot has one point per gene (about 20,000);
+ * a larger series is thinned evenly over the table (`thinEvenly`), so the shape of the cloud stays.
+ */
+export const MAX_POINTS = 25000
+/** The most values a group of this kind of chart keeps. */
+export const maxValues = (kind: ChartKind): number => (kind === 'scatter' ? MAX_POINTS : MAX_VALUES)
 /** The furthest row of a table whose place is remembered (see `rows` of a group). */
 export const MAX_ROWS = 20000
 export const MAX_BRACKETS = 30
@@ -48,6 +57,8 @@ export interface TableReport {
   example?: string
   /** Values and groups left out because the table is larger than a chart takes. */
   droppedValues: number
+  /** The values left out were spread evenly over the table (scatter charts), not cut off at its end. */
+  thinned?: boolean
   droppedGroups: number
   /** Commas were read as decimal commas although every one of them could also separate thousands (1,234). */
   commasUnclear: boolean
@@ -176,8 +187,13 @@ export function readTable(text: string, kind: ChartKind = 'bar', header?: 0 | 1 
         report.droppedGroups++
         continue
       }
-      report.droppedValues += Math.max(0, points.length - MAX_VALUES)
-      const kept = points.slice(0, MAX_VALUES)
+      // Tables of genes are often sorted by p value: cutting them off at the end would take away
+      // the bottom of a volcano plot. Every named point is kept, the others evenly over the table.
+      const kept = thinEvenly(points, MAX_POINTS, (p) => !!p[2])
+      if (kept.length < points.length) {
+        report.droppedValues += points.length - kept.length
+        report.thinned = true
+      }
       report.groups.push({ name: name || `Series ${report.groups.length + 1}`, values: kept.map((p) => p[1]), xs: kept.map((p) => p[0]), ...(kept.some((p) => p[2]) ? { labels: kept.map((p) => p[2]) } : {}) })
     }
     return report
@@ -201,6 +217,21 @@ export function readTable(text: string, kind: ChartKind = 'bar', header?: 0 | 1 
     report.groups.push({ name: name || `Group ${report.groups.length + 1}`, values: kept.map((c) => c.v), ...(head === 2 && category ? { category } : {}), ...(gaps ? { rows: kept.map((c) => c.r) } : {}) })
   }
   return report
+}
+
+/**
+ * At most `limit` of the items, in their order: all those that `keep` marks (as many as fit), and
+ * the rest picked at even steps through the list, so that no part of the table is lost as a whole.
+ * The same list always gives the same result.
+ */
+export function thinEvenly<T>(items: T[], limit: number, keep: (item: T) => boolean = () => false): T[] {
+  if (items.length <= limit) return items
+  const marked = items.map((item, i) => (keep(item) ? i : -1)).filter((i) => i >= 0).slice(0, limit)
+  const chosen = new Set(marked)
+  const others = items.map((_, i) => i).filter((i) => !chosen.has(i))
+  const room = limit - chosen.size
+  for (let j = 0; j < room; j++) chosen.add(others[Math.floor(((j + 0.5) * others.length) / room)])
+  return items.filter((_, i) => chosen.has(i))
 }
 
 /** The groups of a pasted table: `readTable` without its report. */
@@ -326,11 +357,14 @@ export interface Compared {
   samples: number[][]
   /** Paired design: rows left out because a value is missing in at least one group. */
   leftOut: number
+  /** A chart with categories and series: its two factors, and where each combination stands among the samples. */
+  factors?: Factors
   /** Why this chart has nothing a test could compare. */
   problem?: string
 }
 
-export const GROUPED_PROBLEM = 'This chart has categories and series, that is two factors. Tests for such tables are not built yet; you can still type the labels of brackets yourself.'
+/** What a chart with two factors says when a test on ranks or a paired test is asked of it. */
+export const TWO_FACTOR_ONLY = 'For a chart with categories and series (two factors) only the two-way analysis of variance is built: there is no test on ranks and no paired analysis for it.'
 
 interface Comparison {
   compared: Compared
@@ -343,7 +377,7 @@ const comparisons = new WeakMap<ChartGroup[], Map<string, Comparison>>()
 
 function compare(node: ChartNode): Comparison {
   const test: ChartTest = node.test ?? {}
-  const key = [node.kind === 'scatter', !!node.yLog, test.by ?? '', !!test.paired, !!test.versusFirst].join('|')
+  const key = [node.kind === 'scatter', !!node.yLog, test.by ?? '', !!test.paired, !!test.versusFirst, !!test.across].join('|')
   let known = comparisons.get(node.groups)
   if (!known) comparisons.set(node.groups, (known = new Map()))
   const done = known.get(key)
@@ -352,8 +386,16 @@ function compare(node: ChartNode): Comparison {
   const design = { paired: !!test.paired, versusFirst: !!test.versusFirst }
   const compared: Compared = { indexes: [], names: [], samples: [], leftOut: 0 }
   if (node.kind === 'scatter') compared.problem = 'Tests compare groups; a scatter chart has series of points instead.'
-  else if (isGrouped(node)) compared.problem = GROUPED_PROBLEM
-  else {
+  else if (isGrouped(node)) {
+    // Two factors: every column of the table is one combination of a category and a series.
+    const drawn = drawnGroups(node).filter((c) => shownValues(node, c.group).length)
+    compared.indexes = drawn.map((c) => c.index)
+    compared.names = drawn.map((c) => `${c.group.category ?? ''} · ${c.group.name}`)
+    compared.samples = drawn.map((c) => shownValues(node, c.group))
+    const categories = unique(drawnGroups(node).map((c) => c.group.category ?? ''))
+    const series = unique(drawnGroups(node).map((c) => c.group.name))
+    compared.factors = { categories, series, place: categories.map((cat) => series.map((name) => drawn.findIndex((c) => (c.group.category ?? '') === cat && c.group.name === name))) }
+  } else {
     const drawn = drawnGroups(node).filter((c) => shownValues(node, c.group).length)
     compared.indexes = drawn.map((c) => c.index)
     compared.names = drawn.map((c) => c.group.name)
@@ -370,7 +412,11 @@ function compare(node: ChartNode): Comparison {
   let advice: Advice
   let outcome: Outcome | null = null
   if (compared.problem) advice = { test: null, by: null, does: '', why: [compared.problem], cautions: [] }
-  else {
+  else if (compared.factors) {
+    advice = suggestTwoWay(compared.samples, compared.factors)
+    if (node.yLog) advice.cautions.push('The value axis is logarithmic, but the analysis is worked out on the values as typed, not on their logarithms.')
+    if (test.by) outcome = test.by === 'ranks' || test.paired ? { ok: false, problem: TWO_FACTOR_ONLY } : analyseTwoWay(compared.samples, compared.factors, !!test.across)
+  } else {
     advice = suggest(compared.names, compared.samples, design)
     if (compared.leftOut) advice.cautions.unshift(`${compared.leftOut} ${compared.leftOut === 1 ? 'row is' : 'rows are'} left out of a paired test: a value is missing in at least one group.`)
     if (node.yLog) advice.cautions.push('The value axis is logarithmic, but tests are worked out on the values as typed, not on their logarithms (for a test on ranks that makes no difference).')
@@ -406,6 +452,87 @@ export function bracketLabel(node: ChartNode, bracket: ChartBracket): string {
   if (p === undefined) return ''
   if (p === null) return 'n/a'
   return node.test?.stars ? stars(p) : pText(p)
+}
+
+const listed = (items: string[]): string => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`)
+
+/** What the chart draws for each group, as a figure legend says it. */
+function shownAs(node: ChartNode): string {
+  const spread = node.error === 'sd' ? ' ± standard deviation (SD)' : node.error === 'sem' ? ' ± standard error of the mean (SEM)' : ''
+  const single = node.points ? '; points are single values' : ''
+  switch (node.kind) {
+    case 'bar':
+      return isStacked(node) ? 'Stacked bars show the mean of each series.' : `Bars show the mean${spread}${single}.`
+    case 'dot':
+      return `Points are single values; the line marks the mean${spread}.`
+    case 'line':
+      return `Points show the mean${spread}.`
+    case 'box':
+      return `Boxes show the median and the quartiles; whiskers reach to the furthest value within 1.5 × the interquartile range, and values beyond them are drawn as rings${single}.`
+    case 'violin':
+      return `Violins show the distribution of the values (Gaussian kernel density, Silverman’s bandwidth) and the line marks the median${single}.`
+    default:
+      return ''
+  }
+}
+
+/** The functions of R that give the same results, to name in the methods. */
+const R_FUNCTIONS: Record<TestId, string> = {
+  welch: 't.test',
+  pairedT: 't.test (paired)',
+  mannWhitney: 'wilcox.test',
+  signedRank: 'wilcox.test (paired)',
+  anova: 'aov',
+  kruskal: 'kruskal.test',
+  repeatedAnova: 'aov with an error term for the sample',
+  friedman: 'friedman.test',
+  twoWay: 'lm and anova, with Type II sums of squares',
+}
+
+/**
+ * What a methods section or a figure legend can say about the chart and its test: what is drawn,
+ * how many values each group has, which test compared the groups and how pairs were compared,
+ * and the result of the overall test. Null when no test is chosen or it could not be worked out.
+ * It states only what was done; whether a difference matters is for the scientist to write.
+ */
+export function methodsText(node: ChartNode): string | null {
+  const { compared, outcome } = compare(node)
+  if (!outcome?.ok) return null
+  const r = outcome.result
+  const design = { paired: !!node.test?.paired, versusFirst: !!node.test?.versusFirst }
+  const k = compared.samples.length
+  const sizes = compared.samples.map((s) => s.length)
+  const n = sizes.every((v) => v === sizes[0])
+    ? `n = ${sizes[0]} ${design.paired ? `${sizes[0] === 1 ? 'sample' : 'samples'}, each measured in every group` : compared.factors ? 'per combination of category and series' : 'per group'}`
+    : k <= 6
+      ? `n = ${listed(sizes.map(String))} (${listed(compared.names)})`
+      : `n = ${Math.min(...sizes)} to ${Math.max(...sizes)} per group`
+  // A rank test that could not use the exact distribution says so in its notes.
+  const exactness = r.notes.length ? 'normal approximation with continuity correction' : 'exact p value'
+  const which = design.versusFirst ? `each group against ${compared.names[0]}` : 'every pair of groups'
+  const holm = 'with Holm’s correction for multiple comparisons'
+  const both = `${compared.names[0]} and ${compared.names[1]} were compared with`
+  const all = `The ${k} groups were compared`
+  const sentence: Record<TestId, string> = {
+    welch: `${both} Welch’s t test (two-sided, not assuming equal variances).`,
+    pairedT: `${both} a paired t test (two-sided).`,
+    mannWhitney: `${both} the Mann–Whitney test (two-sided, ${exactness}).`,
+    signedRank: `${both} the Wilcoxon signed-rank test (two-sided, ${exactness}).`,
+    anova: `${all} by one-way analysis of variance (ANOVA), followed by ${design.versusFirst ? `two-sided t tests of ${which}, with the variance pooled over all groups, ${holm}` : 'Tukey’s test for every pair of groups'}.`,
+    kruskal: `${all} with the Kruskal–Wallis test, followed by two-sided Mann–Whitney tests of ${which} ${holm}.`,
+    repeatedAnova: `${all} by repeated-measures analysis of variance (ANOVA, sphericity assumed), followed by two-sided paired t tests of ${which} ${holm}.`,
+    friedman: `${all} with the Friedman test, followed by two-sided Wilcoxon signed-rank tests of ${which} ${holm}.`,
+    twoWay: compared.factors
+      ? `The effects of the category (${listed(compared.factors.categories)}) and of the series (${listed(compared.factors.series)}) and their interaction were tested by two-way analysis of variance (ANOVA) with Type II sums of squares, followed by two-sided t tests of ${node.test?.across ? 'the categories within each series' : 'the series within each category'}, with the variance pooled over all combinations, ${holm}.`
+      : '',
+  }
+  const parts = [`${shownAs(node)} ${n[0].toUpperCase()}${n.slice(1)}.`.trim(), sentence[r.test]]
+  if (design.paired) parts.push(`Values in the same row of the table were treated as one sample${compared.leftOut ? `; ${compared.leftOut} ${compared.leftOut === 1 ? 'row' : 'rows'} with a missing value ${compared.leftOut === 1 ? 'was' : 'were'} left out` : ''}.`)
+  if (node.yLog) parts.push('The tests were worked out on the values as measured, not on their logarithms.')
+  parts.push(r.effects ? `Result: ${r.effects.map((e) => `${e.name.replace(/ \(.*$/, '').toLowerCase()}, ${e.statistic}, ${pText(e.p)}`).join('; ')}.` : `Result: ${r.statistic}, ${pText(r.p)}.`)
+  if (node.test?.stars) parts.push(`${STARS_KEY}.`)
+  parts.push(`Statistics were worked out in BioSketch, which gives the results of R 4.4 (${R_FUNCTIONS[r.test]}${k > 2 ? (r.test === 'anova' && !design.versusFirst ? ', TukeyHSD' : ', p.adjust with method "holm"') : ''}).`)
+  return parts.join(' ')
 }
 
 /**
@@ -644,6 +771,157 @@ export function pointPath(shape: PointShape, cx: number, cy: number, r: number):
   return `M${at(-r, 0)}A${r1(r)} ${r1(r)} 0 1 0 ${at(r, 0)}A${r1(r)} ${r1(r)} 0 1 0 ${at(-r, 0)}Z`
 }
 
+// ---------- a number written at every group ----------
+
+export const VALUE_LABEL_KINDS: ChartValueLabels['show'][] = ['mean', 'median', 'n']
+export const VALUE_DECIMALS_MAX = 6
+
+/** The number a chart of this kind writes when the scientist does not say which: the one it draws. */
+export const usualValueLabel = (kind: ChartKind): ChartValueLabels['show'] => (kind === 'box' || kind === 'violin' ? 'median' : 'mean')
+
+/**
+ * The numbers written at the groups as they are drawn and saved: one of the three kinds, a whole
+ * number of decimals within its limits, a colour written as #rrggbb. Anything else is left out.
+ */
+export function usableValueLabels(raw: unknown): ChartValueLabels | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const o = raw as Record<string, unknown>
+  const show = VALUE_LABEL_KINDS.find((s) => s === o.show)
+  if (!show) return undefined
+  const decimals = typeof o.decimals === 'number' && Number.isInteger(o.decimals) && o.decimals >= 0 && o.decimals <= VALUE_DECIMALS_MAX ? o.decimals : undefined
+  const colour = typeof o.color === 'string' && /^#[0-9a-f]{6}$/i.test(o.color) ? o.color.toLowerCase() : undefined
+  return { show, ...(o.above === true ? { above: true } : {}), ...(decimals !== undefined ? { decimals } : {}), ...(colour ? { color: colour } : {}) }
+}
+
+// ---------- names of points (scatter charts) ----------
+
+/** How many points "top" names when no number is given. */
+export const POINT_NAMES_TOP = 10
+const RANKINGS: NonNullable<ChartPointNames['by']>[] = ['distance', 'y', 'x']
+const SIDES: NonNullable<ChartPointNames['side']>[] = ['up', 'down', 'each']
+const shortList = (raw: unknown, most: number, length: number): string[] | undefined =>
+  Array.isArray(raw)
+    ? [...new Set(raw.filter((v): v is string => typeof v === 'string').map((v) => v.trim().slice(0, length)).filter(Boolean))].slice(0, most)
+    : undefined
+
+/**
+ * The setting for names of points as it can be kept: anything else in it is dropped. The usual
+ * setting (every named point, from every series, nothing more) is no setting at all, so figures
+ * made before it existed stay as they are.
+ */
+export function usablePointNames(raw: unknown): ChartPointNames | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const o = raw as Record<string, unknown>
+  const show = (['table', 'top', 'none'] as const).find((s) => s === o.show)
+  if (!show) return undefined
+  const top = typeof o.top === 'number' && Number.isInteger(o.top) && o.top >= 1 && o.top <= MAX_POINT_LABELS ? o.top : undefined
+  const by = RANKINGS.find((b) => b === o.by && b !== 'distance')
+  const side = SIDES.find((s) => s === o.side)
+  const series = shortList(o.series, MAX_GROUPS, 60)
+  const always = shortList(o.always, MAX_POINT_LABELS, 40)
+  const kept: ChartPointNames = {
+    show,
+    ...(top !== undefined && top !== POINT_NAMES_TOP ? { top } : {}),
+    ...(by ? { by } : {}),
+    ...(side ? { side } : {}),
+    ...(series ? { series } : {}),
+    ...(always?.length ? { always } : {}),
+  }
+  return Object.keys(kept).length === 1 && show === 'table' ? undefined : kept
+}
+
+/** Every name of a point in the chart's table, once each, in the order of the table. */
+export const pointNamesIn = (groups: ChartGroup[]): string[] => [...new Set(groups.flatMap((g) => g.labels ?? []).filter(Boolean))]
+
+/**
+ * A list of names as the scientist typed or pasted it: separated by commas, semicolons, tabs or
+ * new lines (a column copied from a spreadsheet). A piece with spaces is split at them too, unless
+ * it is itself the name of a point ("Sample 1").
+ */
+export function splitNameList(text: string, known: string[]): string[] {
+  const names = new Set(known.map((n) => n.toLowerCase()))
+  return [...new Set(text.split(/[,;\t\n\r]+/).flatMap((piece) => {
+    const t = piece.trim()
+    return !t ? [] : names.has(t.toLowerCase()) || !/\s/.test(t) ? [t] : t.split(/\s+/)
+  }))]
+}
+
+/** A point of a scatter chart that has a name, where it is drawn, and the series it belongs to. */
+export interface NamedPoint {
+  name: string
+  series: string
+  cx: number
+  cy: number
+}
+
+/**
+ * The named points whose names are written, in the order they are placed (the first gets the best
+ * place). `zeroX` is where x = 0 is drawn (x = 1 on a logarithmic axis), `bottom` the bottom of the
+ * plot, `plot` its size, for ranking:
+ *
+ * - 'distance': how far a point is from x = 0 on the bottom line, with the width and the height of
+ *   the plot counting alike. In a volcano plot that is a large change and a small p together.
+ * - 'y': the highest points first (the smallest p in a volcano plot).
+ * - 'x': the points furthest from x = 0 first, on either side (the largest change).
+ *
+ * Equal points keep the order of the table. Names listed in `always` come first whatever their
+ * rank or series; then 'table' takes the named points in the order of the table, 'top' the best
+ * ranked. At most `MAX_POINT_LABELS` names in all.
+ */
+export function pickNames(points: NamedPoint[], setting: ChartPointNames | undefined, zeroX: number, bottom: number, plot: { w: number; h: number }): NamedPoint[] {
+  const s = setting ?? { show: 'table' as const }
+  if (s.show === 'none') return []
+  const wanted = new Set((s.always ?? []).map((n) => n.toLowerCase()))
+  const always = points.filter((p) => wanted.has(p.name.toLowerCase()))
+  const allowed = new Set(s.series ?? [])
+  const pool = points.filter((p) => !wanted.has(p.name.toLowerCase()) && (!s.series || allowed.has(p.series)) && (s.side === 'up' ? p.cx > zeroX : s.side === 'down' ? p.cx < zeroX : true))
+  let chosen: NamedPoint[]
+  if (s.show === 'table') chosen = pool
+  else {
+    const score = (p: NamedPoint): number => {
+      const dx = (p.cx - zeroX) / Math.max(plot.w, 1)
+      const dy = (bottom - p.cy) / Math.max(plot.h, 1)
+      return s.by === 'y' ? dy : s.by === 'x' ? Math.abs(dx) : Math.hypot(dx, dy)
+    }
+    const ranked = pool.map((p, i) => ({ p, i, v: score(p) })).sort((a, b) => b.v - a.v || a.i - b.i)
+    const n = s.top ?? POINT_NAMES_TOP
+    chosen =
+      s.side === 'each'
+        ? [...ranked.filter((r) => r.p.cx > zeroX).slice(0, n), ...ranked.filter((r) => r.p.cx < zeroX).slice(0, n)].sort((a, b) => b.v - a.v || a.i - b.i).map((r) => r.p)
+        : ranked.slice(0, n).map((r) => r.p)
+  }
+  return [...always, ...chosen].slice(0, MAX_POINT_LABELS)
+}
+
+/**
+ * A number as it is written at a group. Without a number of decimals it has three significant
+ * figures, and no fewer than its whole part (1234.5 is 1235, never 1230). Very large and very
+ * small numbers are written with a power of ten.
+ */
+export function valueText(v: number, decimals?: number): string {
+  let text = decimals !== undefined ? v.toFixed(decimals) : Math.abs(v) >= 1000 ? String(Math.round(v)) : String(Number(v.toPrecision(3)))
+  // Rounding must not leave "-0" or "-0.00".
+  if (Number(text) === 0) text = text.replace('-', '')
+  const power = /^(-?[\d.]+)e([-+]\d+)$/.exec(text)
+  return power ? `${power[1]}×10^{${Number(power[2])}}` : text
+}
+
+/** What is written at a group, as a label (the *n* is in italics, as in print). */
+export function valueLabelText(labels: ChartValueLabels, s: Stats, box: BoxStats | null): string | null {
+  if (!s.n) return null
+  if (labels.show === 'n') return `*n* = ${s.n}`
+  const v = labels.show === 'median' ? box?.median : s.mean
+  return v === undefined || !Number.isFinite(v) ? null : valueText(v, labels.decimals)
+}
+
+/** White or dark lettering, whichever reads better on this colour. */
+export function readableOn(colour: string): string {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(colour)
+  if (!m) return INK
+  const [r, g, b] = [m[1], m[2], m[3]].map((h) => parseInt(h, 16))
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 < 0.55 ? '#ffffff' : INK
+}
+
 /** How far the error bar reaches above and below the mean. */
 function errorOf(node: ChartNode, s: Stats): number {
   return node.error === 'sd' ? s.sd : node.error === 'sem' ? s.sem : 0
@@ -698,7 +976,9 @@ export const shownValues = (node: ChartNode, group: ChartGroup): number[] => (no
 /** Notes every kind of chart can need: the table was larger than a chart takes, or an axis end could not be used. */
 function sharedNotes(node: ChartNode, axes: { axis: Axis; name: string }[]): string[] {
   const notes: string[] = []
-  if (node.groups.some((g) => g.values.length >= MAX_VALUES)) notes.push(`A chart takes at most ${MAX_VALUES} values per group: a larger group is cut off there, and what is drawn describes only those values.`)
+  if (node.kind === 'scatter') {
+    if (node.groups.some((g) => g.values.length >= MAX_POINTS)) notes.push(`A scatter chart takes at most ${MAX_POINTS} points per series: a larger series was thinned evenly over the table, keeping every named point, and its fitted line describes only the points kept.`)
+  } else if (node.groups.some((g) => g.values.length >= MAX_VALUES)) notes.push(`A chart takes at most ${MAX_VALUES} values per group: a larger group is cut off there, and what is drawn describes only those values.`)
   if (node.groups.length >= MAX_GROUPS) notes.push(`A chart takes at most ${MAX_GROUPS} groups: any further columns were left out.`)
   for (const { axis, name } of axes) {
     if (axis.ignored) notes.push(`An end set for the ${name} cannot be used, so it is ignored: the end must be above the start${axis.log ? ', and both above zero on a logarithmic axis' : ''}.`)
@@ -836,10 +1116,25 @@ interface Column {
   hi: number
   cx: number
   width: number
+  /** Stacked bars: where its part of the stack begins and ends, and how high the whole stack of its category reaches. */
+  from?: number
+  to?: number
+  top?: number
 }
+
+/**
+ * True when the chart's bars stand on top of each other: asked for, a bar chart with categories
+ * and series, and a linear value axis (a logarithmic one has no zero to stack from).
+ */
+export const isStacked = (node: ChartNode): boolean => node.kind === 'bar' && !!node.stacked && !node.yLog && isGrouped(node)
+
+const STACK_LOG_NOTE = 'Bars cannot be stacked on a logarithmic axis, which has no zero to stack from: they stand side by side.'
+const STACK_MEANS_NOTE = 'Stacked bars show the mean of each series only: error bars and single values are left out.'
 
 const VIOLIN_NOTE = `A violin needs at least ${VIOLIN_MIN} values that are not all the same: other groups are shown as dots.`
 const BRACKET_NOTE = 'Not all brackets fit above the data: make the chart taller, or remove some.'
+const VALUES_HIGH_NOTE = 'The numbers above the groups do not all fit above the data: make the chart taller.'
+const VALUES_WIDE_NOTE = 'The numbers at the groups are wider than their columns: make the chart wider or its text smaller, or write fewer decimals.'
 /** A name along the bottom takes at most this many lines. */
 const NAME_LINES = 3
 
@@ -903,7 +1198,8 @@ function columnLayout(node: ChartNode): ChartDrawing {
   const grouped = isGrouped(node)
   const cats = grouped ? unique(drawn.map((c) => c.group.category ?? '')) : []
   const series = chartSeries(node)
-  const showPoints = node.kind === 'dot' || !!node.points
+  const stacked = isStacked(node)
+  const showPoints = !stacked && (node.kind === 'dot' || !!node.points)
   const log = !!node.yLog
 
   let hidden = 0
@@ -911,7 +1207,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
     const values = shownValues(node, group)
     hidden += group.values.length - values.length
     const s = stats(values)
-    const err = errorOf(node, s)
+    const err = stacked ? 0 : errorOf(node, s)
     // What the column reaches: a bar or line point with its error bar (and its dots, when shown);
     // a dot chart every value and its error bar; a box or violin simply every value.
     const reach = node.kind === 'bar' || node.kind === 'line' ? [s.mean, s.mean - err, s.mean + err, ...(showPoints ? values : [])] : node.kind === 'dot' ? [...values, s.mean - err, s.mean + err] : values
@@ -924,6 +1220,25 @@ function columnLayout(node: ChartNode): ChartDrawing {
   })
   const live = cols.filter((c) => c.values.length)
 
+  // Stacked bars: within a category every series stands on the one before it, in the order of
+  // the legend; means below zero hang under the base line, one below the other.
+  if (stacked) {
+    for (const cat of cats) {
+      const stack = series.flatMap((x) => live.filter((c) => (c.group.category ?? '') === cat && x.groups.includes(c.index)))
+      let up = 0
+      let down = 0
+      for (const c of stack) {
+        c.from = c.s.mean >= 0 ? up : down
+        c.to = c.from + c.s.mean
+        if (c.s.mean >= 0) up = c.to
+        else down = c.to
+        c.lo = Math.min(c.from, c.to)
+        c.hi = Math.max(c.from, c.to)
+      }
+      for (const c of stack) c.top = up
+    }
+  }
+
   // A linear axis includes zero, so the height of a bar means what it seems to; a logarithmic one cannot.
   // Reference lines are part of what the chart shows, so the axis reaches them.
   const refs = usableRefLines(node.refLines, node.kind, false, log)
@@ -934,7 +1249,10 @@ function columnLayout(node: ChartNode): ChartDrawing {
   const notes = sharedNotes(node, [{ axis, name: 'value axis' }])
   if (hidden) notes.push(`${hidden} ${hidden === 1 ? 'value is' : 'values are'} zero or negative: on a logarithmic axis ${hidden === 1 ? 'it' : 'they'} cannot be shown, and the means, medians and error bars are worked out without ${hidden === 1 ? 'it' : 'them'}.`)
   if (node.kind === 'violin' && live.some((c) => !violinOf(c.group.values, log))) notes.push(VIOLIN_NOTE)
+  if (node.kind === 'bar' && node.stacked && grouped && log) notes.push(STACK_LOG_NOTE)
+  if (stacked && (node.error || node.points)) notes.push(STACK_MEANS_NOTE)
 
+  const valueLabels = usableValueLabels(node.valueLabels)
   const names = grouped ? cats : cols.map((c) => c.group.name)
   const fitNames = (pw: number, fs: number): string[] => names.map((name) => fitName(name, (pw / Math.max(1, names.length)) * 0.94, fs))
 
@@ -968,8 +1286,9 @@ function columnLayout(node: ChartNode): ChartDrawing {
       const cat = cats.indexOf(c.group.category ?? '')
       const place = series.findIndex((x) => x.groups.includes(c.index))
       const sub = inner / series.length
-      c.cx = node.kind === 'line' ? px + slot * (cat + 0.5) : px + slot * cat + (slot - inner) / 2 + sub * (place + 0.5)
-      c.width = node.kind === 'line' ? slot * 0.5 : sub
+      // The points of a line chart and the parts of a stacked bar stand in the middle of their category.
+      c.cx = node.kind === 'line' || stacked ? px + slot * (cat + 0.5) : px + slot * cat + (slot - inner) / 2 + sub * (place + 0.5)
+      c.width = node.kind === 'line' ? slot * 0.5 : stacked ? slot * 0.62 : sub
     })
 
     const points = (c: Column, radius: number, fill: string) => {
@@ -987,8 +1306,9 @@ function columnLayout(node: ChartNode): ChartDrawing {
       const asDots = node.kind === 'violin' && !violin
       if (node.kind === 'bar' && (!log || s.mean > 0)) {
         const width = c.width * (grouped ? 0.86 : 0.6)
-        const yMean = y(s.mean)
-        out.rects.push({ x: r1(cx - width / 2), y: r1(Math.min(yMean, base)), w: r1(width), h: r1(Math.abs(base - yMean)), fill: c.colour })
+        // A bar stands on the base line; a part of a stacked bar on the part before it.
+        const [foot, head] = stacked ? [y(c.from ?? 0), y(c.to ?? s.mean)] : [base, y(s.mean)]
+        out.rects.push({ x: r1(cx - width / 2), y: r1(Math.min(head, foot)), w: r1(width), h: r1(Math.abs(foot - head)), fill: c.colour })
       }
       if (node.kind === 'box' && c.box) {
         const half = c.width * (grouped ? 0.36 : 0.28)
@@ -1038,6 +1358,77 @@ function columnLayout(node: ChartNode): ChartDrawing {
       }
     }
 
+    // What is drawn for a column reaches this far up (a bar reaches zero even when its mean is
+    // negative; nothing is drawn beyond the ends of the axis).
+    const reachOf = (c: Column): number => Math.max(axis.min, Math.min(axis.max, stacked ? Math.max(c.top ?? 0, 0) : node.kind === 'bar' && !log ? Math.max(c.hi, 0) : c.hi))
+    let highest = py
+
+    // A number at every group. In a bar chart it stands inside the bar: under its top, or at its
+    // foot when an error bar or dots run through the bar. Where it does not fit, and in every
+    // other kind of chart, it stands above everything drawn for the group.
+    const labelTops = new Map<number, number>()
+    if (valueLabels) {
+      const lh = fs * 1.25
+      let outside = 0
+      let over = 0
+      let wide = false
+      let leftOut = 0
+      for (const c of live) {
+        const text = valueLabelText(valueLabels, c.s, c.box)
+        if (text === null) continue
+        const w = f.widthOf(text)
+        if (stacked) {
+          // In a stacked bar the number stands in the middle of its part, or nowhere: above the
+          // stack it could not be told which part it belongs to.
+          const [a, b] = [y(c.from ?? 0), y(c.to ?? 0)].map((v) => Math.max(top, Math.min(py + ph, v))).sort((p, q) => p - q)
+          if (b - a >= lh + 2 && w <= c.width * 0.86 - 4) out.texts.push(words(text, c.cx, (a + b) / 2 - lh / 2, { fill: valueLabels.color ?? readableOn(c.colour) }))
+          else leftOut++
+          continue
+        }
+        if (w > c.width) wide = true
+        let at: number | null = null
+        const bar = node.kind === 'bar' && (!log || c.s.mean > 0)
+        if (bar && !valueLabels.above) {
+          const end = Math.max(top, Math.min(py + ph, y(c.s.mean)))
+          const through = c.err > 0 || showPoints
+          const inside = through ? [c.s.mean - c.err, c.s.mean + c.err, ...(showPoints ? c.values : [])] : []
+          if (end <= base) {
+            // A bar that stands on the base line.
+            const lowest = Math.min(...inside)
+            at = through ? base - 3 - lh : end + 3
+            if (through && (!(!log || lowest > 0) || at < y(lowest) + 2)) at = null
+            if (at !== null && (at < end + 2 || at + lh > base - 1)) at = null
+          } else {
+            // A bar that hangs from it (a negative mean).
+            at = through ? base + 3 : end - 3 - lh
+            if (through && at + lh > y(Math.max(...inside)) - 2) at = null
+            if (at !== null && (at < base + 1 || at + lh > end - 2)) at = null
+          }
+          if (at !== null && w > c.width * (grouped ? 0.86 : 0.6) - 4) at = null
+          if (at === null) outside++
+        }
+        const within = at !== null
+        if (at === null) {
+          const marks = showPoints || node.kind === 'dot' || node.kind === 'line' ? dot * 1.5 * c.scale : 0
+          at = y(reachOf(c)) - 3 - marks - lh
+          labelTops.set(c.index, at)
+          highest = Math.min(highest, at)
+          over++
+        }
+        out.texts.push(words(text, c.cx, at, { fill: valueLabels.color ?? (within ? readableOn(c.colour) : INK) }))
+      }
+      if (leftOut) out.notes.push(`${leftOut === 1 ? 'One number does' : `${leftOut} numbers do`} not fit in ${leftOut === 1 ? 'its part of the stacked bar and is' : 'their parts of the stacked bars and are'} left out: make the chart larger or its lettering smaller.`)
+      if (wide) out.notes.push(VALUES_WIDE_NOTE)
+      // A light colour chosen for numbers inside bars may not be readable beside them.
+      if (over && valueLabels.color && readableOn(valueLabels.color) === INK) {
+        out.notes.push(
+          outside
+            ? `${outside === 1 ? 'One number does' : `${outside} numbers do`} not fit inside ${outside === 1 ? 'its bar and is' : 'their bars and are'} written above ${outside === 1 ? 'it' : 'them'}, in the light colour you chose: check that it can be read on the page.`
+            : 'The numbers above the groups are written in the light colour you chose: check that they can be read on the page.',
+        )
+      }
+    }
+
     for (const l of refs) {
       const at = y(l.value)
       out.dashes.push({ x1: r1(px), y1: r1(at), x2: r1(px + pw), y2: r1(at), ...(l.dash ? { style: l.dash } : {}) })
@@ -1051,21 +1442,20 @@ function columnLayout(node: ChartNode): ChartDrawing {
     if (grouped) cats.forEach((_, i) => out.texts.push(words(labels[i], px + slot * (i + 0.5), py + ph + 5)))
     else cols.forEach((c, i) => out.texts.push(words(labels[i], c.cx, py + ph + 5)))
 
-    // Brackets stand a little above what is drawn for the columns they span (a bar reaches zero
-    // even when its mean is negative; nothing is drawn beyond the ends of the axis). A wider
-    // bracket goes over a narrower one.
-    const reachOf = (c: Column): number => Math.max(axis.min, Math.min(axis.max, node.kind === 'bar' && !log ? Math.max(c.hi, 0) : c.hi))
+    // Brackets stand a little above what is drawn for the columns they span, and above a number
+    // written over a column. A wider bracket goes over a narrower one.
     const step = fs * 1.25 + fs * 0.35 + 5
     const placed: { x1: number; x2: number; y: number }[] = []
-    let highest = py
     const wanted = (node.brackets ?? [])
       .map((b) => ({ a: live.find((c) => c.index === b.from), b: live.find((c) => c.index === b.to), label: bracketLabel(node, b) }))
       .filter((b): b is { a: Column; b: Column; label: string } => !!b.a && !!b.b && b.a !== b.b)
       .map((b) => ({ x1: Math.min(b.a.cx, b.b.cx), x2: Math.max(b.a.cx, b.b.cx), label: b.label }))
+      // Two parts of one stacked bar stand in the same place: there is nothing to span.
+      .filter((b) => b.x2 - b.x1 > 1)
       .sort((p, q) => p.x2 - p.x1 - (q.x2 - q.x1) || p.x1 - q.x1)
     for (const b of wanted) {
       const under = live.filter((c) => c.cx >= b.x1 - 0.5 && c.cx <= b.x2 + 0.5)
-      let at = Math.min(...under.map((c) => y(reachOf(c)))) - fs * 0.6
+      let at = Math.min(...under.map((c) => Math.min(y(reachOf(c)), labelTops.get(c.index) ?? Infinity))) - fs * 0.6
       for (let again = true; again; ) {
         again = false
         for (const p of placed) {
@@ -1102,7 +1492,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
     headroom = next
     result = draw(headroom)
   }
-  if (result.short > 0.5) result.out.notes.push(BRACKET_NOTE)
+  if (result.short > 0.5) result.out.notes.push(node.brackets?.length ? BRACKET_NOTE : VALUES_HIGH_NOTE)
   return result.out
 }
 
@@ -1117,7 +1507,17 @@ interface Series {
   /** The name of each point; '' where it has none. */
   names: string[]
   fit: Fit | null
+  /** The dose-response curve, when the chart asks for one and the points define one. */
+  dose: DoseFit | null
+  /** Points the curve leaves out: a dose of zero or below has no logarithm. */
+  noDose: number
 }
+
+/** True when the chart draws a dose-response curve through each series of points. */
+export const fitsDose = (node: ChartNode): boolean => node.kind === 'scatter' && !!node.fit && node.curve === 'dose'
+
+/** Dose-response curves already worked out, by the list of values they were fitted to: the search takes a moment, a chart is laid out often. */
+const doseFits = new WeakMap<number[], Map<string, DoseFit | null>>()
 
 /** The points of every series that can be shown on the chart's axes, and the fitted lines. */
 function scatterSeries(node: ChartNode): { series: Series[]; hidden: number } {
@@ -1129,19 +1529,157 @@ function scatterSeries(node: ChartNode): { series: Series[]; hidden: number } {
     hidden += all.length - points.length
     // The line is fitted to the values as they are plotted: to their logarithms on a logarithmic axis.
     const plotted = points.map(([x, v]) => [node.xLog ? Math.log10(x) : x, node.yLog ? Math.log10(v) : v] as [number, number])
-    return { name: c.group.name, colour: groupColour(c.group, i, node.palette), ...markOf(c.group.shape), ...pointsOf(node, c.group), points, names: shown.map((s) => s.name), fit: fitLine(plotted) }
+    // A dose-response curve is fitted to the response as measured, against the logarithm of the dose.
+    let dose: DoseFit | null = null
+    const dosed = points.filter(([x]) => x > 0)
+    if (fitsDose(node)) {
+      let known = doseFits.get(c.group.values)
+      if (!known) doseFits.set(c.group.values, (known = new Map()))
+      const key = `${!!node.xLog}|${!!node.yLog}|${(c.group.xs ?? []).join(',')}`
+      if (!known.has(key)) known.set(key, fitDose(dosed.map(([x, v]) => [Math.log10(x), v])))
+      dose = known.get(key) ?? null
+    }
+    return { name: c.group.name, colour: groupColour(c.group, i, node.palette), ...markOf(c.group.shape), ...pointsOf(node, c.group), points, names: shown.map((s) => s.name), fit: fitLine(plotted), dose, noDose: points.length - dosed.length }
   })
   return { series, hidden }
 }
 
-/** For the panel: every series of a scatter chart with the number of points shown and its fitted line (null where none can be fitted). */
-export const scatterFits = (node: ChartNode): { name: string; points: number; fit: Fit | null }[] => scatterSeries(node).series.map((s) => ({ name: s.name, points: s.points.length, fit: s.fit }))
+/** For the panel: every series of a scatter chart with the number of points shown, its fitted line and its dose-response curve (null where none can be fitted, or none is asked for). */
+export const scatterFits = (node: ChartNode): { name: string; points: number; fit: Fit | null; dose: DoseFit | null }[] =>
+  scatterSeries(node).series.map((s) => ({ name: s.name, points: s.points.length, fit: s.fit, dose: s.dose }))
+
+const sig3 = (v: number): string => String(Number(v.toPrecision(3)))
+
+/** The EC50 of a curve with its 95 % confidence interval (from the standard error of its logarithm); the interval is null when it cannot be worked out. */
+export function ec50Of(fit: DoseFit): { ec50: number; low: number | null; high: number | null } {
+  const ec50 = 10 ** fit.logEc50
+  const reach = fit.seLogEc50 !== null && fit.n > 4 ? tCritical(0.05, fit.n - 4) * fit.seLogEc50 : NaN
+  return Number.isFinite(reach) ? { ec50, low: 10 ** (fit.logEc50 - reach), high: 10 ** (fit.logEc50 + reach) } : { ec50, low: null, high: null }
+}
+
+/** A dose-response curve in words: "EC50 = 1.93 (95 % CI 1.83 to 2.04), Hill slope 1.19, bottom 2.07, top 96.9, R² = 0.9999". A falling curve has an IC50. */
+export function doseText(fit: DoseFit): string {
+  const { ec50, low, high } = ec50Of(fit)
+  return `${fit.hill < 0 ? 'IC50' : 'EC50'} = ${sig3(ec50)}${low !== null && high !== null ? ` (95 % CI ${sig3(low)} to ${sig3(high)})` : ''}, Hill slope ${sig3(fit.hill)}, bottom ${sig3(fit.bottom)}, top ${sig3(fit.top)}, R² = ${Number(fit.r2.toFixed(4))}`
+}
+
+/** What a methods section can say about the chart's dose-response curves; null when it draws none. */
+export function curveMethodsText(node: ChartNode): string | null {
+  if (!fitsDose(node)) return null
+  const fitted = scatterSeries(node).series.filter((s) => s.dose)
+  if (!fitted.length) return null
+  const each = fitted.map((s) => `${fitted.length > 1 || s.name.trim() ? `${s.name}: ` : ''}${doseText(s.dose!)}, n = ${s.dose!.n}`).join('; ')
+  return (
+    'Dose-response curves were fitted by least squares to the response against the logarithm of the dose, with the four-parameter logistic equation ' +
+    'y = bottom + (top − bottom) / (1 + 10^((log EC50 − log x) × Hill slope)). Confidence intervals of the EC50 are asymptotic 95 % intervals from the standard error of log EC50. ' +
+    `${each}. Curves were fitted in BioSketch, which gives the results of R 4.4 (nls with the model SSfpl).`
+  )
+}
 
 /** An axis for scattered values: it starts at zero when the smallest value is near zero, otherwise near the data. */
 function scatterAxis(values: number[], opts: { min?: number; max?: number; log?: boolean }): Axis {
   const lo = values.length ? Math.min(...values) : 0
   const hi = values.length ? Math.max(...values) : 1
   return axisFor(opts.log || lo < 0 || lo > hi * 0.5 ? lo : 0, hi, opts)
+}
+
+interface NameToPlace {
+  name: string
+  /** The point, and how far from its middle a name must stay to leave the mark clear. */
+  cx: number
+  cy: number
+  gap: number
+  /** Size of the written name. */
+  w: number
+  h: number
+}
+
+export interface PlacedName {
+  name: string
+  /** Top-left corner of the name. */
+  x: number
+  y: number
+  /** A thin line from the point to the name, when the name stands away from its point: x1, y1, x2, y2. */
+  leader?: [number, number, number, number]
+}
+
+/**
+ * Where the names of points go. Each name, in the order of the table, takes the free place that
+ * covers the fewest points: right, left, above or below its point first, then the same and the
+ * four corners at two further steps out, joined to the point by a thin line. A place is free when
+ * it lies inside the plot and no name placed before covers it. Covering points costs more than
+ * standing further away, so in a dense cloud a name moves out to where it can be read. When no
+ * place is free the name goes right of its point, as it always did.
+ */
+export function placeNames(names: NameToPlace[], marks: { cx: number; cy: number; r: number }[], plot: Rect): PlacedName[] {
+  // The marks in a grid of cells, so that counting the marks under a place stays quick for
+  // thousands of points.
+  const cell = 16
+  const grid = new Map<string, { cx: number; cy: number; r: number }[]>()
+  for (const m of marks) {
+    const key = `${Math.floor(m.cx / cell)},${Math.floor(m.cy / cell)}`
+    const list = grid.get(key)
+    if (list) list.push(m)
+    else grid.set(key, [m])
+  }
+  const covered = (b: Rect, own: { cx: number; cy: number }): number => {
+    let n = 0
+    for (let i = Math.floor((b.x - 8) / cell); i <= Math.floor((b.x + b.w + 8) / cell); i++) {
+      for (let j = Math.floor((b.y - 8) / cell); j <= Math.floor((b.y + b.h + 8) / cell); j++) {
+        for (const m of grid.get(`${i},${j}`) ?? []) {
+          if (m.cx === own.cx && m.cy === own.cy) continue
+          if (m.cx + m.r > b.x && m.cx - m.r < b.x + b.w && m.cy + m.r > b.y && m.cy - m.r < b.y + b.h) n++
+        }
+      }
+    }
+    return n
+  }
+  const taken: Rect[] = []
+  const clash = (b: Rect): boolean => taken.some((t) => b.x < t.x + t.w && t.x < b.x + b.w && b.y < t.y + t.h && t.y < b.y + b.h)
+  const inside = (b: Rect): boolean => b.x >= plot.x && b.x + b.w <= plot.x + plot.w && b.y >= plot.y && b.y + b.h <= plot.y + plot.h
+  return names.map((p) => {
+    const { w, h, gap } = p
+    const places: (Rect & { far: number })[] = []
+    for (let step = 0; step < 3; step++) {
+      const d = gap + step * (h * 1.6)
+      places.push(
+        { x: p.cx + d, y: p.cy - h / 2, w, h, far: step },
+        { x: p.cx - d - w, y: p.cy - h / 2, w, h, far: step },
+        { x: p.cx - w / 2, y: p.cy - d - h, w, h, far: step },
+        { x: p.cx - w / 2, y: p.cy + d, w, h, far: step },
+      )
+      if (step) {
+        const c = d * 0.75
+        places.push(
+          { x: p.cx + c, y: p.cy - c - h, w, h, far: step },
+          { x: p.cx - c - w, y: p.cy - c - h, w, h, far: step },
+          { x: p.cx + c, y: p.cy + c, w, h, far: step },
+          { x: p.cx - c - w, y: p.cy + c, w, h, far: step },
+        )
+      }
+    }
+    let best: (Rect & { far: number }) | null = null
+    let bestCost = Infinity
+    for (const b of places) {
+      if (!inside(b) || clash(b)) continue
+      // One covered point weighs as much as one step out.
+      const cost = covered(b, p) + b.far * 1.01
+      if (cost < bestCost) [best, bestCost] = [b, cost]
+      if (cost === 0) break
+    }
+    const box = best ?? places.find(inside) ?? places[0]
+    taken.push(box)
+    const placedName: PlacedName = { name: p.name, x: box.x, y: box.y }
+    if (best && best.far) {
+      // From the edge of the mark to the nearest point of the name's box.
+      const nx = Math.max(box.x, Math.min(p.cx, box.x + w))
+      const ny = Math.max(box.y, Math.min(p.cy, box.y + h))
+      const len = Math.hypot(nx - p.cx, ny - p.cy)
+      const r = gap - 2
+      if (len > r + 1) placedName.leader = [p.cx + ((nx - p.cx) / len) * r, p.cy + ((ny - p.cy) / len) * r, nx, ny]
+    }
+    return placedName
+  })
 }
 
 /** A scatter chart: points on two numeric axes, with an optional straight line fitted to each series. */
@@ -1164,10 +1702,34 @@ function scatterLayout(node: ChartNode): ChartDrawing {
       return [vx, node.yLog ? 10 ** fitted : fitted] as [number, number]
     })
   }
-  const lineEnds = series.map(fitEnds).map((ends) => (ends.every(([, v]) => usable(v) && (!node.yLog || v > 0)) ? ends : []))
-  const yAxis = scatterAxis([...all.map((p) => p[1]), ...lineEnds.flat().map((p) => p[1]), ...refAt('y')], { min: node.yMin, max: node.yMax, log: node.yLog })
+  const dosed = fitsDose(node)
+  const lineEnds = dosed ? series.map(() => []) : series.map(fitEnds).map((ends) => (ends.every(([, v]) => usable(v) && (!node.yLog || v > 0)) ? ends : []))
+  // A dose-response curve as a run of points across the doses of its own series, evenly spaced on the logarithm of the dose.
+  const curves: [number, number][][] = series.map((s) => {
+    if (!dosed || !s.dose) return []
+    const doses = s.points.map((p) => p[0]).filter((v) => v > 0)
+    const [from, to] = [Math.log10(Math.min(...doses)), Math.log10(Math.max(...doses))]
+    const steps = 80
+    return Array.from({ length: steps + 1 }, (_, k) => from + ((to - from) * k) / steps)
+      .map((lx) => [10 ** lx, doseResponseAt(s.dose!, lx)] as [number, number])
+      .filter(([, v]) => usable(v) && (!node.yLog || v > 0))
+  })
+  const yAxis = scatterAxis([...all.map((p) => p[1]), ...lineEnds.flat().map((p) => p[1]), ...curves.flat().map((p) => p[1]), ...refAt('y')], { min: node.yMin, max: node.yMax, log: node.yLog })
 
   out.notes = sharedNotes(node, [{ axis: yAxis, name: 'y axis' }, { axis: xAxis, name: 'x axis' }])
+  if (dosed) {
+    const none = series.filter((s) => s.points.length && !s.dose).map((s) => s.name || 'the points')
+    if (none.length) out.notes.push(`No dose-response curve could be fitted to ${listed(none)}: a curve needs at least five points at four doses above zero, and a response that settles on a plateau at both ends.`)
+    const noDose = series.reduce((a, s) => a + s.noDose, 0)
+    if (noDose) out.notes.push(`${noDose} ${noDose === 1 ? 'point has' : 'points have'} a dose of zero or below and ${noDose === 1 ? 'is' : 'are'} left out of the curve, which runs along the logarithm of the dose.`)
+    const beyond = series.filter((s) => {
+      if (!s.dose) return false
+      const doses = s.points.map((p) => p[0]).filter((v) => v > 0)
+      return s.dose.logEc50 < Math.log10(Math.min(...doses)) || s.dose.logEc50 > Math.log10(Math.max(...doses))
+    })
+    if (beyond.length) out.notes.push(`The ${beyond.some((s) => s.dose!.hill < 0) ? 'IC50' : 'EC50'} of ${listed(beyond.map((s) => s.name || 'the curve'))} lies outside the doses that were tested: it is an estimate beyond the data.`)
+    if (!node.xLog && series.some((s) => s.dose)) out.notes.push('A dose-response curve is usually shown on a logarithmic x axis: write “log x axis” in the box above, or tick it under the x axis.')
+  }
   if (hidden) out.notes.push(`${hidden} ${hidden === 1 ? 'point is' : 'points are'} zero or negative on a logarithmic axis: ${hidden === 1 ? 'it' : 'they'} cannot be shown, and the fitted line is worked out without ${hidden === 1 ? 'it' : 'them'}.`)
 
   // The last number along the bottom is centred under the end of the axis: keep room for half of it.
@@ -1194,31 +1756,36 @@ function scatterLayout(node: ChartNode): ChartDrawing {
   series.forEach((s, i) => {
     const ends = lineEnds[i].map(([vx, vy]) => [x(vx), y(vy)])
     if (ends.length === 2 && ends.flat().every((v) => Number.isFinite(v))) out.paths.push({ d: `M${ends.map((e) => `${r1(e[0])} ${r1(e[1])}`).join('L')}`, stroke: s.colour, width: 2 })
+    const curve = curves[i].map(([vx, vy]) => [x(vx), y(vy)]).filter((p) => p.every((v) => Number.isFinite(v)))
+    if (curve.length > 1) out.paths.push({ d: `M${curve.map((p) => `${r1(p[0])} ${r1(p[1])}`).join('L')}`, stroke: s.colour, width: 2 })
     for (const [vx, vy] of s.points) out.circles.push({ cx: r1(x(vx)), cy: r1(y(vy)), r: r1(dot * s.scale), fill: s.colour, ...(s.shape ? { shape: s.shape } : {}), ...s.solid })
   })
 
-  // Names of points, a little smaller than the rest of the lettering. Each goes to the right of
-  // its point, or failing that to the left, above or below: the first place inside the plot that
-  // no earlier name occupies. Points outside the range that was set get none.
-  const named = series.flatMap((s) => s.points.map(([vx, vy], k) => ({ name: s.names[k], cx: x(vx), cy: y(vy), gap: dot * s.scale + 2 }))).filter((p) => p.name && p.cx >= px - 0.5 && p.cx <= px + pw + 0.5 && p.cy >= py - 0.5 && p.cy <= py + ph + 0.5)
-  if (named.length > MAX_POINT_LABELS) out.notes.push(`${named.length} points have a name; only the first ${MAX_POINT_LABELS} are written on the chart. Keep names in the table only for the points you want to label.`)
+  // Names of points, a little smaller than the rest of the lettering. Points outside the range
+  // that was set get none.
+  const candidates = series.flatMap((s) => s.points.map(([vx, vy], k) => ({ name: s.names[k], series: s.name, cx: x(vx), cy: y(vy), gap: dot * s.scale + 2 }))).filter((p) => p.name && p.cx >= px - 0.5 && p.cx <= px + pw + 0.5 && p.cy >= py - 0.5 && p.cy <= py + ph + 0.5)
+  const setting = usablePointNames(node.pointNames)
+  const show = setting?.show ?? 'table'
+  if (show === 'table' && candidates.length > MAX_POINT_LABELS) out.notes.push(`${candidates.length} points have a name; only the first ${MAX_POINT_LABELS} are written on the chart. Choose “Top” under “Names of points” to write the names of the most striking ones instead.`)
+  if (show !== 'none' && !candidates.length && (show === 'top' || setting?.always?.length)) out.notes.push('No point has a name: put a column of names (genes, samples) before the x values in the table.')
+  // Where x = 0 is drawn: the middle of a volcano plot. Off the axis, its nearer edge.
+  const zero = xAxis.at(node.xLog ? 1 : 0)
+  const zeroX = px + Math.min(1, Math.max(0, Number.isFinite(zero) ? zero : 0)) * pw
+  const named = pickNames(candidates, setting, zeroX, py + ph, { w: pw, h: ph }) as typeof candidates
+  if (setting?.always?.length) {
+    const found = new Set(candidates.map((p) => p.name.toLowerCase()))
+    const missing = setting.always.filter((n) => !found.has(n.toLowerCase()))
+    if (missing.length && candidates.length) out.notes.push(`Not found among the named points: ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? ` and ${missing.length - 8} more` : ''}.`)
+  }
   const small = Math.max(6, fs * 0.85)
-  const taken: { x: number; y: number; w: number; h: number }[] = []
-  for (const p of named.slice(0, MAX_POINT_LABELS)) {
-    const w = measureText(words(p.name, 0, 0, { fontSize: small })).w
-    const h = small * 1.25
-    const gap = p.gap
-    const places = [
-      { x: p.cx + gap, y: p.cy - h / 2 },
-      { x: p.cx - gap - w, y: p.cy - h / 2 },
-      { x: p.cx - w / 2, y: p.cy - gap - h },
-      { x: p.cx - w / 2, y: p.cy + gap },
-    ]
-    const inPlot = places.filter((b) => b.x >= px && b.x + w <= px + pw && b.y >= py && b.y + h <= py + ph)
-    const free = inPlot.find((b) => !taken.some((t) => b.x < t.x + t.w && t.x < b.x + w && b.y < t.y + t.h && t.y < b.y + h))
-    const box = free ?? inPlot[0] ?? places[0]
-    taken.push({ ...box, w, h })
-    out.texts.push(words(p.name, box.x, box.y, { align: 'left', fontSize: small }))
+  const placed = placeNames(
+    named.map((p) => ({ ...p, w: measureText(words(p.name, 0, 0, { fontSize: small })).w, h: small * 1.25 })),
+    out.circles,
+    { x: px, y: py, w: pw, h: ph },
+  )
+  for (const p of placed) {
+    if (p.leader) out.paths.push({ d: `M${r1(p.leader[0])} ${r1(p.leader[1])}L${r1(p.leader[2])} ${r1(p.leader[3])}`, stroke: '#6b7280', width: 0.75 })
+    out.texts.push(words(p.name, p.x, p.y, { align: 'left', fontSize: small }))
   }
 
   drawValueAxis(f, yAxis, y, out, py)

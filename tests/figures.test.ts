@@ -140,15 +140,3 @@ describe('several figures', () => {
     expect(await loadFigure(second)).toBeNull()
   })
 })
-
-describe('icon style and the list of figures', () => {
-  it('does not keep an untouched figure just because it started in the flat style', async () => {
-    localStorage.setItem('biosketch.icon-style', 'flat')
-    await newFigure()
-    expect(E().doc.iconStyle).toBe('flat')
-    const blank = E().figureId
-    await newFigure({ ...emptyDoc('Real'), nodes: [box('a')] })
-    expect(await loadFigure(blank)).toBeNull()
-    localStorage.removeItem('biosketch.icon-style')
-  })
-})

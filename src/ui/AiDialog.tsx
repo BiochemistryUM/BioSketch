@@ -14,13 +14,16 @@ import { buildChatRequest, readChatAnswer } from '../ai/bridge'
 import { AI_MODELS, AiError, DEFAULT_MODEL, requestScene } from '../ai/client'
 import { tidyScene } from '../ai/layout'
 import { applyRevision, docToScene, reviseTaskText } from '../ai/revise'
-import { sceneToNodes, type Scene } from '../ai/scene'
+import { sceneIcons } from '../ai/icons'
+import { iconsUsed, sceneToNodes, systemPrompt, type Scene } from '../ai/scene'
+import { packList, type PackInfo } from '../icons/packs'
 import { download, fileBase, renderPng, renderPngBase64, renderSvg } from '../io/export'
 import { removeNodes } from '../model/doc'
 import type { FigDoc } from '../model/types'
 import { toast, useEditor } from '../store'
 import { Modal } from './Dialogs'
 import { Icon } from './Icon'
+import { copyText } from './copy'
 
 const KEY_STORE = 'biosketch.apiKey'
 const MODEL_STORE = 'biosketch.aiModel'
@@ -61,33 +64,6 @@ let sessionKey = ''
 const sketchImage = (doc: FigDoc): Promise<Blob> =>
   renderPng(doc, { area: 'page', transparent: false, includeSketch: true }, Math.min(1, SKETCH_MAX_SIDE / Math.max(doc.width, doc.height)))
 
-/** Copy text, also where the modern clipboard is unavailable (an iPad reaching the app over plain http). */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text)
-      return true
-    }
-  } catch {
-    /* fall through to the older method */
-  }
-  const box = document.createElement('textarea')
-  box.value = text
-  box.setAttribute('readonly', '')
-  box.style.position = 'fixed'
-  box.style.opacity = '0'
-  document.body.appendChild(box)
-  box.select()
-  let ok = false
-  try {
-    ok = document.execCommand('copy')
-  } catch {
-    ok = false
-  }
-  box.remove()
-  return ok
-}
-
 async function copyImage(image: Promise<Blob>): Promise<boolean> {
   try {
     if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') return false
@@ -122,8 +98,14 @@ export function AiDialog() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const abort = useRef<AbortController | null>(null)
+  // The icon collections: their names are the catalogue the AI chooses from.
+  const [packs, setPacks] = useState<PackInfo[]>([])
 
   useEffect(() => () => abort.current?.abort(), [])
+  useEffect(() => {
+    void packList().then(setPacks)
+  }, [])
+  const system = useMemo(() => systemPrompt(packs), [packs])
 
   const close = () => {
     abort.current?.abort()
@@ -142,7 +124,7 @@ export function AiDialog() {
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
   }, [doc, fromSketch, strokes.length])
 
-  const request = useMemo(() => (hasInput ? buildChatRequest(fromSketch, description, reviseTask, planFirst) : ''), [hasInput, fromSketch, description, reviseTask, planFirst])
+  const request = useMemo(() => (hasInput ? buildChatRequest(system, fromSketch, description, reviseTask, planFirst) : ''), [hasInput, system, fromSketch, description, reviseTask, planFirst])
 
   const chooseVia = (next: Via) => {
     setVia(next)
@@ -151,9 +133,9 @@ export function AiDialog() {
   }
 
   /** After building: close with a short message, or stay open when there is more to tell. */
-  const finish = (summary: string, notes: string[], fixes: string[]) => {
+  const finish = (summary: string, notes: string[], fixes: string[], stay = false) => {
     useEditor.getState().set({ tool: 'select', selection: [] })
-    if (!notes.length && !fixes.length) {
+    if (!notes.length && !fixes.length && !stay) {
       useEditor.getState().set({ dialog: null })
       toast(summary)
       return
@@ -162,18 +144,21 @@ export function AiDialog() {
   }
 
   /** Put the figure on the page as one undo step. */
-  const applyScene = (answered: Scene) => {
+  const applyScene = async (raw: Scene) => {
+    // The answer names icons; their drawings are fetched from the collections before anything is built.
+    const { scene: answered, icons, missing } = await sceneIcons(raw, packs)
+    const unloaded = missing.length ? ` Some icons could not be loaded (${missing.join(', ')}), so boxes with their names stand in for them. Check the connection, undo and try again.` : ''
     const s = useEditor.getState()
     if (revising) {
       // Apply the answer as changes to what is on the page, so hand-made styling survives.
       // Nothing is moved by the layout check here: the scientist placed these things.
-      s.commit((d) => applyRevision(d, docToScene(d), answered))
-      finish('Figure changed. Undo brings the previous version back.', answered.notes, [])
+      s.commit((d) => applyRevision(d, docToScene(d), answered, icons))
+      finish(`Figure changed. Undo brings the previous version back.${unloaded}`, answered.notes, [], !!unloaded)
       return
     }
     // Check the layout before anything is drawn: nothing off the page, nothing on top of something else.
-    const { scene, fixes } = tidyScene(answered, s.doc)
-    const nodes = sceneToNodes(scene, s.doc)
+    const { scene, fixes } = tidyScene(answered, s.doc, icons)
+    const nodes = sceneToNodes(scene, s.doc, undefined, icons)
     // From a sketch: the strokes make way for the figure. From a description: optionally start from a clean page.
     const removeIds = fromSketch
       ? replaceSketch
@@ -184,11 +169,12 @@ export function AiDialog() {
         : []
     s.commit((d) => {
       const base = removeNodes(d, removeIds)
-      return { ...base, nodes: [...base.nodes, ...nodes] }
+      // The drawings are stored with the figure, like any icon placed from a collection.
+      return { ...base, nodes: [...base.nodes, ...nodes], customIcons: { ...iconsUsed(nodes, icons), ...base.customIcons } }
     })
     const undoNote = removeIds.length ? (fromSketch ? ' Undo brings your sketch back.' : ' Undo brings the previous page back.') : ''
     const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
-    finish(`Figure created: ${count(scene.elements.length, 'element')}, ${count(scene.connectors.length, 'arrow')}.${undoNote}`, scene.notes, fixes)
+    finish(`Figure created: ${count(scene.elements.length, 'element')}, ${count(scene.connectors.length, 'arrow')}.${undoNote}${unloaded}`, scene.notes, fixes, !!unloaded)
   }
 
   /** From the result: go straight on to asking for a change to the figure that was just built. */
@@ -211,7 +197,7 @@ export function AiDialog() {
     abort.current = controller
     try {
       const imageBase64 = fromSketch ? await renderPngBase64(useEditor.getState().doc, SKETCH_MAX_SIDE) : undefined
-      applyScene(await requestScene({ apiKey: key, model, description, task: reviseTask, imageBase64, signal: controller.signal }))
+      await applyScene(await requestScene({ apiKey: key, model, system, description, task: reviseTask, imageBase64, signal: controller.signal }))
     } catch (e) {
       if (!controller.signal.aborted) setError(e instanceof AiError || e instanceof Error ? e.message : 'Something went wrong.')
     } finally {
@@ -219,12 +205,15 @@ export function AiDialog() {
     }
   }
 
-  const runChat = () => {
+  const runChat = async () => {
     setError('')
+    setBusy(true)
     try {
-      applyScene(readChatAnswer(answer))
+      await applyScene(readChatAnswer(answer))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'The answer could not be read.')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -306,7 +295,7 @@ export function AiDialog() {
             <img src={sketchPreview} alt="Your sketch" />
             <div>
               <p className="hint">
-                The AI reads your sketch, including handwritten labels, and rebuilds it from library icons, boxes and arrows. Everything stays editable.
+                The AI reads your sketch, including handwritten labels, and rebuilds it from NIH BioArt icons, boxes and arrows. Everything stays editable.
               </p>
               <label className="field">
                 <span className="field-label">Notes for the AI (optional)</span>
@@ -334,7 +323,7 @@ export function AiDialog() {
           </label>
           <p className="hint">
             The AI sees {snapshot.elements.size} objects and {snapshot.connectors.size} arrows. Colours, rotation and anything else you set by hand are
-            kept. Pictures, charts, sketch strokes, imported or split icons, locked or hidden objects and arrows with a loose end are not shown to it and stay as they are.
+            kept. Pictures, charts, sketch strokes, icons imported from a file or split into parts, locked or hidden objects and arrows with a loose end are not shown to it and stay as they are.
           </p>
         </>
       ) : (
@@ -476,7 +465,7 @@ export function AiDialog() {
           {busy ? 'Cancel' : 'Close'}
         </button>
         {via === 'chat' ? (
-          <button className="btn primary" disabled={!answer.trim()} onClick={runChat}>
+          <button className="btn primary" disabled={!answer.trim() || busy} onClick={runChat}>
             <Icon name="sparkles" size={16} /> Create figure
           </button>
         ) : (

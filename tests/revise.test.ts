@@ -6,6 +6,7 @@ import { emptyDoc } from '../src/model/doc'
 import { getRect } from '../src/model/nodes'
 import type { ConnectorNode, FigDoc, FigNode, IconNode, ShapeNode, TextNode } from '../src/model/types'
 import { TEMPLATES } from '../src/templates'
+import { example, packIcons, stubIcon } from './helpers'
 
 const icon = (id: string, iconId: string, x: number, y: number, extra: Partial<IconNode> = {}): IconNode => ({ id, type: 'icon', iconId, x, y, w: 120, h: 60, rotation: 0, ...extra })
 const box = (id: string, x: number, y: number, extra: Partial<ShapeNode> = {}): ShapeNode => ({
@@ -16,9 +17,11 @@ const arrow = (id: string, from: string, to: string, extra: Partial<ConnectorNod
   id, type: 'connector', from: { x: 0, y: 0, nodeId: from }, to: { x: 0, y: 0, nodeId: to }, kind: 'arrow', stroke: '#111111', strokeWidth: 3, ...extra,
 })
 
+const MITO = 'nih-cells--mitochondria'
+
 function sample(): FigDoc {
   const nodes: FigNode[] = [
-    icon('mito', 'mitochondrion', 100, 100, { rotation: 30, colors: { '#f9c3a6': '#00ff00' } }),
+    icon('mito', MITO, 100, 100, { rotation: 30, colors: { '#f9c3a6': '#00ff00' } }),
     box('akt', 500, 100, { groupId: 'g1' }),
     text('aktLabel', 560, 110, 'AKT', { groupId: 'g1', bold: true }),
     text('note', 300, 600, 'Free note'),
@@ -27,14 +30,14 @@ function sample(): FigDoc {
     { id: 'pic', type: 'image', src: 'data:image/png;base64,AAAA', x: 900, y: 100, w: 100, h: 100, rotation: 0 },
     box('locked', 20, 700, { locked: true }),
   ]
-  return { ...emptyDoc(), nodes }
+  return { ...emptyDoc(), nodes, customIcons: { [MITO]: stubIcon(MITO) } }
 }
 
 describe('describing the page to the AI', () => {
   it('lists what can be revised and leaves out what cannot', () => {
     const snap = docToScene(sample())
     expect(snap.scene.elements.map((e) => [e.id, e.kind, e.icon, e.label])).toEqual([
-      ['e1', 'icon', 'mitochondrion', ''],
+      ['e1', 'icon', MITO, ''],
       ['e2', 'box', '', 'AKT'],
       ['e3', 'text', '', 'Free note'],
     ])
@@ -46,7 +49,7 @@ describe('describing the page to the AI', () => {
 
   it('produces a scene the answer checker accepts, for the example figures', () => {
     for (const t of TEMPLATES) {
-      const snap = docToScene(t.build())
+      const snap = docToScene(example(t))
       const parsed = parseScene(JSON.parse(JSON.stringify(snap.scene)))
       expect(parsed.elements, t.id).toHaveLength(snap.scene.elements.length)
       expect(parsed.connectors, t.id).toHaveLength(snap.scene.connectors.length)
@@ -58,7 +61,7 @@ describe('describing the page to the AI', () => {
 describe('applying a revision', () => {
   it('changes nothing when the answer equals the question', () => {
     for (const t of TEMPLATES) {
-      const doc = t.build()
+      const doc = example(t)
       const snap = docToScene(doc)
       expect(applyRevision(doc, snap, snap.scene), t.id).toBe(doc)
     }
@@ -138,17 +141,35 @@ describe('applying a revision', () => {
     expect(applyRevision(doc, snap, after).nodes.find((n) => n.id === 'link')).toMatchObject({ kind: 'inhibit', label: 'represses', stroke: '#111111', strokeWidth: 3 })
   })
 
-  it('swaps the icon of an element that keeps its id', () => {
+  it('swaps the icon of an element that keeps its id, for one from the collections', () => {
     const doc = sample()
     const snap = docToScene(doc)
-    const after = { ...snap.scene, elements: snap.scene.elements.map((e) => (e.id === 'e1' ? { ...e, icon: 'nucleus' } : e)) }
-    const swapped = applyRevision(doc, snap, after).nodes.find((n) => n.id === 'mito') as IconNode
-    // Nucleus is square (100 x 100): same height and centre, new width, old colour overrides dropped.
-    expect(swapped).toMatchObject({ iconId: 'nucleus', h: 60, w: 60, rotation: 30 })
+    const after = { ...snap.scene, elements: snap.scene.elements.map((e) => (e.id === 'e1' ? { ...e, icon: 'nih-cells--cell-nucleus' } : e)) }
+    const next = applyRevision(doc, snap, after, packIcons)
+    const swapped = next.nodes.find((n) => n.id === 'mito') as IconNode
+    // The stand-in drawing is 120 x 80: same height and centre, new width, old colour overrides dropped.
+    expect(swapped).toMatchObject({ iconId: 'nih-cells--cell-nucleus', h: 60, w: 90, rotation: 30 })
     expect(swapped.x + swapped.w / 2).toBe(160)
     expect(swapped.colors).toBeUndefined()
+    // The new drawing is stored with the figure, which is still a valid one.
+    expect(next.customIcons['nih-cells--cell-nucleus']).toMatchObject({ id: 'nih-cells--cell-nucleus', category: 'Imported' })
+    expect(validateDoc(JSON.parse(JSON.stringify(next))).customIcons['nih-cells--cell-nucleus']).toBeTruthy()
     const unknown = { ...snap.scene, elements: snap.scene.elements.map((e) => (e.id === 'e1' ? { ...e, icon: 'no-such-icon' } : e)) }
-    expect(applyRevision(doc, snap, unknown)).toBe(doc)
+    expect(applyRevision(doc, snap, unknown, packIcons)).toBe(doc)
+  })
+
+  it('shows icons from the collections to the AI and stores the ones it adds', () => {
+    const macrophage = stubIcon('nih-cells--macrophage')
+    const doc: FigDoc = { ...emptyDoc(), nodes: [icon('mac', macrophage.id, 100, 100), icon('own', 'imported-abc', 400, 100)], customIcons: { [macrophage.id]: macrophage } }
+    const snap = docToScene(doc)
+    // The icon from a collection is described by its id; one imported from a file is left out.
+    expect(snap.scene.elements.map((e) => e.icon)).toEqual(['nih-cells--macrophage'])
+    const after = { ...snap.scene, elements: [...snap.scene.elements, { id: 'new1', kind: 'icon' as const, icon: 'nih-lab--pill', label: 'Drug', x: 700, y: 500, w: 100, h: 100 }] }
+    const next = applyRevision(doc, snap, after, packIcons)
+    expect(next.nodes.filter((n) => n.type === 'icon').map((n) => (n as IconNode).iconId)).toEqual(['nih-cells--macrophage', 'imported-abc', 'nih-lab--pill'])
+    expect(Object.keys(next.customIcons).sort()).toEqual(['nih-cells--macrophage', 'nih-lab--pill'])
+    // What was already stored is kept as it was.
+    expect(next.customIcons[macrophage.id]).toBe(macrophage)
   })
 
   it('never touches pictures, imported icons or locked objects', () => {

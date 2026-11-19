@@ -21,9 +21,11 @@ import {
   unlockAll,
   zoomBy,
 } from '../src/actions'
+import { missingIcons, missingIconsNote, nameFromId } from '../src/icons/library'
 import { addNodes, emptyDoc } from '../src/model/doc'
 import type { IconNode, ShapeNode } from '../src/model/types'
 import { useEditor } from '../src/store'
+import { stubIcon } from './helpers'
 
 const E = () => useEditor.getState()
 const box = (id: string, x = 0): ShapeNode => ({ id, type: 'shape', shape: 'rect', x, y: 0, w: 50, h: 50, rotation: 0, fill: '#fff', stroke: '#000', strokeWidth: 1 })
@@ -102,13 +104,44 @@ describe('editor history', () => {
 
 describe('commands', () => {
   it('places an icon in the middle of the view and selects it', () => {
-    const id = addIcon('mitochondrion')!
+    // An icon the figure already holds (placed from a collection earlier, or imported).
+    const drawing = stubIcon('nih-cells--mitochondria')
+    E().loadDoc({ ...emptyDoc(), customIcons: { [drawing.id]: drawing } })
+    const id = addIcon(drawing.id)!
     const node = E().doc.nodes[0] as IconNode
     expect(node.id).toBe(id)
     expect(node.x + node.w / 2).toBe(400)
     expect(node.y + node.h / 2).toBe(300)
     expect(E().selection).toEqual([id])
     expect(addIcon('does-not-exist')).toBeNull()
+  })
+
+  it('puts a library icon in the place of a missing one when its dashed box is selected', () => {
+    // A figure from before November 2026 names a drawing BioSketch no longer has.
+    const gone: IconNode = { id: 'old', type: 'icon', iconId: 'cell-membrane', x: 100, y: 200, w: 200, h: 100, rotation: 30, groupId: 'g', colors: { '#ff0000': '#00ff00' }, strokeScale: 2 }
+    const drawing = stubIcon('nih-cells--mitochondria')
+    const doc = { ...emptyDoc(), nodes: [gone], customIcons: { [drawing.id]: drawing } }
+    expect(missingIcons(doc)).toEqual(['cell-membrane'])
+    expect(missingIconsNote(doc)).toBe('One icon of this figure is no longer available and shows as a dashed box with a question mark. Select it, then tap an icon in the library to put that in its place.')
+    expect(nameFromId('nih-cells--cell-membrane_2')).toBe('cell membrane 2')
+    E().loadDoc(doc)
+    E().set({ selection: ['old'] })
+    expect(addIcon(drawing.id)).toBe('old')
+    // The stand-in drawing is 120 × 80: in a box of 200 × 100 it is 150 × 100, about the same middle.
+    expect(E().doc.nodes).toEqual([{ id: 'old', type: 'icon', iconId: drawing.id, x: 125, y: 200, w: 150, h: 100, rotation: 30, groupId: 'g' }])
+    expect(E().selection).toEqual(['old'])
+    expect(missingIcons(E().doc)).toEqual([])
+    expect(missingIconsNote(E().doc)).toBeNull()
+    // One step back and the box is as it was; an icon that is there is never replaced.
+    E().undo()
+    expect(E().doc.nodes[0]).toEqual(gone)
+    E().redo()
+    addIcon(drawing.id)
+    expect(E().doc.nodes).toHaveLength(2)
+    // Two boxes of the same missing drawing are told as two icons, named once.
+    const two = { ...emptyDoc(), nodes: [gone, { ...gone, id: 'old2' }] }
+    expect(missingIcons(two)).toEqual(['cell-membrane'])
+    expect(missingIconsNote(two)).toContain('2 icons of this figure are no longer available and show as dashed boxes')
   })
 
   it('copies, pastes, duplicates and deletes', () => {

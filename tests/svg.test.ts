@@ -1,13 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { BUILTIN_ICONS, getIcon, searchIcons } from '../src/icons/library'
-import { extractColors, iconMarkup, isHexColor, normalizeHex, parseSvgFile, prefixIds, recolor, sanitizeBody, scaleStrokes } from '../src/icons/svg'
+import { getIcon, searchIcons } from '../src/icons/library'
+import { extractColors, iconMarkup, isHexColor, normalizeHex, parseSvgFile, plainSvgNames, prefixIds, recolor, sanitizeBody, scaleStrokes } from '../src/icons/svg'
 import { TEMPLATES } from '../src/templates'
-
-const count = (markup: string): number => {
-  const doc = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${markup}</svg>`, 'image/svg+xml')
-  expect(doc.getElementsByTagName('parsererror')).toHaveLength(0)
-  return doc.getElementsByTagName('*').length
-}
+import { example, stubIcon } from './helpers'
 
 describe('sanitising imported SVG', () => {
   it('removes scripts, event handlers, foreign content and embedded images', () => {
@@ -64,6 +59,21 @@ describe('sanitising imported SVG', () => {
     expect(parsed.body).not.toContain('class=')
   })
 
+  it('reads a file whose elements all carry a prefix (as NIH BioArt writes some)', () => {
+    const parsed = parseSvgFile(
+      `<?xml version='1.0' encoding='utf-8'?>\n<ns0:svg xmlns:ns0="http://www.w3.org/2000/svg" id="a" viewBox="0 0 20 40"><metadata><title>Unisex icon</title><license>Public Domain</license></metadata>` +
+        '<ns0:defs><ns0:style>.cls-1{fill:#e1c48f;}</ns0:style></ns0:defs><ns0:g><ns0:path class="cls-1" d="M0 0h20v40z" /></ns0:g></ns0:svg>',
+    )
+    expect(parsed.viewBox).toEqual([20, 40])
+    expect(parsed.body).toContain('<path')
+    expect(parsed.body).toContain('fill:#e1c48f')
+    expect(parsed.body).not.toContain('ns0')
+    expect(parsed.body).not.toContain('Public Domain')
+    // A prefix that is not the SVG one is left alone, and so is an ordinary file.
+    const plain = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><path d="M0 0h1"/></svg>'
+    expect(plainSvgNames(plain)).toBe(plain)
+  })
+
   it('rejects files that are not SVG or have nothing to draw', () => {
     expect(() => parseSvgFile('<html><body>no</body></html>')).toThrow()
     expect(() => parseSvgFile('not xml at all')).toThrow()
@@ -73,6 +83,61 @@ describe('sanitising imported SVG', () => {
 
 describe('files from drawing programs', () => {
   const svg = (inner: string, attrs = 'viewBox="0 0 10 10"') => `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ${attrs}>${inner}</svg>`
+
+  it('works out the negative of a fade mask that Illustrator draws through an inverting filter', () => {
+    const parsed = parseSvgFile(
+      svg(
+        '<defs><style>.a{filter:url(#luminosity-invert);}.b{mask:url(#mask);}.c{fill:url(#fade);}</style>' +
+          '<filter id="luminosity-invert" x="0" y="0" width="10" height="10"><feColorMatrix result="cm" values="-1 0 0 0 1 0 -1 0 0 1 0 0 -1 0 1 0 0 0 1 0"/></filter>' +
+          '<linearGradient id="fade" x1="0" x2="10"><stop offset="0" stop-color="#fff"/><stop offset="1" style="stop-color:#000"/></linearGradient>' +
+          '<mask id="mask" x="0" y="0" width="10" height="10" maskUnits="userSpaceOnUse"><g class="a"><rect class="c" width="10" height="10"/><circle r="2" fill="#333"/><path d="M0 0h2v2z"/></g></mask></defs>' +
+          '<g class="b"><rect width="10" height="10" fill="url(#fade)"/></g>',
+      ),
+    ).body
+    // The mask uses a copy of the gradient with its colours inverted; the drawing keeps the original.
+    const stops = (id: string) => /<linearGradient id="FADE"[^>]*>(.*?)<\/linearGradient>/.exec(parsed.replace(`id="${id}"`, 'id="FADE"'))?.[1]
+    expect(stops('fade-negative')).toBe('<stop offset="0" stop-color="#000000"/><stop offset="1" style="stop-color:#ffffff"/>')
+    expect(stops('fade')).toBe('<stop offset="0" stop-color="#fff"/><stop offset="1" style="stop-color:#000"/>')
+    expect(parsed).toContain('fill:url(#fade-negative)')
+    expect(parsed).toContain('<rect width="10" height="10" fill="url(#fade)"/>')
+    expect(parsed).toContain('fill="#cccccc"')
+    // The path names no fill, so it was black: its group now says white.
+    expect(parsed).toMatch(/<mask[^>]*><g[^>]*fill="#ffffff"/)
+    expect(parsed).not.toContain('filter')
+    expect(parsed).toContain('mask:url(#mask)')
+  })
+
+  it('keeps links between parts of a drawing whatever prefix the file gives them', () => {
+    const parsed = parseSvgFile(
+      '<ns0:svg xmlns:ns0="http://www.w3.org/2000/svg" xmlns:ns1="http://www.w3.org/1999/xlink" viewBox="0 0 10 10"><ns0:defs><ns0:path id="shape" d="M0 0h5v5z"/></ns0:defs>' +
+        '<ns0:clipPath id="clip"><ns0:use ns1:href="#shape"/></ns0:clipPath><ns0:rect width="10" height="10" clip-path="url(#clip)"/><ns0:use ns1:href="https://example.org/a.svg#x"/></ns0:svg>',
+    ).body
+    expect(parsed).toContain('<use href="#shape"/>')
+    expect(parsed).not.toContain('example.org')
+    expect(parsed).not.toContain('ns1')
+  })
+
+  it('lays white under a mask whose filter did so', () => {
+    const parsed = parseSvgFile(
+      svg(
+        '<defs><filter id="luminosity-noclip"><feFlood flood-color="#fff" result="bg"/><feBlend in="SourceGraphic" in2="bg"/></filter>' +
+          '<mask id="m" x="1" y="2" width="8" height="6" maskUnits="userSpaceOnUse"><g filter="url(#luminosity-noclip)"><rect width="3" height="3" fill="#000"/></g></mask></defs><rect width="10" height="10" mask="url(#m)"/>',
+      ),
+    ).body
+    expect(parsed).toContain('<g><rect x="1" y="2" width="8" height="6" fill="#ffffff"/><rect width="3" height="3" fill="#000"/></g>')
+  })
+
+  it('leaves a mask alone when its filter is not the inverting one', () => {
+    const parsed = parseSvgFile(
+      svg(
+        '<defs><filter id="f"><feColorMatrix values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 1 0"/></filter>' +
+          '<mask id="m"><g filter="url(#f)"><rect width="10" height="10" fill="#fff"/></g></mask></defs><rect width="10" height="10" mask="url(#m)"/>',
+      ),
+    ).body
+    expect(parsed).toContain('fill="#fff"')
+    expect(parsed).not.toContain('filter')
+  })
+
 
   it('keeps the drawing inside a <switch> wrapper and inside links', () => {
     const body = parseSvgFile(svg('<switch><foreignObject width="1" height="1"><p>x</p></foreignObject><g><rect width="4" height="4" fill="#ff0000"/></g></switch><a xlink:href="https://example.org"><circle r="2"/></a>')).body
@@ -97,7 +162,17 @@ describe('files from drawing programs', () => {
     expect(body).toContain('clip-path="url(#cut)"')
     expect(body).toMatch(/style="fill:#0000ff;opacity:0.5"/)
     // The same holds for markup stored in a figure file.
-    expect(sanitizeBody('<circle r="3" filter="url(#gone)" fill="url(#alsoGone)"/>')).toBe('<circle r="3" fill="url(#alsoGone)"/>')
+    expect(sanitizeBody('<circle r="3" filter="url(#gone)" fill="#00ff00"/>')).toBe('<circle r="3" fill="#00ff00"/>')
+  })
+
+  it('leaves a fill or outline empty when its gradient is missing, as Chrome and Firefox draw it (Safari would paint it black)', () => {
+    expect(sanitizeBody('<circle r="3" fill="url(#gone)" stroke="url(#gone)"/>')).toBe('<circle r="3" fill="none" stroke="none"/>')
+    // The colour a file writes after the link is what it wants when the link fails.
+    expect(sanitizeBody('<circle r="3" fill="url(#gone) #336699"/>')).toBe('<circle r="3" fill="#336699"/>')
+    expect(sanitizeBody('<rect width="2" height="2" style="fill:url(#gone);stroke:#000000"/>')).toBe('<rect width="2" height="2" style="fill:none;stroke:#000000"/>')
+    // A gradient that is there is kept, and so is a link that is neither paint nor effect.
+    const kept = '<defs><linearGradient id="g"><stop offset="0" stop-color="#ff0000"/></linearGradient></defs><rect width="2" height="2" fill="url(#g)" style="shape-inside:url(#gone)"/>'
+    expect(sanitizeBody(kept)).toBe(kept)
   })
 
   it('reads a page size given in millimetres when there is no viewBox', () => {
@@ -105,6 +180,82 @@ describe('files from drawing programs', () => {
     expect(w).toBeCloseTo(793.7, 1)
     expect(h).toBe(96)
     expect(parseSvgFile(svg('<path d="M0 0h1"/>', 'width="100%" height="50"')).viewBox).toEqual([100, 100])
+  })
+})
+
+// Illustrator shades with shapes that darken what is beneath them, often inside a clipped group.
+// Chrome and Firefox paint a clipped group on its own first, so the shading darkens nothing there
+// and shows as a grey patch; Safari lets it through. Cutting the group into layers, each mixing
+// as a whole, is drawn alike by all of them.
+describe('shading that darkens what lies beneath it', () => {
+  const CLIP = '<defs><clipPath id="c"><circle r="5"/></clipPath></defs>'
+  const shade = (extra = '') => `<path d="M0 0h4v4z" style="mix-blend-mode: multiply;fill: #dcdcdd;"${extra}/>`
+
+  it('lets a clipped group that holds only a shading shape mix as a whole', () => {
+    expect(sanitizeBody(`${CLIP}<circle r="5" fill="#c5898c"/><g style="clip-path: url(#c);">${shade()}</g>`)).toBe(
+      `${CLIP}<circle r="5" fill="#c5898c"/><g style="clip-path: url(#c);mix-blend-mode: multiply"><path d="M0 0h4v4z" style="fill: #dcdcdd"/></g>`,
+    )
+    // The clip may be an attribute, too.
+    expect(sanitizeBody(`${CLIP}<g clip-path="url(#c)">${shade()}</g>`)).toBe(`${CLIP}<g clip-path="url(#c)" style="mix-blend-mode: multiply"><path d="M0 0h4v4z" style="fill: #dcdcdd"/></g>`)
+  })
+
+  it('cuts a clipped group into layers when shading sits between shapes that cover', () => {
+    const body = sanitizeBody(`${CLIP}<g id="part" clip-path="url(#c)"><rect width="9" height="9" fill="#ff0000"/>${shade()}<rect width="2" height="2" fill="#0000ff"/></g>`)
+    expect(body).toBe(
+      `${CLIP}<g>` +
+        '<g id="part" clip-path="url(#c)"><rect width="9" height="9" fill="#ff0000"/></g>' +
+        '<g clip-path="url(#c)" style="mix-blend-mode: multiply"><path d="M0 0h4v4z" style="fill: #dcdcdd"/></g>' +
+        '<g clip-path="url(#c)"><rect width="2" height="2" fill="#0000ff"/></g>' +
+        '</g>',
+    )
+  })
+
+  it('cuts through the groups between the clip and the shading, each copy keeping its place and turn', () => {
+    const body = sanitizeBody(`${CLIP}<g clip-path="url(#c)"><g transform="translate(3 4)"><rect width="9" height="9" fill="#ff0000"/>${shade()}</g></g>`)
+    expect(body).toBe(
+      `${CLIP}<g>` +
+        '<g clip-path="url(#c)"><g transform="translate(3 4)"><rect width="9" height="9" fill="#ff0000"/></g></g>' +
+        '<g clip-path="url(#c)" style="mix-blend-mode: multiply"><g transform="translate(3 4)"><path d="M0 0h4v4z" style="fill: #dcdcdd"/></g></g>' +
+        '</g>',
+    )
+  })
+
+  it('gives every shading shape a layer of its own, whatever way it mixes', () => {
+    const body = sanitizeBody(`${CLIP}<g clip-path="url(#c)">${shade()}<path d="M1 1h2" style="mix-blend-mode:overlay"/></g>`)
+    expect(body.match(/<g clip-path="url\(#c\)" style="mix-blend-mode: (multiply|overlay)">/g)).toHaveLength(2)
+    expect(body).not.toMatch(/<path[^>]*mix-blend-mode/)
+  })
+
+  it('looks inside groups that are painted on their own, where the same happens one level down', () => {
+    expect(sanitizeBody(`${CLIP}<g style="isolation: isolate;"><g opacity="0.5"><g clip-path="url(#c)">${shade()}</g></g></g>`)).toBe(
+      `${CLIP}<g style="isolation: isolate;"><g opacity="0.5"><g clip-path="url(#c)" style="mix-blend-mode: multiply"><path d="M0 0h4v4z" style="fill: #dcdcdd"/></g></g></g>`,
+    )
+  })
+
+  it('leaves alone what every browser already draws alike', () => {
+    for (const same of [
+      // Shading that is not inside a clipped group, or is clipped itself.
+      `${CLIP}<g transform="scale(2)">${shade()}</g>`,
+      `${CLIP}${shade(' clip-path="url(#c)"')}`,
+      // A clipped group without shading, and one that already mixes as a whole.
+      `${CLIP}<g clip-path="url(#c)"><rect width="9" height="9" fill="#ff0000"/></g>`,
+      `${CLIP}<g clip-path="url(#c)" style="mix-blend-mode: multiply"><path d="M0 0h4v4z" style="fill: #dcdcdd"/></g>`,
+      // A group another part of the drawing draws again has to stay in one piece.
+      `${CLIP}<g id="twice" clip-path="url(#c)">${shade()}</g><use x="20" href="#twice"/>`,
+      // A word that is no way of mixing is not touched.
+      `${CLIP}<g clip-path="url(#c)"><path d="M0 0h4" style="mix-blend-mode: sideways"/></g>`,
+    ]) expect(sanitizeBody(same)).toBe(same)
+  })
+
+  it('changes nothing when it runs again on its own result (a figure is cleaned every time it is opened)', () => {
+    const once = sanitizeBody(`${CLIP}<g clip-path="url(#c)"><rect width="9" height="9" fill="#ff0000"/><g clip-path="url(#c)">${shade()}<rect width="1" height="1"/></g>${shade()}</g>`)
+    expect(once).toContain('mix-blend-mode: multiply')
+    expect(sanitizeBody(once)).toBe(once)
+  })
+
+  it('does the same when a file is imported', () => {
+    const body = parseSvgFile(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">${CLIP}<g clip-path="url(#c)">${shade()}</g></svg>`).body
+    expect(body).toContain('<g clip-path="url(#c)" style="mix-blend-mode: multiply"><path d="M0 0h4v4z" style="fill: #dcdcdd"/></g>')
   })
 })
 
@@ -120,7 +271,7 @@ describe('outline thickness of an icon', () => {
   })
 
   it('is applied when an icon is drawn, together with recolouring', () => {
-    const def = { ...BUILTIN_ICONS[0], body }
+    const def = { ...stubIcon('test-icon'), body }
     const markup = iconMarkup(def, { '#000000': '#ff0000' }, 'n1', 2)
     expect(markup).toContain('stroke-width="4"')
     expect(markup).toContain('stroke="#ff0000"')
@@ -150,7 +301,7 @@ describe('recolouring', () => {
   })
 
   it('never lets a node id inject markup through the id prefix', () => {
-    const icon = { ...BUILTIN_ICONS[0], body: '<linearGradient id="g"/><rect fill="url(#g)"/>' }
+    const icon = { ...stubIcon('test-icon'), body: '<linearGradient id="g"/><rect fill="url(#g)"/>' }
     const out = iconMarkup(icon, undefined, 'a"><script>alert(1)</script>')
     expect(out).not.toContain('<script')
     expect(out).toContain('id="iascriptalert1script-g"')
@@ -167,46 +318,29 @@ describe('recolouring', () => {
 
 describe('search order', () => {
   it('lists icons named after the search word before those that only have it as a keyword', () => {
-    const icon = (name: string, tags: string[]) => ({ ...BUILTIN_ICONS[0], id: name, name, tags, category: 'Test' })
+    const icon = (name: string, tags: string[]) => ({ ...stubIcon(name), name, tags, category: 'Test' })
     const found = searchIcons([icon('Nanoparticle', ['delivery']), icon('Healthy liver', []), icon('Liposome', ['delivery']), icon('Liver lobule', [])], 'liver')
     expect(found.map((i) => i.name)).toEqual(['Healthy liver', 'Liver lobule', 'Nanoparticle', 'Liposome'])
   })
 })
 
-describe('built-in library', () => {
-  it('has unique ids and complete metadata', () => {
-    expect(new Set(BUILTIN_ICONS.map((i) => i.id)).size).toBe(BUILTIN_ICONS.length)
-    expect(BUILTIN_ICONS.length).toBeGreaterThanOrEqual(50)
-    for (const icon of BUILTIN_ICONS) {
-      expect(icon.name, icon.id).toBeTruthy()
-      expect(icon.tags.length, icon.id).toBeGreaterThan(0)
-      expect(icon.viewBox[0], icon.id).toBeGreaterThan(0)
-      expect(icon.license).toBe('CC0-1.0')
-    }
-  })
+describe('searching icons', () => {
+  const icon = (name: string, category: string, tags: string[]) => ({ ...stubIcon(name), name, category, tags })
+  const icons = [icon('Mitochondrion', 'Organelles', ['powerhouse']), icon('Smooth muscle cell', 'Cells', ['vsmc', 'vessel']), icon('Macrophage', 'Cells', ['immune'])]
 
-  it('contains only well-formed, safe, recolourable markup', () => {
-    for (const icon of BUILTIN_ICONS) {
-      const elements = count(icon.body)
-      expect(elements, icon.id).toBeGreaterThan(1)
-      // Sanitising a built-in icon must not remove anything: it has nothing unsafe in it.
-      expect(count(sanitizeBody(icon.body)), icon.id).toBe(elements)
-      expect(extractColors(icon.body).length, icon.id).toBeGreaterThan(0)
-      expect(icon.body, icon.id).not.toMatch(/NaN|undefined/)
-      expect(iconMarkup(icon, undefined, 'x')).toBe(icon.body)
-    }
+  it('looks in the name, the category and the keywords, and for every word', () => {
+    expect(searchIcons(icons, 'mito').map((i) => i.name)).toEqual(['Mitochondrion'])
+    expect(searchIcons(icons, 'vsmc').map((i) => i.name)).toEqual(['Smooth muscle cell'])
+    expect(searchIcons(icons, 'cells immune').map((i) => i.name)).toEqual(['Macrophage'])
+    expect(searchIcons(icons, 'zzzz')).toEqual([])
+    expect(searchIcons(icons, '  ')).toHaveLength(icons.length)
   })
+})
 
-  it('searches by name, category and keyword', () => {
-    expect(searchIcons(BUILTIN_ICONS, 'mito').map((i) => i.id)).toContain('mitochondrion')
-    expect(searchIcons(BUILTIN_ICONS, 'vsmc').map((i) => i.id)).toEqual(['smooth-muscle-cell'])
-    expect(searchIcons(BUILTIN_ICONS, 'zzzz')).toEqual([])
-    expect(searchIcons(BUILTIN_ICONS, '  ')).toHaveLength(BUILTIN_ICONS.length)
-  })
-
+describe('example figures', () => {
   it('is used correctly by the example figures', () => {
     for (const t of TEMPLATES) {
-      const doc = t.build()
+      const doc = example(t)
       const nodeIds = new Set(doc.nodes.map((n) => n.id))
       expect(nodeIds.size, t.id).toBe(doc.nodes.length)
       for (const n of doc.nodes) {

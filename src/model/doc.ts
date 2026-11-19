@@ -1,8 +1,8 @@
 // Operations on a whole figure. All of them are pure: they return a new document.
 
-import { rectContains, rectsIntersect, round, unionRects } from './geometry'
-import { findNode, getRect, resolveConnector, translateNode } from './nodes'
-import type { Endpoint, FigDoc, FigNode, Rect, TextNode } from './types'
+import { clamp, rectCenter, rectContains, rectsIntersect, round, unionRects } from './geometry'
+import { findNode, getRect, resolveConnector, scaleNode, translateNode } from './nodes'
+import type { Endpoint, FigDoc, FigNode, Point, Rect, TextNode } from './types'
 import { isPickable } from './types'
 
 export const uid = (): string => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-3)
@@ -284,3 +284,60 @@ export function labelPartner(doc: FigDoc, node: FigNode): TextNode | undefined {
   return other?.type === 'text' ? other : undefined
 }
 
+// ---------- resizing as one picture ----------
+
+/** The smallest and largest side a page can have (the limits of a figure file). */
+export const PAGE_MIN = 100
+export const PAGE_MAX = 20000
+
+/** The same object with its outline or its line `s` times as thick. Dashes and arrow heads follow the thickness. */
+function scaleLines<T extends FigNode>(node: T, s: number): T {
+  if (node.type === 'shape') return { ...node, strokeWidth: clamp(round(node.strokeWidth * s, 2), 0, 100) }
+  if (node.type === 'connector') return { ...node, strokeWidth: clamp(round(node.strokeWidth * s, 2), 0.25, 40) }
+  return node
+}
+
+/**
+ * Resize objects as one picture, about `origin`: places, sizes, text and the thickness of outlines
+ * and arrows all change by the factor `s`, so the picture looks the same, only larger or smaller.
+ * (Dragging a corner of a selection resizes too, but keeps lines as thick as they were.)
+ */
+export function scaleAsPicture(doc: FigDoc, ids: Iterable<string>, s: number, origin: Point): FigDoc {
+  if (!(s > 0) || !Number.isFinite(s) || s === 1) return doc
+  return updateNodes(doc, ids, (n) => scaleLines(scaleNode(n, s, origin, doc), s))
+}
+
+/**
+ * Put what another figure holds into this one, as one picture with its middle at `at`: every
+ * object copied under an id of its own (groups and attached arrows stay together), made smaller
+ * with text and lines in step when it is larger than `fit`, never enlarged. Icons the other figure
+ * holds come along. Returns the figure, the ids of what was added and the factor it was resized by.
+ */
+export function addFigure(doc: FigDoc, added: FigDoc, at: Point, fit?: { w: number; h: number }): { doc: FigDoc; ids: string[]; scale: number } {
+  const rect = selectionRect(added, added.nodes.map((n) => n.id))
+  if (!rect || !added.nodes.length) return { doc, ids: [], scale: 1 }
+  const middle = rectCenter(rect)
+  const scale = fit && rect.w > 0 && rect.h > 0 ? Math.min(1, fit.w / rect.w, fit.h / rect.h) : 1
+  const sized = scaleAsPicture(added, added.nodes.map((n) => n.id), scale, middle)
+  const copies = cloneNodes(sized.nodes, sized, round(at.x - middle.x, 1), round(at.y - middle.y, 1))
+  return { doc: { ...doc, nodes: [...doc.nodes, ...copies], customIcons: { ...added.customIcons, ...doc.customIcons } }, ids: copies.map((n) => n.id), scale }
+}
+
+/** The factor nearest to `s` that keeps the page of `doc` within the sizes a page can have. */
+export function figureScaleWithin(doc: FigDoc, s: number): number {
+  if (!(s > 0) || !Number.isFinite(s)) return 1
+  const lo = Math.min(1, PAGE_MIN / Math.min(doc.width, doc.height))
+  const hi = Math.max(1, PAGE_MAX / Math.max(doc.width, doc.height))
+  return clamp(s, lo, hi)
+}
+
+/**
+ * Resize the whole figure: every object (hidden, locked and guides too) and the page, from the
+ * page's top left corner. A factor that would make the page too small or too large is cut back.
+ */
+export function scaleFigure(doc: FigDoc, s: number): FigDoc {
+  const factor = figureScaleWithin(doc, s)
+  if (factor === 1) return doc
+  const scaled = scaleAsPicture(doc, doc.nodes.map((n) => n.id), factor, { x: 0, y: 0 })
+  return { ...scaled, width: Math.round(doc.width * factor), height: Math.round(doc.height * factor) }
+}

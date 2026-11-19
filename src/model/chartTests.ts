@@ -297,7 +297,7 @@ export function shapiroWilk(values: number[]): { w: number; p: number } | null {
 // ---------- choosing and running the test for a table ----------
 
 export type Compare = 'means' | 'ranks'
-export type TestId = 'welch' | 'pairedT' | 'mannWhitney' | 'signedRank' | 'anova' | 'kruskal' | 'repeatedAnova' | 'friedman'
+export type TestId = 'welch' | 'pairedT' | 'mannWhitney' | 'signedRank' | 'anova' | 'kruskal' | 'repeatedAnova' | 'friedman' | 'twoWay'
 
 export interface Design {
   by: Compare
@@ -322,6 +322,7 @@ export const TEST_NAMES: Record<TestId, string> = {
   kruskal: 'Kruskal–Wallis test',
   repeatedAnova: 'Repeated-measures analysis of variance (ANOVA)',
   friedman: 'Friedman test',
+  twoWay: 'Two-way analysis of variance (ANOVA)',
 }
 
 /** Short names, for buttons. */
@@ -334,6 +335,7 @@ export const TEST_SHORT: Record<TestId, string> = {
   kruskal: 'Kruskal–Wallis',
   repeatedAnova: 'Repeated-measures ANOVA',
   friedman: 'Friedman',
+  twoWay: 'Two-way ANOVA',
 }
 
 /** What each test does, in words for a biologist. */
@@ -346,6 +348,7 @@ export const TEST_DOES: Record<TestId, string> = {
   kruskal: 'It asks whether values in some groups tend to be larger than in others. All values are ranked together and the mean ranks of the groups are compared, so the shape of the distribution and single extreme values matter little. A small p says that at least one group differs; the comparisons of pairs say which.',
   repeatedAnova: 'It asks whether all groups have the same mean when every sample was measured in every group. Differences between samples are taken out first, so only the changes within samples are tested. It assumes that these changes scatter about equally for every pair of groups (sphericity).',
   friedman: 'It asks whether some groups tend to give larger values when every sample was measured in every group. Within each row the values are ranked, and the mean ranks of the groups are compared, so neither differences between samples nor the shape of the distribution matter.',
+  twoWay: 'It asks three questions at once: whether the categories differ on the whole, whether the series differ on the whole, and whether the difference between the series depends on the category (the interaction). It compares each of these with the scatter of the values within the combinations, and assumes that this scatter is roughly normal and about equally wide everywhere. Look at the interaction first: when it is there, the two overall answers say little, and the pairs tell the story.',
 }
 
 /** How pairs of groups are compared after the overall test. */
@@ -376,6 +379,8 @@ export interface Analysis {
   pairs: PairResult[]
   /** How the pairs were compared; empty with two groups. */
   pairMethod: string
+  /** Two factors: the three questions of the analysis, each with its statistic and p value (`statistic` and `p` are those of the interaction). */
+  effects?: { name: string; statistic: string; p: number }[]
   /** Things the scientist should know about how the result was reached. */
   notes: string[]
 }

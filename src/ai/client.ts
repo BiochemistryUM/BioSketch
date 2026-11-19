@@ -1,7 +1,7 @@
 // Talks to the Claude API straight from the browser, with the user's own API key.
 // The SDK is loaded only when the AI feature is used, so it does not slow down the editor.
 
-import { SCENE_SCHEMA, SYSTEM_PROMPT, parseScene, taskText, type Scene } from './scene'
+import { SCENE_SCHEMA, parseScene, taskText, type Scene } from './scene'
 
 export const AI_MODELS = [
   { id: 'claude-opus-5-5', label: 'Claude Opus 5.5 (best results)' },
@@ -14,6 +14,8 @@ export const DEFAULT_MODEL = AI_MODELS[0].id
 export interface SceneRequest {
   apiKey: string
   model: string
+  /** The standing instructions and icon catalogue (systemPrompt). */
+  system: string
   /** What the scientist wants drawn, or notes about the sketch. May be empty when a sketch is sent. */
   description: string
   /** The full request text, when it is not simply "draw this" (used when revising a figure). */
@@ -42,7 +44,7 @@ export async function requestScene(req: SceneRequest): Promise<Scene> {
         // If the model declines a harmless biology request, let the API retry on its default fallback model.
         betas: ['server-side-fallback-2026-07-01'],
         fallbacks: 'default',
-        system: SYSTEM_PROMPT,
+        system: req.system,
         output_config: { effort: 'medium', format: { type: 'json_schema', schema: SCENE_SCHEMA } },
         messages: [
           {

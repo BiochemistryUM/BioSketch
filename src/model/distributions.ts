@@ -93,6 +93,23 @@ export function tTwoSided(t: number, df: number): number {
   return incompleteBeta(df / (df + t * t), df / 2, 0.5)
 }
 
+/**
+ * How far from zero a t statistic must lie for a two-sided p value of `alpha`: the factor a
+ * confidence interval multiplies a standard error by (0.05 gives the 95 % interval; R: qt(0.975, df)).
+ */
+export function tCritical(alpha: number, df: number): number {
+  if (!(alpha > 0 && alpha < 1) || !(df > 0)) return NaN
+  let lo = 0
+  let hi = 1
+  while (tTwoSided(hi, df) > alpha && hi < 1e12) hi *= 2
+  for (let i = 0; i < 200 && hi - lo > 1e-13 * Math.max(1, hi); i++) {
+    const mid = (lo + hi) / 2
+    if (tTwoSided(mid, df) > alpha) lo = mid
+    else hi = mid
+  }
+  return (lo + hi) / 2
+}
+
 /** Upper tail of the F distribution: the chance of a ratio of at least `f`. */
 export function fUpper(f: number, df1: number, df2: number): number {
   if (!(f > 0)) return 1

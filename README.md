@@ -5,14 +5,17 @@ schemes. It runs in the browser, works on an iPad with Apple Pencil, and needs n
 
 ## What it does
 
-- **Icon library**: 353 original icons (cell types and cell states, microbes and viruses, tissue structures, organs, plants and
-  animals, organelles and cytoskeleton, membrane structures and junctions, membrane proteins, proteins and molecules,
-  nucleic acids, lab and medical equipment, and figure helpers such as regulation arrows, markers and small plot
-  symbols). Search, tap to place, recolour any part.
-- **Two looks for the built-in icons**, chosen per figure under Page › Icon style: "Outlined"
-  (soft colours with a darker outline) or "Flat cartoon" (vivid colours, no outlines, shading in
-  flat layers; best on a dark page). All 353 icons have both looks. New figures start in the look
-  you chose last.
+- **Icon library**: 2,499 icons from three publicly available collections, in 26 themed sets.
+  [NIH BioArt Source](https://bioart.niaid.nih.gov) (763, public domain, drawn by NIAID's
+  medical illustrators: cells and organelles, molecules and proteins, viruses and microbes,
+  arthropods, anatomy, animals, people, lab equipment, shapes), [Bioicons](https://bioicons.com)
+  (438, public domain CC0) and [Servier Medical Art](https://smart.servier.com) (1,298, CC BY 3.0:
+  organs and anatomy, blood and immunity, cell parts, receptors, microbes, animals). Choose a set
+  under "Collection", or type in the search box to look through all of them; tap to place,
+  recolour any part. Servier icons are marked "CC BY 3.0" and the export writes the credit they
+  need. A set is fetched the first time it is opened or a search finds something in it.
+  BioSketch has no icons of its own: the 353 drawings it used to offer were removed in favour of
+  these collections. A figure made with them still opens, with a placeholder where each was.
 - **Biology-aware tools**
   - Membrane brush: draw a line and get a lipid bilayer; close the line to make a cell.
   - Arrows for activation, inhibition, association and reversible steps, ending in a head, a flat
@@ -65,13 +68,6 @@ schemes. It runs in the browser, works on an iPad with Apple Pencil, and needs n
   cropping and transparent background. Set a printed width
   (85, 114 or 174 mm, or your own) to export at 300 or 600 dpi and to be warned when text would
   print smaller than 5 pt. The attribution text for licensed icons is built for you.
-- **More icons**: 1,736 further icons in 17 collections under "More icons", found by the same
-  search box as the built-in ones. 438 are public domain (CC0, from
-  [bioicons.com](https://bioicons.com): cells, molecules, lab equipment, organisms, data).
-  1,298 are [Servier Medical Art](https://smart.servier.com) (CC BY 3.0: organs and anatomy,
-  blood and immunity, cell parts, receptors, microbes, animals); they are marked "CC BY 3.0" in
-  the library and the export writes the credit they need. A collection is fetched the first
-  time it is opened or a search finds something in it.
 - **Your own icons**: import SVG files from open collections (Bioicons, NIH BioArt, Servier Medical
   Art) with their licence; imported files are cleaned of scripts and external links.
 - **Private and offline**: figures are saved automatically in your browser. Nothing is uploaded,
@@ -117,8 +113,10 @@ Open **AI** and choose "From my sketch" or "From a description". There are two w
 ## Icons and licences
 
 - The code is MIT licensed (see `LICENSE`).
-- The built-in icons were drawn for this project and are released as CC0 (public domain): figures
-  made only with them need no attribution.
+- The "NIH BioArt" collections come from [NIH BioArt Source](https://bioart.niaid.nih.gov) and
+  hold only entries it marks as public domain: figures made with them need no attribution
+  (NIH appreciates a citation). Each icon keeps its illustrator's name and the address of its
+  entry. The AI builds figures from these collections only.
 - The "Bioicons" collections hold only icons their authors released as CC0 through
   [Bioicons](https://bioicons.com), so they need no attribution either. Each icon keeps its
   author's name in the pack file. Logos and drawings that show a maker's name were left out.
@@ -131,9 +129,10 @@ Open **AI** and choose "From my sketch" or "From a description". There are two w
 
 ## Limitations
 
-- The built-in library has simple drawings of the main organs and of a few plants and animals;
-  detailed anatomy, more animals and complex instruments are in the collections under "More icons". Still missing: spinal cord, bone, zebrafish, chick embryo,
-  biosafety cabinet, electron microscope.
+- The library is as complete as the three collections are. Not every subject has an icon, and the
+  collections are in different hands, so icons from two of them can look unlike each other in
+  one figure. From NIH BioArt, drawings with an embedded photo or texture and very large scenes
+  were left out (about 140 of 957 entries).
 - PDF export goes through the browser's print window. Chrome sets the page to the figure's size;
   Safari may put the figure on a standard sheet of paper instead.
 - Reshaping moves the points an outline passes through; curve handles follow their point and
@@ -157,7 +156,17 @@ Every file is cleaned the same way as an icon imported in the app. Files with an
 or larger than 300 kB are skipped. Only use collections whose licence allows redistribution, and
 record the licence: it becomes the credit line on export.
 
-The collections under "More icons" are built by a second script from a copy of the
+The NIH BioArt collections are built by `scripts/bioart.mjs`, which downloads every entry of
+[NIH BioArt Source](https://bioart.niaid.nih.gov) with its licence and illustrator, measures each
+drawing in headless Chrome so that it can be cut to size, and writes the packs:
+
+```bash
+node scripts/bioart.mjs fetch path/to/work-folder
+node scripts/bioart.mjs crops path/to/work-folder
+node scripts/bioart.mjs build path/to/work-folder
+```
+
+The Bioicons and Servier collections are built by a second script from a copy of the
 [Bioicons repository](https://github.com/duerrsimon/bioicons):
 
 ```bash

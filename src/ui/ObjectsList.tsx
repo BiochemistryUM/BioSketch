@@ -3,7 +3,7 @@
 
 import { useState } from 'react'
 import { renameNode, selectAndReveal, setNodeFlag, showAll } from '../actions'
-import { getIcon } from '../icons/library'
+import { MISSING_ICON, getIcon } from '../icons/library'
 import { nodeLabel } from '../model/describe'
 import { expandGroups } from '../model/doc'
 import { isPickable, type FigNode } from '../model/types'
@@ -105,7 +105,7 @@ export function ObjectsList() {
               <Row
                 key={node.id}
                 node={node}
-                label={nodeLabel(node, node.type === 'icon' ? getIcon(doc, node.iconId)?.name : undefined)}
+                label={nodeLabel(node, node.type === 'icon' ? (getIcon(doc, node.iconId)?.name ?? MISSING_ICON) : undefined)}
                 selected={chosen.has(node.id)}
                 alone={selection.length === 1 && chosen.has(node.id)}
               />

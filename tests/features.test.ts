@@ -2,7 +2,6 @@
 // alignment guides, locking, pictures, panel letters, splitting icons and icon packs.
 
 import { describe, expect, it, vi } from 'vitest'
-import { BUILTIN_ICONS } from '../src/icons/library'
 import { listPacks, readPack, searchPackNames } from '../src/icons/packs'
 import { extractParts, placePart } from '../src/icons/split'
 import { parseScene } from '../src/ai/scene'
@@ -14,7 +13,7 @@ import { emptyDoc, expandGroups, nextPanelLetter } from '../src/model/doc'
 import { snapToGuides } from '../src/model/geometry'
 import { nodeLabel } from '../src/model/describe'
 import { PANEL_LAYOUTS, panelNodes, panelRects } from '../src/model/panels'
-import { bendThrough, connectorLabelPos, connectorMid, getRect, resolveConnector, rotateNodeAbout, scaleNode } from '../src/model/nodes'
+import { connectorLabelNode, bendThrough, connectorLabelPos, connectorMid, getRect, resolveConnector, rotateNodeAbout, scaleNode } from '../src/model/nodes'
 import type { ConnectorNode, FigDoc, FigNode, IconDef, IconNode, ImageNode, ShapeNode, TextNode } from '../src/model/types'
 
 const box = (id: string, x: number, y: number, w = 100, h = 60, extra: Partial<ShapeNode> = {}): ShapeNode => ({
@@ -164,7 +163,8 @@ describe('new figure content in files', () => {
     expect(resolveConnector(arrow, d).from).toEqual({ x: 306, y: 150 })
     const xml = new DOMParser().parseFromString(renderSvg(d, { area: 'page', transparent: false, includeSketch: true }).svg, 'image/svg+xml')
     expect(xml.getElementsByTagName('parsererror')).toHaveLength(0)
-    expect(xml.getElementsByTagName('image')[0].getAttribute('href')).toBe(PNG)
+    // In the spelling drawing programs read (see tests/export-files.test.ts).
+    expect(xml.getElementsByTagName('image')[0].getAttributeNS('http://www.w3.org/1999/xlink', 'href')).toBe(PNG)
   })
 
   it('sizes a placed picture to at most 40% of the page without enlarging it', () => {
@@ -184,18 +184,6 @@ describe('panel letters', () => {
 })
 
 describe('splitting an icon into pieces', () => {
-  it('finds the separate shapes of every built-in icon', () => {
-    for (const icon of BUILTIN_ICONS) {
-      const found = extractParts(icon.body)
-      expect(found, icon.id).not.toBeNull()
-      expect(found!.parts.length, icon.id).toBeGreaterThan(0)
-      // Each piece, put back in its wrapping group, is well-formed markup.
-      const piece = found!.defs + found!.open + found!.parts[0] + found!.close
-      const check = new DOMParser().parseFromString(`<svg xmlns="http://www.w3.org/2000/svg">${piece}</svg>`, 'image/svg+xml')
-      expect(check.getElementsByTagName('parsererror'), icon.id).toHaveLength(0)
-    }
-  })
-
   it('keeps the styling of the group the pieces were in', () => {
     const found = extractParts('<g stroke-width="2.5" stroke-linecap="round"><circle r="5"/><rect width="4" height="4"/></g>')!
     expect(found.parts).toEqual(['<circle r="5"/>', '<rect width="4" height="4"/>'])
@@ -288,7 +276,7 @@ describe('PDF through the print window', () => {
     expect(html).toContain('@page{size:85mm 56.67mm;margin:0}')
     expect(html).toContain('<title>A &lt;b&gt; &amp; c</title>')
     expect(html).not.toContain('<?xml')
-    expect(html).toContain('<svg xmlns="http://www.w3.org/2000/svg" width="85mm"')
+    expect(html).toContain('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="85mm"')
   })
   it('uses screen size (96 units per inch) when no printed width is set', () => {
     const html = printPage({ ...emptyDoc(), width: 960, height: 480 }, { area: 'page', transparent: false, includeSketch: true })
@@ -445,3 +433,48 @@ describe('arrow ends and fading lines', () => {
   })
 })
 
+
+describe('words on an arrow', () => {
+  const arrow = (label: string, extra: Partial<ConnectorNode> = {}): ConnectorNode => ({
+    id: 'c', type: 'connector', from: { x: 100, y: 100 }, to: { x: 300, y: 100 }, kind: 'arrow', stroke: '#123456', strokeWidth: 2, label, ...extra,
+  })
+  const texts = (node: ConnectorNode): Element[] => {
+    const xml = new DOMParser().parseFromString(renderSvg(docOf(node), { area: 'page', transparent: false, includeSketch: true }).svg, 'image/svg+xml')
+    return Array.from(xml.getElementsByTagName('text'))
+  }
+
+  it('are drawn where they were, in the colour of the arrow, on a white halo', () => {
+    const [halo, words] = texts(arrow('activates'))
+    expect(halo.getAttribute('stroke')).toBe('#ffffff')
+    expect(halo.getAttribute('fill')).toBe('none')
+    expect(words.getAttribute('fill')).toBe('#123456')
+    expect(words.getAttribute('text-anchor')).toBe('middle')
+    expect(words.getAttribute('font-size')).toBe('14')
+    // Above the middle of a line that runs sideways: 8 units and half the line's thickness clear of it.
+    const first = words.getElementsByTagName('tspan')[0]
+    expect([first.getAttribute('x'), first.getAttribute('y')]).toEqual(['200', '91'])
+    expect(words.textContent).toBe('activates')
+    expect(halo.textContent).toBe('activates')
+  })
+
+  it('take the marks for raised and lowered text, italics and bold, like every other label', () => {
+    const [halo, words] = texts(arrow('k_{cat} = 3 s^{-1} *in vivo*, **fast**'))
+    expect(words.textContent).toBe('kcat = 3 s-1 in vivo, fast')
+    expect(halo.textContent).toBe(words.textContent)
+    const spans = Array.from(words.getElementsByTagName('tspan'))
+    const small = spans.filter((s) => s.getAttribute('font-size'))
+    expect(small.map((s) => s.textContent)).toEqual(['cat', '-1'])
+    expect(spans.find((s) => s.getAttribute('font-style') === 'italic')?.textContent).toBe('in vivo')
+    expect(spans.find((s) => s.getAttribute('font-weight') === 'bold')?.textContent).toBe('fast')
+    // Lone stars stay stars: they mark significance.
+    expect(texts(arrow('p < 0.05 *'))[1].textContent).toBe('p < 0.05 *')
+  })
+
+  it('stand beside an upright line, and nowhere when there are none', () => {
+    const upright = arrow('down', { to: { x: 100, y: 300 } })
+    const r = resolveConnector(upright, docOf(upright))
+    expect(connectorLabelNode(upright, r)).toMatchObject({ id: 'c', x: 110, align: 'left', text: 'down', fontSize: 14, fill: '#123456' })
+    expect(connectorLabelNode(arrow('   '), r)).toBeNull()
+    expect(texts(arrow(''))).toHaveLength(0)
+  })
+})

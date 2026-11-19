@@ -10,6 +10,7 @@ import {
   exportRect,
   fileBase,
   printFigure,
+  needsPicture,
   renderPptx,
   renderPng,
   renderSvg,
@@ -74,6 +75,7 @@ export function ExportDialog() {
   const smallest = smallestTextPt(doc)
   const credits = attributionLines(doc)
   const creditText = attributionText(doc)
+  const shadedIcons = useMemo(() => doc.nodes.filter((n) => needsPicture(doc, n)).length, [doc])
   const preview = useMemo(() => {
     const { svg } = renderSvg(doc, opts)
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
@@ -147,7 +149,13 @@ export function ExportDialog() {
             <button className="btn primary" onClick={savePptx} disabled={busy}>
               <Icon name="template" size={16} /> PowerPoint (slide)
             </button>
-            <p className="hint">One slide with the figure as a sharp picture you can resize. It is not editable shape by shape in PowerPoint.</p>
+            <p className="hint">
+              One slide with the figure as a sharp picture you can resize. It is not editable shape by shape in PowerPoint.
+              {shadedIcons > 0 &&
+                (shadedIcons === 1
+                  ? ' One icon has shading PowerPoint cannot draw: it goes in as a picture of itself.'
+                  : ` ${shadedIcons} icons have shading PowerPoint cannot draw: they go in as pictures of themselves.`)}
+            </p>
             <div className="row">
               <button className="btn primary" onClick={savePng} disabled={busy}>
                 <Icon name="export" size={16} /> {busy ? 'Rendering…' : 'PNG (image)'}
@@ -193,7 +201,7 @@ export function ExportDialog() {
             </button>
           </>
         ) : (
-          <p className="hint">Nothing to credit: every icon in this figure is from the built-in library, which is public domain (CC0).</p>
+          <p className="hint">Nothing to credit: every icon in this figure is public domain.</p>
         )}
       </section>
     </Modal>
@@ -325,14 +333,14 @@ export function HelpDialog() {
             <li>Double-tap a label to edit it. In labels, Ca^{'{2+}'} gives a superscript, H_{'{2}'}O a subscript, *italic* and **bold**.</li>
             <li>Select several objects to resize or turn them together. Pink lines appear when an object lines up with another.</li>
             <li>Double-tap one object in a group to select it alone. “Split into parts” does the same for the pieces of an icon.</li>
-            <li>Page › Icon style switches the built-in icons between “Outlined” and “Flat cartoon” for the whole figure.</li>
             <li>“Reshape” shows the points of an icon’s outline: drag them to change its shape. The sliders set how thick lines and outlines are.</li>
-            <li>The search box looks through every icon, including the collections under “More icons”. Icons marked CC BY need a credit, which the export writes for you.</li>
+            <li>The library holds publicly available collections: NIH BioArt, Bioicons and Servier Medical Art. Choose one under “Collection”, or type in the search box to look through all of them. Icons marked CC BY need a credit, which the export writes for you.</li>
             <li>“Objects” at the bottom of the right-hand panel lists everything on the page: select, rename, hide or lock from there.</li>
             <li>“Divide the page into panels” adds lettered frames to line things up in. The frames are guides and are left out of exports.</li>
             <li>With a keyboard: click the page, then Tab moves from object to object, the arrow keys move it (Shift for bigger steps), Enter edits a text.</li>
             <li>With the arrow tool, drag from one icon to another. Attached arrows follow their icons, and can be straight, curved or right-angled.</li>
             <li>Lock a background so it stays put; “Unlock all” is in the right-hand panel when nothing is selected.</li>
+            <li>File › Import a pathway finds a pathway on WikiPathways (or opens a .gpml file) and redraws it as boxes and arrows you can change.</li>
             <li>Drag in or paste your own pictures. File › My figures keeps every figure you have made in this browser.</li>
             <li>With the membrane brush, draw a line. Finish near the start to close it into a cell.</li>
             <li>Sketch with the pen, then use “AI” to turn the sketch into a clean figure, or to change a figure you already have.</li>

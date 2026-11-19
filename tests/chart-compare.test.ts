@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderSvg } from '../src/io/export'
 import { validateDoc } from '../src/io/files'
-import { GROUPED_PROBLEM, bracketLabel, carryOver, chartAdvice, chartAnalysis, chartLayout, chartSamples, crossTable, pairP, parseTable, readTable, tableText } from '../src/model/chart'
+import { TWO_FACTOR_ONLY, bracketLabel, carryOver, chartAdvice, chartAnalysis, chartLayout, chartSamples, crossTable, methodsText, pairP, parseTable, readTable, tableText } from '../src/model/chart'
 import { pairedT, signedRank, welchT } from '../src/model/chartTests'
 import { emptyDoc } from '../src/model/doc'
 import { parseRich } from '../src/model/richtext'
@@ -90,13 +90,17 @@ describe('the groups a test compares', () => {
     expect(chartAdvice(chart({ groups, yLog: true })).cautions.join(' ')).toMatch(/not on their logarithms/)
   })
 
-  it('are not offered for a chart with two factors or a scatter chart', () => {
+  it('are not offered for a scatter chart; a chart with two factors gets the two-way analysis', () => {
     const groups = parseTable('WT\tWT\tKO\tKO\nctrl\tdrug\tctrl\tdrug\n1\t2\t3\t4\n2\t3\t4\t6')
     const node = chart({ groups, test: { by: 'means' }, brackets: [{ from: 0, to: 1, label: '', auto: true }] })
-    expect(chartSamples(node).problem).toBe(GROUPED_PROBLEM)
-    expect(chartAnalysis(node)).toBeNull()
-    expect(chartAdvice(node).test).toBeNull()
-    expect(bracketLabel(node, node.brackets![0])).toBe('')
+    expect(chartSamples(node).problem).toBeUndefined()
+    expect(chartSamples(node).factors).toEqual({ categories: ['WT', 'KO'], series: ['ctrl', 'drug'], place: [[0, 1], [2, 3]] })
+    expect(chartAdvice(node).test).toBe('twoWay')
+    expect(chartAnalysis(node)!.ok).toBe(true)
+    expect(bracketLabel(node, node.brackets![0])).toMatch(/^p [=<] /)
+    // A test on ranks or a paired test has no counterpart for two factors.
+    expect(chartAnalysis(chart({ groups, test: { by: 'ranks' } }))).toEqual({ ok: false, problem: TWO_FACTOR_ONLY })
+    expect(chartAnalysis(chart({ groups, test: { by: 'means', paired: true } }))).toEqual({ ok: false, problem: TWO_FACTOR_ONLY })
     expect(chartSamples(chart({ kind: 'scatter', groups: [{ name: 'y', values: [1, 2], xs: [1, 2] }] })).problem).toMatch(/scatter/)
   })
 })
@@ -218,5 +222,50 @@ describe('what a saved figure keeps', () => {
     expect(saved({ ...chart(), brackets: [{ from: 0, to: 1, label: 'x', auto: 'yes' }] }).brackets).toEqual([{ from: 0, to: 1, label: 'x' }])
     // A scatter chart has no groups to test.
     expect(saved({ ...chart({ kind: 'scatter', groups: [{ name: 'y', values: [1, 2], xs: [1, 2] }] }), test: { by: 'means' } }).test).toBeUndefined()
+  })
+})
+
+describe('the text for the methods', () => {
+  it('is there only when a test was worked out', () => {
+    expect(methodsText(chart())).toBeNull()
+    expect(methodsText(chart({ test: { by: 'means' }, groups: [{ name: 'Control', values: [1] }, { name: 'Treated', values: [2] }] }))).toBeNull()
+    expect(methodsText(chart({ kind: 'scatter', test: { by: 'means' } }))).toBeNull()
+  })
+
+  it('says what is drawn, how many values there are, which test was used and what it found', () => {
+    const text = methodsText(chart({ error: 'sd', points: true, test: { by: 'means' } }))!
+    expect(text).toBe(
+      'Bars show the mean ± standard deviation (SD); points are single values. N = 6 per group. ' +
+        'Control and Treated were compared with Welch’s t test (two-sided, not assuming equal variances). ' +
+        'Result: t = -3.58, df = 9.98, p = 0.0051. ' +
+        'Statistics were worked out in BioSketch, which gives the results of R 4.4 (t.test).',
+    )
+  })
+
+  it('names the comparison of pairs after an overall test, and the group every other is compared with', () => {
+    const tukey = methodsText(chart({ kind: 'box', groups: four(), test: { by: 'means' } }))!
+    expect(tukey).toContain('Boxes show the median and the quartiles; whiskers reach to the furthest value within 1.5 × the interquartile range')
+    expect(tukey).toContain('N = 6, 6, 6 and 4 (A, B, C and D).')
+    expect(tukey).toContain('The 4 groups were compared by one-way analysis of variance (ANOVA), followed by Tukey’s test for every pair of groups.')
+    expect(tukey).toContain('(aov, TukeyHSD)')
+    const first = methodsText(chart({ groups: four(), test: { by: 'means', versusFirst: true } }))!
+    expect(first).toContain('followed by two-sided t tests of each group against A, with the variance pooled over all groups, with Holm’s correction for multiple comparisons.')
+    expect(first).toContain('(aov, p.adjust with method "holm")')
+    const ranks = methodsText(chart({ groups: four(), test: { by: 'ranks' } }))!
+    expect(ranks).toContain('with the Kruskal–Wallis test, followed by two-sided Mann–Whitney tests of every pair of groups with Holm’s correction for multiple comparisons.')
+  })
+
+  it('says how rows were paired, which were left out, and what the stars stand for', () => {
+    const gap = [{ name: 'Before', values: [4.1, 5.3, 6.0, 5.8] }, { name: 'After', values: [6.9, 7.4, 8.1], rows: [0, 1, 3] }]
+    const text = methodsText(chart({ kind: 'dot', error: 'sem', groups: gap, test: { by: 'means', paired: true, stars: true } }))!
+    expect(text).toContain('Points are single values; the line marks the mean ± standard error of the mean (SEM). N = 3 samples, each measured in every group.')
+    expect(text).toContain('Before and After were compared with a paired t test (two-sided).')
+    expect(text).toContain('Values in the same row of the table were treated as one sample; 1 row with a missing value was left out.')
+    expect(text).toContain('ns: p ≥ 0.05; *: p < 0.05')
+    expect(text).toContain('(t.test (paired))')
+    // A rank test says whether its p value is exact, and a logarithmic axis that the logarithms were not used.
+    expect(methodsText(chart({ test: { by: 'ranks' } }))).toContain('the Mann–Whitney test (two-sided, exact p value).')
+    expect(methodsText(chart({ groups: [{ name: 'a', values: [1, 2, 2, 3] }, { name: 'b', values: [2, 4, 5, 6] }], test: { by: 'ranks' } }))).toContain('(two-sided, normal approximation with continuity correction)')
+    expect(methodsText(chart({ yLog: true, test: { by: 'means' } }))).toContain('The tests were worked out on the values as measured, not on their logarithms.')
   })
 })

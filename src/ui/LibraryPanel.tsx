@@ -1,11 +1,10 @@
-// The icon library: search, browse by category, tap or drag to place.
+// The icon library: the publicly available collections. Search them all, or browse one; tap or drag to place.
 
 import { memo, useEffect, useMemo, useState } from 'react'
 import { addIcon, removeCustomIcon } from '../actions'
 import { ICON_MIME } from '../canvas/Canvas'
-import { BUILTIN_ICONS, CATEGORIES, isPublicDomain, nameFirst, searchIcons, searchTest } from '../icons/library'
-import { findPackIcon, listPacks, loadedPack, loadPack, searchPackNames, type PackInfo } from '../icons/packs'
-import { styleIcon } from '../icons/style'
+import { isPublicDomain, nameFirst, searchIcons, searchTest } from '../icons/library'
+import { DEFAULT_PACK, findPackIcon, groupPacks, loadedPack, loadPack, packList, searchPackNames, type PackInfo } from '../icons/packs'
 import { iconMarkup } from '../icons/svg'
 import type { IconDef } from '../model/types'
 import { toast, useEditor } from '../store'
@@ -27,33 +26,31 @@ const Thumb = memo(function Thumb({ icon }: { icon: IconDef }) {
 
 /** Most icons shown at once. Packs can hold thousands; searching narrows the list. */
 const MAX_SHOWN = 150
-/** The chip that opens the extra collections (icon packs). */
-const MORE = 'More icons'
+/** The choice that lists the icons kept with this figure (imported, or already used from a collection). */
+const OWN = 'in-this-figure'
 
 export function LibraryPanel() {
   const customIcons = useEditor((s) => s.doc.customIcons)
-  const iconStyle = useEditor((s) => s.doc.iconStyle)
-  // The library shows the built-in icons in the look this figure uses.
-  const builtin = useMemo(() => BUILTIN_ICONS.map((i) => styleIcon(i, iconStyle)), [iconStyle])
   const [query, setQuery] = useState('')
-  const [category, setCategory] = useState('All')
-  const [packs, setPacks] = useState<PackInfo[]>([])
-  const [packId, setPackId] = useState('')
+  const [packs, setPacks] = useState<PackInfo[] | null>(null)
+  const [choice, setChoice] = useState(DEFAULT_PACK)
   // Bumped when a pack has been fetched, so the list is drawn again with its icons.
   const [fetched, setFetched] = useState(0)
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set())
 
   useEffect(() => {
-    void listPacks().then(setPacks)
+    void packList().then(setPacks)
   }, [])
 
   const custom = useMemo(() => Object.values(customIcons).filter((i) => i.category !== 'Part'), [customIcons])
-  const categories = useMemo(() => ['All', ...(custom.length ? ['Imported'] : []), ...CATEGORIES, ...(packs.length ? [MORE] : [])], [custom.length, packs.length])
-  const active = categories.includes(category) ? category : 'All'
-  const pack = active === MORE ? (packs.find((p) => p.id === packId) ?? packs[0]) : undefined
+  const groups = useMemo(() => groupPacks(packs ?? []), [packs])
+  const searching = query.trim().length > 0
+  const own = !searching && (choice === OWN || (packs !== null && !packs.length)) && custom.length > 0
+  // One collection is shown at a time; a search looks through all of them.
+  const pack = searching || own ? undefined : (packs?.find((p) => p.id === choice) ?? packs?.find((p) => p.id === DEFAULT_PACK) ?? packs?.[0])
 
-  // Searching everything also looks through the packs, by the names that come with the pack list.
-  const hits = useMemo(() => (active === 'All' ? searchPackNames(packs, query).slice(0, MAX_SHOWN) : []), [active, packs, query])
+  // A search looks through every collection by the names that come with the pack list.
+  const hits = useMemo(() => (searching ? searchPackNames(packs ?? [], query).slice(0, MAX_SHOWN) : []), [searching, packs, query])
   // Packs are fetched when they are opened, or when a search finds something in them.
   const wanted = useMemo(() => (pack ? [pack] : [...new Set(hits.map((h) => h.pack))]), [pack, hits])
   useEffect(() => {
@@ -71,12 +68,12 @@ export function LibraryPanel() {
       stale = true
     }
   }, [wanted])
-  const loading = wanted.some((p) => !loadedPack(p.id) && !failed.has(p.id))
+  const loading = packs === null || wanted.some((p) => !loadedPack(p.id) && !failed.has(p.id))
 
   const matches = useMemo(() => {
-    if (pack) return searchIcons(loadedPack(pack.id) ?? [], query)
-    const own = [...custom, ...builtin]
-    const local = searchIcons(active === 'All' ? own : own.filter((i) => i.category === active), query)
+    if (pack) return loadedPack(pack.id) ?? []
+    if (!searching) return custom
+    const local = searchIcons(custom, query)
     // An icon from a collection that is already used in this figure is listed once, as the figure's own.
     const shown = new Set(local.map((i) => i.id))
     const all = [...local, ...hits.flatMap((h) => (shown.has(h.id) ? [] : (findPackIcon(h.id) ?? [])))]
@@ -84,44 +81,46 @@ export function LibraryPanel() {
     const test = searchTest(query)
     return test ? nameFirst(all, (i) => test(i.name)) : all
     // `fetched` is listed so the list is rebuilt once a pack has arrived.
-  }, [pack, custom, builtin, active, query, hits, fetched])
+  }, [pack, custom, searching, query, hits, fetched])
   const icons = matches.slice(0, MAX_SHOWN)
+  const noPacks = packs !== null && !packs.length
 
   return (
     <aside className="panel library" aria-label="Icon library">
       <div className="panel-head">
-        <input
-          className="search"
-          type="search"
-          placeholder={pack ? `Search ${pack.name}` : active === 'All' ? 'Search all icons' : `Search ${active.toLowerCase()}`}
-          aria-label="Search icons"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <div className="chips" role="tablist" aria-label="Icon categories">
-          {categories.map((c) => (
-            <button key={c} role="tab" aria-selected={active === c} className={`chip${c === MORE ? ' pack' : ''}${active === c ? ' active' : ''}`} onClick={() => setCategory(c)}>
-              {c}
-            </button>
-          ))}
-        </div>
-        {pack && (
-          <>
-            <label className="field pack-choice">
-              <span>Collection</span>
-              <select value={pack.id} onChange={(e) => setPackId(e.target.value)}>
-                {packs.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.count})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="hint">
-              {pack.licence || 'Licence per icon'}. {isPublicDomain(pack.licence) ? 'Free to use, no credit needed.' : 'Credits are added to the export automatically.'}
-            </p>
-          </>
+        <input className="search" type="search" placeholder="Search all icons" aria-label="Search icons" value={query} onChange={(e) => setQuery(e.target.value)} />
+        {!!packs?.length && (
+          <label className="field pack-choice">
+            <span>Collection</span>
+            <select
+              value={own ? OWN : (pack?.id ?? choice)}
+              onChange={(e) => {
+                setChoice(e.target.value)
+                // Choosing a collection shows that collection, so a search that was open is closed.
+                setQuery('')
+              }}
+            >
+              {custom.length > 0 && <option value={OWN}>In this figure ({custom.length})</option>}
+              {groups.map((g) => (
+                <optgroup key={g.source} label={g.source}>
+                  {g.packs.map(({ pack: p, label }) => (
+                    <option key={p.id} value={p.id}>
+                      {label} ({p.count})
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </label>
         )}
+        {searching && <p className="hint">Results from all collections.</p>}
+        {pack && (
+          <p className="hint">
+            {groups.find((g) => g.packs.some((p) => p.pack.id === pack.id))?.source}: {(pack.licence || 'licence per icon').replace(/^Public/, 'public')}.{' '}
+            {isPublicDomain(pack.licence) ? 'Free to use, no credit needed.' : 'Credits are added to the export automatically.'}
+          </p>
+        )}
+        {own && <p className="hint">Icons kept with this figure: imported ones, and those already used from a collection.</p>}
       </div>
       <div className="icon-grid">
         {icons.map((icon) => (
@@ -159,7 +158,8 @@ export function LibraryPanel() {
           </p>
         )}
         {!icons.length && !loading && pack && failed.has(pack.id) && <p className="empty">This collection could not be loaded. Check the connection and open it again.</p>}
-        {!icons.length && !loading && !(pack && failed.has(pack.id)) && <p className="empty">No icons match “{query}”. Try another word, or import your own SVG.</p>}
+        {!icons.length && !loading && noPacks && <p className="empty">The icon collections could not be loaded. Check the connection and reload, or import your own SVG.</p>}
+        {!icons.length && !loading && searching && !noPacks && <p className="empty">No icons match “{query}”. Try another word, or import your own SVG.</p>}
       </div>
       <div className="panel-foot">
         <button className="btn wide" onClick={() => useEditor.setState({ dialog: 'import-icon' })}>

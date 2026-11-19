@@ -114,7 +114,75 @@ h2 {
 }
 
 .properties {
+  /* The scientist sets the width by dragging the panel's edge (PanelResizer). */
+  width: var(--props-width, 340px);
   border-left: 1px solid var(--border);
+}
+
+/* The edge of the properties panel, to drag. It takes no room itself: the strip that is pressed
+   lies over the border, a little to either side of it. */
+.panel-resizer {
+  position: relative;
+  flex: none;
+  width: 0;
+  z-index: 6;
+  touch-action: none;
+  outline: none;
+}
+
+.panel-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -6px;
+  width: 12px;
+  cursor: col-resize;
+}
+
+.panel-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 3px;
+  background: transparent;
+  transition: background 0.12s;
+  pointer-events: none;
+}
+
+.panel-resizer:hover::after,
+.panel-resizer:focus-visible::after,
+.panel-resizer.dragging::after {
+  background: var(--accent, #2f6f5e);
+}
+
+.panel-resizer .grip {
+  position: absolute;
+  top: 50%;
+  left: -3px;
+  width: 6px;
+  height: 44px;
+  margin-top: -22px;
+  border-radius: 3px;
+  background: var(--border);
+  border: 1px solid var(--muted);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+@media (pointer: coarse) {
+  .panel-resizer::before {
+    left: -14px;
+    width: 28px;
+  }
+  .panel-resizer .grip {
+    left: -4px;
+    width: 8px;
+    height: 56px;
+    margin-top: -28px;
+  }
 }
 
 @media (max-width: 999px) {
@@ -131,6 +199,12 @@ h2 {
   }
   .properties {
     right: 0;
+  }
+  .panel-resizer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: var(--props-width, 340px);
   }
 }
 
@@ -510,6 +584,15 @@ h2 {
   font-size: 17px;
 }
 
+.empty-state .empty-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+}
+
 .empty-state p {
   color: var(--muted);
   line-height: 1.45;
@@ -870,37 +953,6 @@ input[type='checkbox'] {
   font-weight: 700;
 }
 
-.instruction-help {
-  margin-top: 6px;
-  font-size: 12.5px;
-}
-
-.instruction-help summary {
-  cursor: pointer;
-  color: var(--muted);
-  min-height: 28px;
-}
-
-.instruction-help ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.instruction-help .example {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: none;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  text-align: left;
-}
-
 .shape-select {
   flex: none;
   width: auto;
@@ -1133,6 +1185,158 @@ input[type='checkbox'] {
 
 .hint.pad {
   padding: 6px 12px;
+}
+
+/* ---------- info notes ---------- */
+
+/* The "i" in a circle beside a setting, and the note it opens (Info.tsx). */
+.info-btn {
+  position: relative;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+/* The part that can be pressed is larger than the circle that is seen. */
+.info-btn::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+}
+
+.info-btn:hover,
+.info-btn[aria-expanded='true'] {
+  color: var(--accent);
+}
+
+.info-btn.active {
+  background: var(--accent-weak);
+}
+
+.info-btn:focus-visible {
+  outline: 2px solid var(--select);
+  outline-offset: 1px;
+}
+
+.info-note {
+  position: fixed;
+  z-index: 55;
+  width: min(320px, calc(100vw - 16px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 8px 28px rgba(20, 30, 45, 0.22);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.info-note:focus {
+  outline: none;
+}
+
+.info-note p {
+  margin: 0 0 6px;
+}
+
+.info-note > :last-child {
+  margin-bottom: 0;
+}
+
+.info-note ul {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+
+.info-note li {
+  margin-bottom: 3px;
+}
+
+.info-note ul.examples {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.info-note ul.examples li {
+  margin: 0;
+}
+
+.info-note .example {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  font-size: 12px;
+  text-align: left;
+}
+
+.info-note .example:hover {
+  background: var(--hover);
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.section .section-head h2 {
+  margin: 0;
+}
+
+.field-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* A setting with its "i" at the end of the same line. */
+.with-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.advice .advice-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (pointer: coarse) {
+  .info-btn {
+    width: 24px;
+    height: 24px;
+  }
+  .info-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+  .info-btn::after {
+    inset: -8px;
+  }
+  .info-note .example {
+    min-height: 40px;
+  }
 }
 
 /* ---------- dialogs ---------- */
@@ -1413,6 +1617,44 @@ input[type='checkbox'] {
 .figure-info small {
   color: var(--muted);
   font-size: 12px;
+}
+
+.resize-by {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.resize-by .number {
+  width: 58px;
+}
+
+/* ---------- import a pathway ---------- */
+
+.pathway-search .search {
+  flex: 1;
+  min-width: 0;
+}
+
+.pathway-search select {
+  height: 36px;
+  max-width: 45%;
+}
+
+.pathway-list {
+  margin-top: 6px;
+}
+
+.pathway-list a.btn {
+  color: inherit;
+  text-decoration: none;
+}
+
+.pathway-about {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
 .help-grid {

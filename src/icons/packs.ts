@@ -1,5 +1,6 @@
-// Icon packs: extra collections (for example openly licensed sets imported with
-// scripts/import-icons.mjs) that live beside the app and are fetched only when opened.
+// Icon packs: the collections of publicly available icons the library is made of (NIH BioArt,
+// Bioicons, Servier Medical Art; built with the scripts in scripts/). They live beside the app
+// and each is fetched only when it is opened, searched or used by the AI.
 
 import type { IconDef } from '../model/types'
 import { nameFirst, searchTest } from './library'
@@ -50,6 +51,47 @@ export async function listPacks(): Promise<PackInfo[]> {
     return []
   }
 }
+
+let listed: Promise<PackInfo[]> | null = null
+
+/** The pack list, fetched once per session. It is asked for again when it could not be read. */
+export function packList(): Promise<PackInfo[]> {
+  listed ??= listPacks().then((packs) => {
+    if (!packs.length) listed = null
+    return packs
+  })
+  return listed
+}
+
+/** The collection the library opens with. */
+export const DEFAULT_PACK = 'nih-cells'
+
+export interface PackGroup {
+  /** Where the packs come from, e.g. "NIH BioArt". */
+  source: string
+  packs: { pack: PackInfo; label: string }[]
+}
+
+/**
+ * Packs sorted under the collection they belong to: "NIH BioArt: anatomy" is "Anatomy" under
+ * "NIH BioArt". The collection the library opens with comes first.
+ */
+export function groupPacks(packs: PackInfo[]): PackGroup[] {
+  const groups: PackGroup[] = []
+  for (const pack of packs) {
+    const cut = pack.name.indexOf(': ')
+    const source = cut > 0 ? pack.name.slice(0, cut) : 'Other collections'
+    const rest = cut > 0 ? pack.name.slice(cut + 2) : pack.name
+    const label = rest.charAt(0).toUpperCase() + rest.slice(1)
+    const group = groups.find((g) => g.source === source) ?? groups[groups.push({ source, packs: [] }) - 1]
+    group.packs.push({ pack, label })
+  }
+  const first = groups.findIndex((g) => g.packs.some((p) => p.pack.id === DEFAULT_PACK))
+  return first > 0 ? [groups[first], ...groups.filter((_, i) => i !== first)] : groups
+}
+
+/** The pack an icon id belongs to ("nih-cells--macrophage" is in "nih-cells"), or '' for any other icon. */
+export const packOf = (iconId: string): string => /^([a-z0-9][a-z0-9-]*?)--[\w-]+$/.exec(iconId)?.[1] ?? ''
 
 /** Check and clean the icons of a pack file. Pack icons are third-party artwork, so nothing is trusted. */
 export function readPack(data: unknown, pack: Pick<PackInfo, 'id' | 'name'>, seen: Set<string> = new Set()): IconDef[] {

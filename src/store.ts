@@ -14,7 +14,7 @@ export interface View {
   zoom: number
 }
 
-export type Dialog = null | 'export' | 'ai' | 'import-icon' | 'help' | 'figures'
+export type Dialog = null | 'export' | 'ai' | 'import-icon' | 'help' | 'figures' | 'pathway' | 'analysis'
 
 const HISTORY_LIMIT = 100
 const MERGE_WINDOW_MS = 1000

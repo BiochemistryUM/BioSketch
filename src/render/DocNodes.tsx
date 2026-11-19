@@ -5,12 +5,12 @@ import { getStroke } from 'perfect-freehand'
 import { memo, useMemo } from 'react'
 import { getIcon } from '../icons/library'
 import { iconMarkup } from '../icons/svg'
-import { chartLayout, pointPath } from '../model/chart'
+import { chartLayout, pointPath, type ChartDrawing } from '../model/chart'
 import { BAR_WIDTH, connectorShape, fadeStops } from '../model/connector'
 import { dashArray, hasDots } from '../model/dash'
 import { round } from '../model/geometry'
 import { membraneShape } from '../model/membrane'
-import { connectorLabelPos, fontStack, measureText, resolveConnector, shapeLabelNode, type ResolvedConnector } from '../model/nodes'
+import { connectorLabelNode, fontStack, measureText, resolveConnector, shapeLabelNode, type ResolvedConnector } from '../model/nodes'
 import { SCRIPT_SCALE, SCRIPT_SHIFT, parseRich } from '../model/richtext'
 import { isOpenShape, shapePath } from '../model/shapes'
 import {
@@ -95,17 +95,28 @@ function ImageView({ node }: { node: ImageNode }) {
   )
 }
 
+/**
+ * Everything of a chart that changes what is drawn inside its box. Its place, turn, opacity and
+ * name do not: moving a volcano plot of 20,000 points must not lay it out and draw it again.
+ */
+function layoutKey(node: ChartNode): string {
+  const { x: _x, y: _y, rotation: _r, opacity: _o, groups: _g, locked: _l, name: _n, groupId: _gi, ...rest } = node
+  return JSON.stringify(rest)
+}
+
 function ChartView({ node, interactive }: { node: ChartNode; interactive: boolean }) {
   // Nothing a chart holds should make its layout fail, but if it ever does, one chart must not
   // take the whole figure down with it: an empty frame is drawn in its place.
+  const key = layoutKey(node)
   const chart = useMemo(() => {
     try {
       return chartLayout(node)
     } catch {
       return null
     }
-  }, [node])
-  const INK = '#2b2f36'
+    // The layout depends on the groups and on what `layoutKey` keeps, nothing else of the node.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [node.groups, key])
   if (!chart) {
     return (
       <g data-id={node.id} transform={boxTransform(node)} opacity={node.opacity}>
@@ -118,14 +129,25 @@ function ChartView({ node, interactive }: { node: ChartNode; interactive: boolea
   }
   // Data marks are cut off at the edge of the plot (an axis range can leave some outside); axes,
   // brackets, the legend and all words are not.
-  const clipId = `chart-clip-${node.id}`
   return (
     <g data-id={node.id} transform={boxTransform(node)} opacity={node.opacity}>
       {interactive && <rect width={node.w} height={node.h} fill={HIT} />}
+      <ChartMarks chart={chart} clipId={`chart-clip-${node.id}`} />
+    </g>
+  )
+}
+
+/** What a chart's layout lists, drawn. Kept as long as the layout is, so a moved chart is not drawn again. */
+const ChartMarks = memo(function ChartMarks({ chart, clipId }: { chart: ChartDrawing; clipId: string }) {
+  const INK = '#2b2f36'
+  return (
+    <>
       {chart.clipped && (
-        <clipPath id={clipId}>
-          <rect x={chart.clip.x} y={chart.clip.y} width={chart.clip.w} height={chart.clip.h} />
-        </clipPath>
+        <defs>
+          <clipPath id={clipId}>
+            <rect x={chart.clip.x} y={chart.clip.y} width={chart.clip.w} height={chart.clip.h} />
+          </clipPath>
+        </defs>
       )}
       <g clipPath={chart.clipped ? `url(#${clipId})` : undefined}>
         {chart.rects.map((r, i) => (
@@ -177,9 +199,9 @@ function ChartView({ node, interactive }: { node: ChartNode; interactive: boolea
       {chart.texts.map((t, i) => (
         <TextView key={`t${i}`} node={t} interactive={false} />
       ))}
-    </g>
+    </>
   )
-}
+})
 
 function ShapeView({ node, interactive, hideLabel }: { node: ShapeNode; interactive: boolean; hideLabel: boolean }) {
   const common = {
@@ -217,49 +239,56 @@ function ShapeView({ node, interactive, hideLabel }: { node: ShapeNode; interact
   )
 }
 
-function TextView({ node, interactive }: { node: TextNode; interactive: boolean }) {
+/** `halo` lays a white edge behind the words, so they stay readable on top of a line. */
+function TextView({ node, interactive, halo = false }: { node: TextNode; interactive: boolean; halo?: boolean }) {
   const m = measureText(node)
   const left = node.align === 'center' ? node.x - m.w / 2 : node.align === 'right' ? node.x - m.w : node.x
   const anchor = node.align === 'center' ? 'middle' : node.align === 'right' ? 'end' : 'start'
   const lines = node.text.split('\n')
+  // The words are drawn once, or twice when they have a halo: the halo is a second copy behind
+  // them, drawn as a thick white outline, which survives in every SVG reader.
+  const words = (paint: { fill: string; stroke?: string; strokeWidth?: number; strokeLinejoin?: 'round' }) => (
+    <text
+      fontFamily={fontStack(node)}
+      fontSize={node.fontSize}
+      fontWeight={node.bold ? 'bold' : undefined}
+      fontStyle={node.italic ? 'italic' : undefined}
+      textAnchor={anchor}
+      xmlSpace="preserve"
+      {...paint}
+    >
+      {lines.map((line, i) => {
+        const baseline = node.y + node.fontSize * (0.92 + i * LINE_HEIGHT)
+        const runs = parseRich(line)
+        // Superscripts and subscripts are smaller text shifted off the baseline; each run states
+        // how far to move from where the previous run left off.
+        let shift = 0
+        return runs.map((run, j) => {
+          const target = SCRIPT_SHIFT[run.script] * node.fontSize
+          const dy = target - shift
+          shift = target
+          return (
+            <tspan
+              key={`${i}-${j}`}
+              x={j === 0 ? round(node.x) : undefined}
+              y={j === 0 ? round(baseline + target) : undefined}
+              dy={j > 0 && dy ? round(dy) : undefined}
+              fontSize={run.script ? round(node.fontSize * SCRIPT_SCALE, 1) : undefined}
+              fontWeight={run.bold && !node.bold ? 'bold' : undefined}
+              fontStyle={run.italic && !node.italic ? 'italic' : undefined}
+            >
+              {run.text}
+            </tspan>
+          )
+        })
+      })}
+    </text>
+  )
   return (
     <g data-id={node.id} transform={rotation(node.rotation, left + m.w / 2, node.y + m.h / 2)} opacity={node.opacity}>
       {interactive && <rect x={left - 3} y={node.y - 2} width={m.w + 6} height={m.h + 4} fill={HIT} />}
-      <text
-        fontFamily={fontStack(node)}
-        fontSize={node.fontSize}
-        fontWeight={node.bold ? 'bold' : undefined}
-        fontStyle={node.italic ? 'italic' : undefined}
-        fill={node.fill}
-        textAnchor={anchor}
-        xmlSpace="preserve"
-      >
-        {lines.map((line, i) => {
-          const baseline = node.y + node.fontSize * (0.92 + i * LINE_HEIGHT)
-          const runs = parseRich(line)
-          // Superscripts and subscripts are smaller text shifted off the baseline; each run states
-          // how far to move from where the previous run left off.
-          let shift = 0
-          return runs.map((run, j) => {
-            const target = SCRIPT_SHIFT[run.script] * node.fontSize
-            const dy = target - shift
-            shift = target
-            return (
-              <tspan
-                key={`${i}-${j}`}
-                x={j === 0 ? round(node.x) : undefined}
-                y={j === 0 ? round(baseline + target) : undefined}
-                dy={j > 0 && dy ? round(dy) : undefined}
-                fontSize={run.script ? round(node.fontSize * SCRIPT_SCALE, 1) : undefined}
-                fontWeight={run.bold && !node.bold ? 'bold' : undefined}
-                fontStyle={run.italic && !node.italic ? 'italic' : undefined}
-              >
-                {run.text}
-              </tspan>
-            )
-          })
-        })}
-      </text>
+      {halo && words({ fill: 'none', stroke: '#ffffff', strokeWidth: 5, strokeLinejoin: 'round' })}
+      {words({ fill: node.fill })}
     </g>
   )
 }
@@ -270,18 +299,19 @@ function ConnectorView({ node, resolved, interactive }: { node: ConnectorNode; r
   const fade = fadeStops(node.kind, node.fade)
   const shape = connectorShape(node.kind, node.strokeWidth, resolved, !!fade)
   const sw = node.strokeWidth
-  const label = node.label?.trim()
-  const at = connectorLabelPos(node, resolved)
-  const labelProps = { x: round(at.x), y: round(at.y), textAnchor: at.anchor, fontFamily: FONT_FAMILY, fontSize: 14 }
+  const label = connectorLabelNode(node, resolved)
   const fadeId = `fade-${node.id}`
   const paint = fade ? `url(#${fadeId})` : node.stroke
   return (
     <g data-id={node.id} opacity={node.opacity}>
       {fade && (
-        <linearGradient id={fadeId} gradientUnits="userSpaceOnUse" x1={round(resolved.from.x)} y1={round(resolved.from.y)} x2={round(resolved.to.x)} y2={round(resolved.to.y)}>
-          <stop offset="0" stopColor={node.stroke} stopOpacity={fade.start} />
-          <stop offset="1" stopColor={node.stroke} stopOpacity={fade.end} />
-        </linearGradient>
+        // Inside <defs>, where drawing programs that open an exported file expect to find a gradient.
+        <defs>
+          <linearGradient id={fadeId} gradientUnits="userSpaceOnUse" x1={round(resolved.from.x)} y1={round(resolved.from.y)} x2={round(resolved.to.x)} y2={round(resolved.to.y)}>
+            <stop offset="0" stopColor={node.stroke} stopOpacity={fade.start} />
+            <stop offset="1" stopColor={node.stroke} stopOpacity={fade.end} />
+          </linearGradient>
+        </defs>
       )}
       {interactive && <path d={shape.d} fill="none" stroke={HIT} strokeWidth={Math.max(18, sw + 14)} strokeLinejoin="round" />}
       <path
@@ -303,17 +333,8 @@ function ConnectorView({ node, resolved, interactive }: { node: ConnectorNode; r
       {shape.dots.map(({ c, r }, i) => (
         <circle key={i} cx={round(c.x)} cy={round(c.y)} r={round(r, 1)} fill={paint} />
       ))}
-      {label && (
-        <>
-          {/* White halo behind the label, drawn as a second copy so it survives in every SVG reader. */}
-          <text {...labelProps} fill="none" stroke="#ffffff" strokeWidth={5} strokeLinejoin="round">
-            {label}
-          </text>
-          <text {...labelProps} fill={node.stroke}>
-            {label}
-          </text>
-        </>
-      )}
+      {/* The words on the arrow: a label like any other, with a white halo so they read on top of lines. */}
+      {label && <TextView node={label} interactive={false} halo />}
     </g>
   )
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { fitView, patchDoc, zoomBy } from '../actions'
-import { inPreferredStyle, newFigure } from '../figures'
-import { download, fileBase } from '../io/export'
+import { exampleDoc, newFigure } from '../figures'
+import { download, fileBase } from '../io/download'
 import { parseDoc, serializeDoc } from '../io/files'
 import { toast, useEditor } from '../store'
 import { TEMPLATES } from '../templates'
@@ -85,6 +85,7 @@ function FileMenu() {
           <div className="menu-sep" />
           {item('Open figure file…', 'open', () => fileRef.current?.click())}
           {item('Save figure file', 'save', saveFile)}
+          {item('Import a pathway…', 'pathway', () => useEditor.setState({ dialog: 'pathway' }))}
           <div className="menu-label">Start from an example</div>
           {TEMPLATES.map((t) => (
             <button
@@ -93,7 +94,7 @@ function FileMenu() {
               className="menu-item two-line"
               onClick={() => {
                 setOpen(false)
-                void newFigure(inPreferredStyle(t.build()))
+                void exampleDoc(t).then((doc) => doc && newFigure(doc))
               }}
             >
               <Icon name="template" size={16} />

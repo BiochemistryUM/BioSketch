@@ -2,12 +2,12 @@
 // Claude app they already have (claude.ai or the desktop app), and pastes the answer back here.
 // Nothing is sent anywhere by BioSketch itself on this route.
 
-import { SYSTEM_PROMPT, parseScene, taskText, type Scene } from './scene'
+import { parseScene, taskText, type Scene } from './scene'
 
 const EXAMPLE = `{
   "title": "",
   "elements": [
-    { "id": "mito", "kind": "icon", "icon": "mitochondrion", "label": "Mitochondrion", "x": 300, "y": 500, "w": 130, "h": 65 },
+    { "id": "mito", "kind": "icon", "icon": "nih-cells--mitochondria", "label": "Mitochondrion", "x": 300, "y": 500, "w": 130, "h": 65 },
     { "id": "atp", "kind": "box", "icon": "", "label": "ATP", "x": 650, "y": 500, "w": 110, "h": 55 }
   ],
   "connectors": [
@@ -31,13 +31,14 @@ function answerFormat(planFirst: boolean): string {
 }
 
 /**
- * The full text to paste into a Claude chat. `task` replaces the usual "draw this" wording (used
+ * The full text to paste into a Claude chat, starting with the standing instructions and icon
+ * catalogue (`system`, from systemPrompt). `task` replaces the usual "draw this" wording (used
  * when revising a figure). With `planFirst`, Claude first describes its plan and asks its
  * questions in the chat, and only builds the figure once the scientist agrees.
  */
-export function buildChatRequest(hasSketch: boolean, description: string, task?: string, planFirst = false): string {
+export function buildChatRequest(system: string, hasSketch: boolean, description: string, task?: string, planFirst = false): string {
   return [
-    SYSTEM_PROMPT,
+    system,
     '---',
     task ?? (hasSketch ? taskText(true, description).replace('The image is', 'The attached image is') : taskText(false, description)),
     answerFormat(planFirst),

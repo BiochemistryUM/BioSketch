@@ -3,6 +3,7 @@
 import { getIcon } from './icons/library'
 import { findPackIcon } from './icons/packs'
 import {
+  addFigure,
   alignNodes,
   cloneNodes,
   distributeNodes,
@@ -13,6 +14,10 @@ import {
   nextPanelLetter,
   removeNodes,
   reorder,
+  scaleAsPicture,
+  scaleFigure,
+  figureScaleWithin,
+  selectionRect,
   stepSelection,
   ungroupNodes,
   updateNodes,
@@ -270,6 +275,45 @@ export function distributeSelection(axis: 'h' | 'v'): void {
   commit((doc) => distributeNodes(doc, selection, axis))
 }
 
+/**
+ * Resize as one picture, by `factor`: the selected objects about the middle of the selection, or,
+ * with nothing selected, the whole figure and its page. Text and the thickness of lines follow.
+ * The view keeps its zoom, so the change is seen: what was in the middle of the window stays there.
+ */
+export function resizeAsPicture(factor: number): void {
+  const { selection, commit, doc, view, canvasSize } = S()
+  if (selection.length) {
+    commit((d) => {
+      const rect = selectionRect(d, selection)
+      return rect ? scaleAsPicture(d, selection, factor, rectCenter(rect)) : d
+    })
+    return
+  }
+  const applied = figureScaleWithin(doc, factor)
+  if (applied === 1) {
+    toast(factor > 1 ? 'The page cannot get any larger.' : 'The page cannot get any smaller.')
+    return
+  }
+  const middle = viewCenter()
+  commit((d) => scaleFigure(d, factor))
+  S().set({ view: { zoom: view.zoom, x: canvasSize.w / 2 - middle.x * applied * view.zoom, y: canvasSize.h / 2 - middle.y * applied * view.zoom } })
+}
+
+/**
+ * Put what another figure holds (an imported pathway) into the open one, in the middle of the
+ * window and selected, so it can be dragged into place. It is made smaller, text and lines in
+ * step, when it is larger than nine tenths of the page. One Undo takes it out again.
+ * Returns the factor it was resized by.
+ */
+export function addToFigure(added: FigDoc): number {
+  const s = S()
+  const result = addFigure(s.doc, added, viewCenter(), { w: s.doc.width * 0.9, h: s.doc.height * 0.9 })
+  if (!result.ids.length) return 1
+  s.commit(() => result.doc, { select: result.ids })
+  s.set({ tool: 'select' })
+  return result.scale
+}
+
 /** Rapid edits merge into one undo step only while they are the same kind of edit on the same objects. */
 const mergeKey = (kind: string, selection: string[]): string => `${kind}:${selection.join(',')}`
 
@@ -301,6 +345,17 @@ export function addIcon(iconId: string, at?: Point): string | null {
   const def = getIcon(s.doc, iconId) ?? fromPack
   if (!def) return null
   const [w, h] = def.viewBox
+  const customIcons = fromPack ? { customIcons: { ...s.doc.customIcons, [fromPack.id]: { ...fromPack, category: 'Imported' } } } : {}
+  // With the dashed box of a missing icon selected, the new icon takes its place: as large as fits
+  // in the box, about its middle, turned and grouped as the box was.
+  const gap = !at && s.selection.length === 1 ? s.doc.nodes.find((n) => n.id === s.selection[0]) : undefined
+  if (gap?.type === 'icon' && !getIcon(s.doc, gap.iconId)) {
+    const fit = Math.min(gap.w / w, gap.h / h)
+    const { colors: _colors, strokeScale: _strokeScale, ...kept } = gap
+    const filled: IconNode = { ...kept, iconId, x: gap.x + (gap.w - w * fit) / 2, y: gap.y + (gap.h - h * fit) / 2, w: w * fit, h: h * fit }
+    s.commit((doc) => ({ ...doc, ...customIcons, nodes: doc.nodes.map((n) => (n.id === gap.id ? filled : n)) }), { select: [gap.id] })
+    return gap.id
+  }
   // Imported icons can have any coordinate size; bring them to a sensible size on the page.
   const scale = Math.max(w, h) > 240 || Math.max(w, h) < 30 ? 110 / Math.max(w, h) : 1
   const stagger = at ? 0 : (s.doc.nodes.length % 6) * 14
@@ -316,11 +371,7 @@ export function addIcon(iconId: string, at?: Point): string | null {
     rotation: 0,
   }
   s.commit(
-    (doc) => ({
-      ...doc,
-      nodes: [...doc.nodes, node],
-      ...(fromPack ? { customIcons: { ...doc.customIcons, [fromPack.id]: { ...fromPack, category: 'Imported' } } } : {}),
-    }),
+    (doc) => ({ ...doc, ...customIcons, nodes: [...doc.nodes, node] }),
     { select: [node.id] },
   )
   s.set({ tool: 'select' })

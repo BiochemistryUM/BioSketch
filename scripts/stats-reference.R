@@ -123,5 +123,61 @@ normal <- obj(
 
 holm <- num(p.adjust(c(0.01, 0.04, 0.03, 0.5, 0.012), "holm"))
 
-writeLines(obj(r = sprintf("\"%s\"", R.version.string), dist = dist, two = two, several = several, repeated = repeated, normal = normal, holm = holm), "tests/stats-reference.json")
+# ---- dose-response curves ----
+# The four-parameter logistic along log10 of the dose: nls with the self-starting model SSfpl,
+# y = A + (B - A) / (1 + exp((xmid - log10(x)) / scal)). BioSketch writes the same curve with
+# hill = 1 / (scal * log(10)) and calls the higher plateau "top".
+dose_fit <- function(x, y) {
+  lx <- log10(x)
+  f <- nls(y ~ SSfpl(lx, A, B, xmid, scal))
+  co <- coef(f)
+  se <- summary(f)$coefficients[, "Std. Error"]
+  sse <- sum(residuals(f)^2)
+  obj(x = num(x), y = num(y), A = num(co["A"]), B = num(co["B"]), xmid = num(co["xmid"]), scal = num(co["scal"]),
+      seXmid = num(se["xmid"]), sse = num(sse), r2 = num(1 - sse / sum((y - mean(y))^2)), tcrit = num(qt(0.975, length(y) - 4)))
+}
+# A rising curve, one value per dose; a falling one (inhibition) with three values per dose; and
+# a rising one with a shallow slope and plateaus that are only just reached.
+doses <- c(0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100)
+rise <- c(2.1, 3.4, 4.0, 11.8, 31.5, 62.0, 84.9, 93.1, 96.4)
+dose3 <- rep(c(0.1, 0.3, 1, 3, 10, 30, 100, 300), each = 3)
+fall <- c(101, 97, 99, 96, 99, 94, 88, 91, 85, 66, 71, 62, 38, 33, 41, 16, 19, 12, 8, 6, 9, 5, 7, 4)
+shallow <- c(8.0, 12.5, 15.1, 24.9, 33.0, 45.2, 58.9, 66.8, 77.5)
+dose <- obj(rise = dose_fit(doses, rise), fall = dose_fit(dose3, fall), shallow = dose_fit(doses, shallow),
+            qt = num(c(qt(0.975, 1), qt(0.975, 5), qt(0.975, 20), qt(0.995, 3), qt(0.95, 200))))
+
+# ---- two factors ----
+# Two-way analysis of variance with Type II sums of squares: each factor after the other, the
+# interaction after both, every F against what is left within the combinations. Worked out from
+# least-squares fits (lm). With equal numbers in every combination it must equal anova(aov(y ~ A * B)),
+# which is recorded beside it. Pairs: t tests with the scatter left over in the whole table, Holm.
+type2 <- function(y, A, B) {
+  rss <- function(m) sum(residuals(m)^2)
+  full <- lm(y ~ A * B); both <- lm(y ~ A + B)
+  dfe <- df.residual(full); mse <- rss(full) / dfe
+  ss <- c(rss(lm(y ~ B)) - rss(both), rss(lm(y ~ A)) - rss(both), rss(both) - rss(full))
+  df <- c(nlevels(A) - 1, nlevels(B) - 1, (nlevels(A) - 1) * (nlevels(B) - 1))
+  f <- ss / df / mse
+  list(ss = ss, df = df, f = f, p = pf(f, df, dfe, lower.tail = FALSE), dfe = dfe, mse = mse)
+}
+cell_pair <- function(x, y, fit) 2 * pt(-abs((mean(x) - mean(y)) / sqrt(fit$mse * (1 / length(x) + 1 / length(y)))), fit$dfe)
+two_out <- function(fit, extra = list()) do.call(obj, c(list(ss = num(fit$ss), df = num(fit$df), f = num(fit$f), p = num(fit$p), dfe = num(fit$dfe), mse = num(fit$mse)), extra))
+# Three categories by two series, four values each (balanced).
+bal <- list(c(4.1, 3.8, 4.6, 4.3), c(6.9, 7.4, 6.1, 7.8), c(5.0, 4.7, 5.6, 5.2), c(9.4, 8.8, 10.1, 9.0), c(4.4, 4.9, 3.9, 4.6), c(5.1, 5.9, 4.8, 5.5))
+balA <- factor(rep(c("c1", "c2", "c3"), each = 8)); balB <- factor(rep(rep(c("s1", "s2"), each = 4), 3))
+balFit <- type2(unlist(bal), balA, balB)
+balAov <- anova(aov(unlist(bal) ~ balA * balB))
+balPairs <- p.adjust(c(cell_pair(bal[[1]], bal[[2]], balFit), cell_pair(bal[[3]], bal[[4]], balFit), cell_pair(bal[[5]], bal[[6]], balFit)), "holm")
+balAcross <- p.adjust(c(cell_pair(bal[[1]], bal[[3]], balFit), cell_pair(bal[[1]], bal[[5]], balFit), cell_pair(bal[[3]], bal[[5]], balFit),
+                        cell_pair(bal[[2]], bal[[4]], balFit), cell_pair(bal[[2]], bal[[6]], balFit), cell_pair(bal[[4]], bal[[6]], balFit)), "holm")
+# Two by two with unequal numbers: A, B, D and C from the top of this file (6, 6, 4 and 6 values).
+unA <- factor(c(rep("c1", 12), rep("c2", 10))); unB <- factor(c(rep("s1", 6), rep("s2", 6), rep("s1", 4), rep("s2", 6)))
+unFit <- type2(c(A, B, D, C), unA, unB)
+unPairs <- p.adjust(c(cell_pair(A, B, unFit), cell_pair(D, C, unFit)), "holm")
+twoway <- obj(
+  balanced = two_out(balFit, list(aovF = num(balAov[1:3, "F value"]), aovP = num(balAov[1:3, "Pr(>F)"]), within = num(balPairs), across = num(balAcross))),
+  unequal = two_out(unFit, list(within = num(unPairs)))
+)
+
+writeLines(obj(r = sprintf("\"%s\"", R.version.string), dist = dist, two = two, several = several, repeated = repeated, normal = normal, holm = holm, dose = dose, twoway = twoway), "tests/stats-reference.json")
 cat("Wrote tests/stats-reference.json\n")

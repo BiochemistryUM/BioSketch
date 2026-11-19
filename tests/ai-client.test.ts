@@ -40,12 +40,15 @@ function stubFetch(status: number, payload: unknown): { calls: Captured[] } {
   return { calls }
 }
 
+/** Stands in for the instructions and icon catalogue (systemPrompt), which the dialog builds from the pack list. */
+const SYSTEM = 'You help scientists. Icon catalogue: nih-cells (cells): macrophage'
+
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Claude API request', () => {
   it('sends the sketch, the schema and the settings, and reads the scene back', async () => {
     const { calls } = stubFetch(200, message())
-    const result = await requestScene({ apiKey: 'placeholder-key', model: DEFAULT_MODEL, description: 'two circles', imageBase64: 'AAAA' })
+    const result = await requestScene({ system: SYSTEM, apiKey: 'placeholder-key', model: DEFAULT_MODEL, description: 'two circles', imageBase64: 'AAAA' })
     expect(result.elements).toHaveLength(2)
     expect(result.connectors).toHaveLength(1)
 
@@ -65,7 +68,7 @@ describe('Claude API request', () => {
     expect(body.thinking).toBeUndefined()
     expect(body.tool_choice).toBeUndefined()
     expect(body.temperature).toBeUndefined()
-    expect(body.system).toContain('Icon catalogue')
+    expect(body.system).toBe(SYSTEM)
     const content = body.messages[0].content
     expect(content[0]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } })
     expect(content[1].text).toContain('two circles')
@@ -73,7 +76,7 @@ describe('Claude API request', () => {
 
   it('sends only text when there is no sketch', async () => {
     const { calls } = stubFetch(200, message())
-    await requestScene({ apiKey: 'placeholder-key', model: 'claude-haiku-5-5', description: 'glycolysis in the cytoplasm' })
+    await requestScene({ system: SYSTEM, apiKey: 'placeholder-key', model: 'claude-haiku-5-5', description: 'glycolysis in the cytoplasm' })
     expect(calls[0].body.model).toBe('claude-haiku-5-5')
     expect(calls[0].body.messages[0].content).toHaveLength(1)
     expect(calls[0].body.messages[0].content[0].text).toContain('glycolysis')
@@ -81,30 +84,30 @@ describe('Claude API request', () => {
 
   it('explains a rejected key', async () => {
     stubFetch(401, { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } })
-    await expect(requestScene({ apiKey: 'bad', model: DEFAULT_MODEL, description: 'x' })).rejects.toThrow(/API key was not accepted/)
+    await expect(requestScene({ system: SYSTEM, apiKey: 'bad', model: DEFAULT_MODEL, description: 'x' })).rejects.toThrow(/API key was not accepted/)
   })
 
   it('explains a bad request with the API message', async () => {
     stubFetch(400, { type: 'error', error: { type: 'invalid_request_error', message: 'something specific' } })
-    const error = await requestScene({ apiKey: 'k', model: DEFAULT_MODEL, description: 'x' }).catch((e) => e)
+    const error = await requestScene({ system: SYSTEM, apiKey: 'k', model: DEFAULT_MODEL, description: 'x' }).catch((e) => e)
     expect(error).toBeInstanceOf(AiError)
     expect(error.message).toContain('something specific')
   })
 
   it('handles refusals, cut-off answers, empty answers and unreadable answers', async () => {
     stubFetch(200, message({ stop_reason: 'refusal', content: [] }))
-    await expect(requestScene({ apiKey: 'k', model: DEFAULT_MODEL, description: 'x' })).rejects.toThrow(/declined/)
+    await expect(requestScene({ system: SYSTEM, apiKey: 'k', model: DEFAULT_MODEL, description: 'x' })).rejects.toThrow(/declined/)
     stubFetch(200, message({ stop_reason: 'max_tokens' }))
-    await expect(requestScene({ apiKey: 'k', model: DEFAULT_MODEL, description: 'x' })).rejects.toThrow(/too large/)
+    await expect(requestScene({ system: SYSTEM, apiKey: 'k', model: DEFAULT_MODEL, description: 'x' })).rejects.toThrow(/too large/)
     stubFetch(200, message({ content: [{ type: 'text', text: 'not json' }] }))
-    await expect(requestScene({ apiKey: 'k', model: DEFAULT_MODEL, description: 'x' })).rejects.toThrow(/could not be read/)
+    await expect(requestScene({ system: SYSTEM, apiKey: 'k', model: DEFAULT_MODEL, description: 'x' })).rejects.toThrow(/could not be read/)
     stubFetch(200, message({ content: [{ type: 'text', text: JSON.stringify({ title: '', elements: [], connectors: [] }) }] }))
-    await expect(requestScene({ apiKey: 'k', model: DEFAULT_MODEL, description: 'x' })).rejects.toThrow(/could not find anything/)
+    await expect(requestScene({ system: SYSTEM, apiKey: 'k', model: DEFAULT_MODEL, description: 'x' })).rejects.toThrow(/could not find anything/)
   })
 
   it('skips thinking blocks and reads the text block', async () => {
     stubFetch(200, message({ content: [{ type: 'thinking', thinking: '', signature: 's' }, { type: 'text', text: JSON.stringify(scene) }] }))
-    const result = await requestScene({ apiKey: 'k', model: DEFAULT_MODEL, description: 'x' })
+    const result = await requestScene({ system: SYSTEM, apiKey: 'k', model: DEFAULT_MODEL, description: 'x' })
     expect(result.title).toBe('Test')
   })
 })

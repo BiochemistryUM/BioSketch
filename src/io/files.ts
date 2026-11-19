@@ -6,10 +6,10 @@
 import { isHexColor, normalizeHex, sanitizeBody } from '../icons/svg'
 import { uid } from '../model/doc'
 import { DASH_SCALE_MAX, DASH_SCALE_MIN, DASH_STYLES } from '../model/dash'
-import { LEGEND_PLACES, MAX_BRACKETS, MAX_GROUPS, MAX_ROWS, MAX_VALUES, POINT_SHAPES, ownPointStyle, pointStyle, usable, usableEnds, usableRefLines } from '../model/chart'
+import { LEGEND_PLACES, MAX_BRACKETS, MAX_GROUPS, MAX_ROWS, MAX_VALUES, POINT_SHAPES, maxValues, ownPointStyle, pointStyle, usable, usableEnds, usablePointNames, usableRefLines, usableValueLabels } from '../model/chart'
 import { paletteId } from '../model/palettes'
 import { SHAPE_KINDS } from '../model/shapes'
-import type { ChartBracket, ChartGroup, ChartKind, ChartTest, ConnectorKind, DashStyle, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign } from '../model/types'
+import type { ChartBracket, ChartGroup, ChartKind, ChartTest, ConnectorKind, DashStyle, ElbowLegs, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign } from '../model/types'
 
 const num = (v: unknown, fallback: number, min = -1e6, max = 1e6): number =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
@@ -22,6 +22,7 @@ const color = (v: unknown, fallback: string): string => (typeof v === 'string' &
 const SHAPES: ShapeKind[] = SHAPE_KINDS
 const CHART_KINDS: ChartKind[] = ['bar', 'dot', 'line', 'box', 'violin', 'scatter']
 const KINDS: ConnectorKind[] = ['arrow', 'inhibit', 'dot', 'line', 'double']
+const LEGS: ElbowLegs[] = ['hh', 'vv', 'hv', 'vh']
 const ALIGNS: TextAlign[] = ['left', 'center', 'right']
 const FONTS: FontFamily[] = ['sans', 'serif', 'mono']
 
@@ -70,7 +71,10 @@ function endpoint(v: unknown): Endpoint | null {
   const p = point(v)
   if (!p) return null
   const nodeId = safeId(obj(v)?.nodeId)
-  return nodeId ? { ...p, nodeId } : p
+  if (!nodeId) return p
+  // A place on the node only means something for an attached end, and lies on the node's box.
+  const port = point(obj(v)?.port)
+  return port ? { ...p, nodeId, port: { x: Math.min(1, Math.max(-1, port.x)), y: Math.min(1, Math.max(-1, port.y)) } } : { ...p, nodeId }
 }
 
 function node(raw: unknown): FigNode | null {
@@ -158,6 +162,7 @@ function node(raw: unknown): FigNode | null {
         ...(o.fade === 'in' || o.fade === 'out' ? { fade: o.fade } : {}),
         ...(typeof o.label === 'string' && o.label ? { label: o.label.slice(0, 200) } : {}),
         ...(o.route === 'elbow' ? { route: 'elbow' as const } : {}),
+        ...(o.route === 'elbow' && LEGS.includes(o.legs as ElbowLegs) ? { legs: o.legs as ElbowLegs } : {}),
         ...(labelOffset ? { labelOffset } : {}),
       }
     }
@@ -185,7 +190,7 @@ function node(raw: unknown): FigNode | null {
         const name = typeof g.name === 'string' ? g.name.slice(0, 60) : ''
         const shape = POINT_SHAPES.find((s) => s === g.shape)
         const shared = { name: name || `Group ${groups.length + 1}`, ...(isHexColor(g.color) ? { color: normalizeHex(g.color) } : {}), ...(shape && shape !== 'circle' ? { shape } : {}), ...ownPointStyle(g.pointSize, g.pointOpacity) }
-        const list = (Array.isArray(g.values) ? g.values : []).slice(0, MAX_VALUES)
+        const list = (Array.isArray(g.values) ? g.values : []).slice(0, maxValues(kind))
         if (kind === 'scatter') {
           // A point is kept only when both of its numbers are good, so x and y can never drift apart.
           const xs = Array.isArray(g.xs) ? g.xs : []
@@ -221,10 +226,13 @@ function node(raw: unknown): FigNode | null {
         ...(t.by === 'means' || t.by === 'ranks' ? { by: t.by } : {}),
         ...(bool(t.paired) ? { paired: true } : {}),
         ...(bool(t.versusFirst) ? { versusFirst: true } : {}),
+        ...(bool(t.across) ? { across: true } : {}),
         ...(bool(t.stars) ? { stars: true } : {}),
       }
       const refLines = usableRefLines(o.refLines, kind, kind === 'scatter' && o.xLog === true, o.yLog === true)
       const legend = LEGEND_PLACES.find((p) => p === o.legend)
+      const valueLabels = usableValueLabels(o.valueLabels)
+      const pointNames = kind === 'scatter' ? usablePointNames(o.pointNames) : undefined
       return {
         ...base,
         type: 'chart',
@@ -237,10 +245,13 @@ function node(raw: unknown): FigNode | null {
         groups,
         ...(o.error === 'sd' || o.error === 'sem' ? { error: o.error } : {}),
         ...(bool(o.points) ? { points: true } : {}),
+        ...(kind === 'bar' && bool(o.stacked) ? { stacked: true } : {}),
         ...pointStyle(o.pointSize, o.pointOpacity),
         ...(paletteId(o.palette) ? { palette: paletteId(o.palette) } : {}),
         ...(refLines.length ? { refLines } : {}),
         ...(legend ? { legend } : {}),
+        ...(valueLabels ? { valueLabels } : {}),
+        ...(pointNames ? { pointNames } : {}),
         ...(typeof o.title === 'string' && o.title.trim() ? { title: o.title.slice(0, 120) } : {}),
         ...(typeof o.yLabel === 'string' && o.yLabel.trim() ? { yLabel: o.yLabel.slice(0, 120) } : {}),
         ...(typeof o.xLabel === 'string' && o.xLabel.trim() ? { xLabel: o.xLabel.slice(0, 120) } : {}),
@@ -252,6 +263,7 @@ function node(raw: unknown): FigNode | null {
         ...(xMax !== undefined ? { xMax } : {}),
         ...(kind === 'scatter' && bool(o.xLog) ? { xLog: true } : {}),
         ...(kind === 'scatter' && bool(o.fit) ? { fit: true } : {}),
+        ...(kind === 'scatter' && bool(o.fit) && o.curve === 'dose' ? { curve: 'dose' as const } : {}),
         ...(brackets.length ? { brackets } : {}),
         ...(Object.keys(test).length ? { test } : {}),
       }
@@ -330,7 +342,6 @@ export function validateDoc(data: unknown): FigDoc {
     width: num(o.width, 1200, 50, 20000),
     height: num(o.height, 800, 50, 20000),
     ...(typeof o.widthMm === 'number' && o.widthMm > 0 ? { widthMm: num(o.widthMm, 85, 10, 2000) } : {}),
-    ...(o.iconStyle === 'flat' ? { iconStyle: 'flat' as const } : {}),
     background: color(o.background, '#ffffff'),
     nodes,
     customIcons,

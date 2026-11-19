@@ -4,6 +4,7 @@ import { parseDoc, serializeDoc, validateDoc } from '../src/io/files'
 import { emptyDoc } from '../src/model/doc'
 import type { FigDoc, IconDef, IconNode, StrokeNode } from '../src/model/types'
 import { TEMPLATES } from '../src/templates'
+import { example } from './helpers'
 
 const parseXml = (xml: string) => {
   const doc = new DOMParser().parseFromString(xml, 'image/svg+xml')
@@ -23,7 +24,7 @@ const withCustom = (): FigDoc => {
 describe('figure files', () => {
   it('round-trips the example figures unchanged', () => {
     for (const t of TEMPLATES) {
-      const doc = t.build()
+      const doc = example(t)
       expect(parseDoc(serializeDoc(doc)), t.id).toEqual(doc)
     }
   })
@@ -112,7 +113,7 @@ describe('figure files', () => {
 describe('export', () => {
   it('produces well-formed SVG for the example figures', () => {
     for (const t of TEMPLATES) {
-      const doc = t.build()
+      const doc = example(t)
       const { svg, width, height } = renderSvg(doc, { area: 'page', transparent: false, includeSketch: true })
       const xml = parseXml(svg)
       expect(xml.documentElement.getAttribute('viewBox')).toBe(`0 0 ${doc.width} ${doc.height}`)
@@ -157,7 +158,7 @@ describe('export', () => {
     // The icon in this figure was recoloured, which a Creative Commons credit has to mention.
     expect(attributionLines(doc)).toEqual(['"Heart" (adapted) by Servier Medical Art (https://smart.servier.com), licence: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)'])
     expect(renderSvg(doc, { area: 'page', transparent: false, includeSketch: true }).svg).toContain('<desc>Created with BioSketch. Icons:')
-    for (const t of TEMPLATES) expect(attributionText(t.build())).toBe('')
+    for (const t of TEMPLATES) expect(attributionText(example(t))).toBe('')
     const unknown = { ...doc, customIcons: { 'custom-1': { ...customIcon, license: '', author: '' } } }
     expect(attributionLines(unknown)[0]).toContain('unknown author')
   })

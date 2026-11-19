@@ -1,11 +1,17 @@
 // The "scene": a small, model-friendly description of a figure. The AI never produces drawings or
 // markup. It only names library icons, positions and arrows; this file turns that into real nodes.
+// The icons it may name are those of the NIH BioArt collections (public domain, drawn by medical
+// illustrators), listed to it by name from the pack list; the drawings are fetched when used.
 
-import { BUILTIN_ICONS, getIcon } from '../icons/library'
+import type { PackInfo } from '../icons/packs'
 import { INK, outlinePoints, textLabel } from '../model/build'
 import { uid } from '../model/doc'
 import { clamp } from '../model/geometry'
-import type { ConnectorKind, ConnectorNode, FigNode, IconNode, MembraneNode, Point, ShapeNode } from '../model/types'
+import type { ConnectorKind, ConnectorNode, FigNode, IconDef, IconNode, MembraneNode, Point, ShapeNode } from '../model/types'
+
+/** Finds the drawing for an icon id, or nothing when it is not at hand. */
+export type IconLookup = (id: string) => IconDef | undefined
+const NO_ICONS: IconLookup = () => undefined
 
 export type ElementKind = 'icon' | 'box' | 'ellipse' | 'text' | 'membrane' | 'cell' | 'frame'
 
@@ -92,21 +98,45 @@ export const SCENE_SCHEMA = {
   },
 } as const
 
+/** The collections the AI may take icons from: NIH BioArt, which is public domain and in one hand. */
+export const aiPacks = (packs: PackInfo[]): PackInfo[] => packs.filter((p) => p.id.startsWith('nih-'))
+
+const entrySlug = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+
 /**
- * The icon library as the model sees it: one line per category, listing icon ids. The name follows
- * in brackets only where the id does not already say what the icon is. Kept short on purpose,
- * because this text is part of every request.
+ * The icon library as the model sees it: one line per collection, listing its entries. The name
+ * follows in brackets only where the entry does not already say what the icon is. Kept short on
+ * purpose, because this text is part of every request.
  */
-export function iconCatalogue(): string {
-  const groups = new Map<string, string[]>()
-  for (const icon of BUILTIN_ICONS) {
-    const selfExplaining = icon.name.toLowerCase() === icon.id.replace(/-/g, ' ')
-    groups.set(icon.category, [...(groups.get(icon.category) ?? []), selfExplaining ? icon.id : `${icon.id} (${icon.name})`])
-  }
-  return [...groups].map(([category, ids]) => `${category}: ${ids.join(', ')}`).join('\n')
+export function iconCatalogue(packs: PackInfo[]): string {
+  return aiPacks(packs)
+    .map((pack) => {
+      const cut = pack.name.indexOf(': ')
+      const entries = pack.names.map(([id, name]) => (entrySlug(name) === id ? id : `${id} (${name})`))
+      return `${pack.id} (${cut > 0 ? pack.name.slice(cut + 2) : pack.name}): ${entries.join(', ')}`
+    })
+    .join('\n')
 }
 
-export const SYSTEM_PROMPT = `You help scientists turn a rough idea into a clean, editable figure of a biological process, in an open-source figure editor called BioSketch.
+/**
+ * The full icon id for what the model wrote, or '' when the library has no such icon. The model
+ * is asked for "collection--entry"; an entry on its own, or one written with spaces, is understood too.
+ */
+export function catalogueId(written: string, packs: PackInfo[]): string {
+  const want = written.trim().toLowerCase().replace(/[\s_]+/g, '-')
+  if (!want) return ''
+  const cut = want.indexOf('--')
+  const entry = cut > 0 ? want.slice(cut + 2) : want
+  // A collection that is named is looked in first, whichever it is; otherwise only the AI's own.
+  const named = cut > 0 ? packs.filter((p) => p.id === want.slice(0, cut)) : []
+  for (const pack of [...named, ...aiPacks(packs)]) {
+    if (pack.names.some((n) => n[0] === entry)) return `${pack.id}--${entry}`
+  }
+  return ''
+}
+
+/** The standing instructions of every request, with the icons of these packs as the catalogue. */
+export const systemPrompt = (packs: PackInfo[]): string => `You help scientists turn a rough idea into a clean, editable figure of a biological process, in an open-source figure editor called BioSketch.
 
 You do not draw. You describe the figure as structured data, and the editor builds it from its icon library. The scientist then adjusts the result by hand, so a faithful, tidy first layout matters more than completeness.
 
@@ -135,8 +165,12 @@ Guidance:
 
 Notes: besides the figure, you may tell the scientist up to five things in "notes", one short sentence each: an assumption you made where the request left a choice open, something that has no icon and what you used instead, a part of the sketch you could not read, or a question whose answer would change the figure. Write them for a biologist, without mentioning ids, coordinates or JSON. Use an empty list when there is nothing worth saying.
 
-Icon catalogue, by category. Each entry is an icon id; a name follows in brackets where the id is not self-explanatory:
-${iconCatalogue()}`
+${
+  aiPacks(packs).length
+    ? `Icon catalogue. Each line is one collection: its id, its subject in brackets, then its icons. The id of an icon is the collection id, two hyphens, then the entry, for example nih-cells--macrophage. A name follows an entry in brackets where the entry is not self-explanatory. Entries that end in a number are other drawings of the same subject (macrophage-2): pick any, and use the same one throughout a figure. The icons are detailed drawings by medical illustrators; where none fits exactly, a "box" with the name is better than a wrong picture.
+${iconCatalogue(packs)}`
+    : 'No icon catalogue could be loaded this time: use "box" and "ellipse" elements instead of icons, and say so in "notes".'
+}`
 
 /** What the scientist is asking for, in words the model reads. */
 export function taskText(hasSketch: boolean, description: string): string {
@@ -213,11 +247,11 @@ const LABEL_HEIGHT = 24
 const LETTER = 0.56
 
 /** Width and height an element is drawn at on a page of the given size (without its label). */
-function builtSize(e: SceneElement, page: { width: number; height: number }): { w: number; h: number } {
+function builtSize(e: SceneElement, page: { width: number; height: number }, icons: IconLookup): { w: number; h: number } {
   const bw = Math.max(20, (e.w * page.width) / 1000)
   const bh = Math.max(20, (e.h * page.height) / 1000)
   if (e.kind === 'icon') {
-    const def = getIcon(null, e.icon)
+    const def = icons(e.icon)
     if (def) {
       const scale = Math.min(bw / def.viewBox[0], bh / def.viewBox[1])
       return { w: def.viewBox[0] * scale, h: def.viewBox[1] * scale }
@@ -238,11 +272,11 @@ function builtSize(e: SceneElement, page: { width: number; height: number }): { 
  * layout check (layout.ts) compares to find things that lie on top of each other. Without
  * `withLabel` it is the drawing alone.
  */
-export function elementBox(e: SceneElement, page: { width: number; height: number }, withLabel = true): { x: number; y: number; w: number; h: number } {
-  const { w, h } = builtSize(e, page)
+export function elementBox(e: SceneElement, page: { width: number; height: number }, withLabel = true, icons: IconLookup = NO_ICONS): { x: number; y: number; w: number; h: number } {
+  const { w, h } = builtSize(e, page, icons)
   const cx = (e.x * page.width) / 1000
   const cy = (e.y * page.height) / 1000
-  if (withLabel && e.kind === 'icon' && e.label && getIcon(null, e.icon)) {
+  if (withLabel && e.kind === 'icon' && e.label && icons(e.icon)) {
     const wide = Math.max(w, e.label.length * 16 * LETTER)
     return { x: cx - wide / 2, y: cy - h / 2, w: wide, h: h + LABEL_HEIGHT }
   }
@@ -253,8 +287,10 @@ export function elementBox(e: SceneElement, page: { width: number; height: numbe
  * Turn a scene into figure nodes placed on a page of the given size.
  * `known` maps scene element ids to nodes that already exist on the page: those elements are not
  * built again, but new arrows can attach to them (used when revising a figure).
+ * `icons` finds the drawings the scene names (see sceneIcons in icons.ts); an icon it does not
+ * find becomes a box with the name. The figure must be given those drawings too (`iconsUsed`).
  */
-export function sceneToNodes(scene: Scene, page: { width: number; height: number }, known: Map<string, string> = new Map()): FigNode[] {
+export function sceneToNodes(scene: Scene, page: { width: number; height: number }, known: Map<string, string> = new Map(), icons: IconLookup = NO_ICONS): FigNode[] {
   const sx = page.width / 1000
   const sy = page.height / 1000
   const back: FigNode[] = []
@@ -270,10 +306,10 @@ export function sceneToNodes(scene: Scene, page: { width: number; height: number
     const cy = e.y * sy
     const bw = Math.max(20, e.w * sx)
     const bh = Math.max(20, e.h * sy)
-    const def = e.kind === 'icon' ? getIcon(null, e.icon) : undefined
+    const def = e.kind === 'icon' ? icons(e.icon) : undefined
 
     if (e.kind === 'icon' && def) {
-      const { w, h } = builtSize(e, page)
+      const { w, h } = builtSize(e, page, icons)
       const groupId = e.label ? uid() : undefined
       const node: IconNode = { id: uid(), type: 'icon', iconId: def.id, x: cx - w / 2, y: cy - h / 2, w, h, rotation: 0, ...(groupId ? { groupId } : {}) }
       middle.push(node)
@@ -309,7 +345,7 @@ export function sceneToNodes(scene: Scene, page: { width: number; height: number
       if (e.label) texts.push(label(e.label, cx, closed ? cy - bh / 2 + 26 : cy - 40, { fontSize: 14, fill: '#6b7785', italic: true }))
     } else if (e.kind === 'frame') {
       // An empty dashed rectangle: a zoomed-in view or a marked region. It sits behind everything.
-      const { w, h } = builtSize(e, page)
+      const { w, h } = builtSize(e, page, icons)
       const groupId = e.label ? uid() : undefined
       const frame: ShapeNode = {
         id: uid(),
@@ -331,8 +367,9 @@ export function sceneToNodes(scene: Scene, page: { width: number; height: number
       if (e.label) texts.push(label(e.label, cx, cy - h / 2 + 8, { fontSize: 14, fill: FRAME_LINE, italic: true, groupId }))
     } else {
       // A box or ellipse, or an icon the library does not have: a shape with its words inside.
-      const { w, h } = builtSize(e, page)
-      const words = e.label || (e.kind === 'icon' ? e.icon : '')
+      const { w, h } = builtSize(e, page, icons)
+      // An icon id reads "nih-cells--mast-cell-2": the words are the part after the collection.
+      const words = e.label || (e.kind === 'icon' ? e.icon.replace(/^.*--/, '').replace(/-/g, ' ') : '')
       const shape: ShapeNode = {
         id: uid(),
         type: 'shape',
@@ -372,4 +409,14 @@ export function sceneToNodes(scene: Scene, page: { width: number; height: number
 
   if (scene.title) texts.push(label(scene.title, page.width / 2, 18, { bold: true, fontSize: 24 }))
   return [...back, ...middle, ...texts, ...links]
+}
+
+/** The drawings a set of new nodes needs, to be stored with the figure like any icon placed from a collection. */
+export function iconsUsed(nodes: FigNode[], icons: IconLookup): Record<string, IconDef> {
+  const used: Record<string, IconDef> = {}
+  for (const n of nodes) {
+    const def = n.type === 'icon' ? icons(n.iconId) : undefined
+    if (def) used[def.id] = { ...def, category: 'Imported' }
+  }
+  return used
 }

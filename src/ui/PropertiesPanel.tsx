@@ -13,12 +13,13 @@ import {
   orderSelection,
   patchDoc,
   patchSelection,
+  resizeAsPicture,
   ungroupSelection,
   unlockAll,
   addPanels,
   removeGuides,
 } from '../actions'
-import { getIcon } from '../icons/library'
+import { MISSING_ICON, nameFromId, getIcon } from '../icons/library'
 import { extractColors, isHexColor, normalizeHex } from '../icons/svg'
 import { finishReshape, startReshape } from '../icons/reshape'
 import { splitIcon } from '../icons/split'
@@ -27,8 +28,9 @@ import { removeNodes } from '../model/doc'
 import { SYMBOL_GROUPS, insertText, wrapSelection } from '../model/richtext'
 import { SHAPE_KINDS, shapePath } from '../model/shapes'
 import {
-  MAX_BRACKETS, MAX_REF_LINES, POINT_OPACITY_MIN, POINT_SIZE_MAX, POINT_SIZE_MIN,
-  bracketLabel, carryOver, chartAdvice, chartAnalysis, chartLayout, chartSamples, chartSeries, crossTable, hasPoints, headRows, isGrouped, pointStyle, readTable, scatterFits, shownValues, stats, tableText, withTestBrackets,
+  MAX_BRACKETS, MAX_REF_LINES, POINT_NAMES_TOP, POINT_OPACITY_MIN, POINT_SIZE_MAX, POINT_SIZE_MIN,
+  VALUE_DECIMALS_MAX,
+  bracketLabel, carryOver, chartAdvice, chartAnalysis, chartLayout, curveMethodsText, doseText, methodsText, chartSamples, chartSeries, crossTable, hasPoints, headRows, isGrouped, pointNamesIn, pointStyle, readTable, scatterFits, shownValues, splitNameList, stats, tableText, usablePointNames, usableValueLabels, usualValueLabel, withTestBrackets,
   type TableReport,
 } from '../model/chart'
 import { INSTRUCTION_EXAMPLES, applyInstruction } from '../model/chartCommands'
@@ -37,17 +39,34 @@ import { TABLE_ACCEPT, tableFromFile } from '../io/tables'
 import { boxStats } from '../model/chartStats'
 import { STARS_KEY, TEST_DOES, TEST_NAMES, TEST_SHORT, pText, stars, testFor } from '../model/chartTests'
 import { DASH_SCALE_MAX, DASH_SCALE_MIN, dashArray, hasDots, lineStyleOf, lineStylePatch, type Dashable, type LineStyle } from '../model/dash'
-import { SHAPE_LABEL_DEFAULT } from '../model/nodes'
-import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartRefLine, ChartTest, ConnectorFade, ConnectorKind, ConnectorNode, FigNode, FontFamily, IconNode, ImageNode, LegendPlace, MembraneNode, PointShape, ShapeKind, ShapeNode, StrokeNode, TextAlign, TextNode } from '../model/types'
+import { growToFitLabel, SHAPE_LABEL_DEFAULT } from '../model/nodes'
+import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartPointNames, ChartRefLine, ChartTest, ChartValueLabels, ConnectorFade, ConnectorKind, ConnectorNode, FigNode, FontFamily, IconNode, ImageNode, LegendPlace, MembraneNode, PointShape, ShapeKind, ShapeNode, StrokeNode, TextAlign, TextNode } from '../model/types'
 import { toast, useEditor } from '../store'
+import { copyText } from './copy'
 import { PANEL_LAYOUTS, type PanelLayout } from '../model/panels'
-import { rememberStyle } from '../figures'
 import { ObjectsList } from './ObjectsList'
 import { Icon, type IconName } from './Icon'
+import { Info } from './Info'
 
 // ---------- small form parts ----------
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+/** The marks that format a label, as they are typed. */
+const MARKS = 'Ca^{2+}, H_{2}O, *italic* and **bold**'
+
+/** A setting with its name above it. With `info`, an "i" beside the name opens a note that explains the setting. */
+function Field({ label, info, children }: { label: string; info?: ReactNode; children: ReactNode }) {
+  // A button inside a <label> would become the control the label stands for, so a field with a note is a plain group.
+  if (info) {
+    return (
+      <div className="field" role="group" aria-label={label}>
+        <span className="field-head">
+          <span className="field-label">{label}</span>
+          <Info about={label}>{info}</Info>
+        </span>
+        {children}
+      </div>
+    )
+  }
   return (
     <label className="field">
       <span className="field-label">{label}</span>
@@ -132,6 +151,89 @@ function Check({ checked, onChange, children }: { checked: boolean; onChange: (v
   )
 }
 
+const NAME_SHOW: { value: ChartPointNames['show']; label: string; title: string }[] = [
+  { value: 'table', label: 'All named', title: 'Write the name of every point that has one in the table' },
+  { value: 'top', label: 'Top', title: 'Write the names of the most striking points only' },
+  { value: 'none', label: 'None', title: 'Write no names' },
+]
+
+/** Which names of points a scatter chart writes: all named points, the top ones, or none, from chosen series and sides. */
+function PointNamesField({ node, set }: { node: ChartNode; set: (change: Partial<ChartNode>, merge?: string) => void }) {
+  const setting = usablePointNames(node.pointNames) ?? { show: 'table' as const }
+  const known = pointNamesIn(node.groups)
+  const [draft, setDraft] = useState<string | null>(null)
+  const update = (change: Partial<ChartPointNames>, merge?: string) => set({ pointNames: usablePointNames({ ...setting, ...change }) }, merge)
+  const seriesNames = [...new Set(node.groups.filter((g) => g.labels?.some(Boolean)).map((g) => g.name))]
+  const allSeries = node.groups.map((g) => g.name)
+  const from = setting.series ?? allSeries
+  return (
+    <Field
+      label="Names of points"
+      info={
+        <>
+          <p>Names come from a column of names before the x values in the table: genes, proteins, samples. Keep every name in the table and choose here which ones the chart writes.</p>
+          <p>
+            <b>Top</b> writes the names of the most striking points. <i>Far out</i> ranks by distance from x = 0 at the bottom of the plot, so in a volcano plot a large change and a small p count together; <i>Highest</i> ranks by y alone (smallest p); <i>Furthest from x = 0</i> by x alone (largest change, up or down).
+          </p>
+          <p>Sides: right of x = 0 is up-regulated in a volcano plot, left is down-regulated. “Top on each side” writes the top number of names on both sides.</p>
+          <p>Names typed under “Always name” are written whatever their rank or series. At most 100 names are written.</p>
+        </>
+      }
+    >
+      {!known.length ? (
+        <p className="hint">No point has a name. Put a column of names (genes, samples) before the x values in the table.</p>
+      ) : (
+        <>
+          <Segmented label="Which names to write" value={setting.show} options={NAME_SHOW} onChange={(show) => update({ show })} />
+          {setting.show === 'top' && (
+            <div className="row">
+              <NumberInput label="How many names" value={setting.top ?? POINT_NAMES_TOP} min={1} max={100} onChange={(top) => update({ top: Math.round(top) }, 'chart-names-top')} />
+              <select aria-label="Rank points by" value={setting.by ?? 'distance'} onChange={(e) => update({ by: e.target.value as ChartPointNames['by'] })}>
+                <option value="distance">Far out (volcano)</option>
+                <option value="y">Highest</option>
+                <option value="x">Furthest from x = 0</option>
+              </select>
+            </div>
+          )}
+          {setting.show !== 'none' && (
+            <>
+              <select aria-label="Which side of x = 0" value={setting.side ?? 'both'} onChange={(e) => update({ side: e.target.value === 'both' ? undefined : (e.target.value as ChartPointNames['side']) })}>
+                <option value="both">Both sides{setting.show === 'top' ? ' together' : ''}</option>
+                {setting.show === 'top' && <option value="each">Top on each side</option>}
+                <option value="up">Right of x = 0 only (up)</option>
+                <option value="down">Left of x = 0 only (down)</option>
+              </select>
+              {allSeries.length > 1 && (
+                <>
+                  <span className="sub-label">From</span>
+                  {allSeries.map((name) => (
+                    <Check key={name} checked={from.includes(name)} onChange={(on) => update({ series: on ? [...from.filter((n) => n !== name), name].sort((a, b) => allSeries.indexOf(a) - allSeries.indexOf(b)) : from.filter((n) => n !== name) })}>
+                      {name}
+                      {seriesNames.includes(name) ? '' : ' (no names)'}
+                    </Check>
+                  ))}
+                </>
+              )}
+              <span className="sub-label">Always name</span>
+              <input
+                className="text-input"
+                aria-label="Names always written, separated by commas"
+                placeholder="e.g. Egf, Lif, Csf1"
+                value={draft ?? (setting.always ?? []).join(', ')}
+                onChange={(e) => {
+                  setDraft(e.target.value)
+                  update({ always: splitNameList(e.target.value, known) }, 'chart-names-always')
+                }}
+                onBlur={() => setDraft(null)}
+              />
+            </>
+          )}
+        </>
+      )}
+    </Field>
+  )
+}
+
 function IconButton(props: { icon: IconName; label: string; onClick: () => void; disabled?: boolean; active?: boolean }) {
   return (
     <button
@@ -159,11 +261,14 @@ function Segmented<T extends string>({ value, options, onChange, label, wrap }: 
   )
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+function Section({ title, info, children }: { title: string; info?: ReactNode; children: ReactNode }) {
   const id = useId()
   return (
     <section className="section" aria-labelledby={id}>
-      <h2 id={id}>{title}</h2>
+      <div className="section-head">
+        <h2 id={id}>{title}</h2>
+        {info && <Info about={title}>{info}</Info>}
+      </div>
       {children}
     </section>
   )
@@ -225,10 +330,6 @@ const FADE_OPTIONS: { value: 'none' | ConnectorFade; label: string; title: strin
   { value: 'out', label: 'Fades out', title: 'Solid at the start, faint at the end' },
 ]
 
-const STYLE_OPTIONS: { value: 'outlined' | 'flat'; label: string; title: string }[] = [
-  { value: 'outlined', label: 'Outlined', title: 'Soft colours with a darker outline' },
-  { value: 'flat', label: 'Flat cartoon', title: 'Vivid colours, no dark outlines, soft light and shadow' },
-]
 
 const ROUTE_OPTIONS: { value: 'straight' | 'elbow'; label: string; title: string }[] = [
   { value: 'straight', label: 'Straight', title: 'A straight line; drag the diamond to curve it' },
@@ -320,8 +421,19 @@ function IconProps({ node, single }: { node: IconNode; single: boolean }) {
   const def = getIcon(doc, node.iconId)
   const reshaping = useEditor((s) => s.reshape?.nodeId === node.id)
   const colors = def ? extractColors(def.body).slice(0, 10) : []
+  if (!def) {
+    return (
+      <Section title={MISSING_ICON}>
+        <p className="notice">
+          The drawing of this icon{nameFromId(node.iconId) ? ` (“${nameFromId(node.iconId)}”)` : ''} is not in the figure any more, so a dashed box stands in its place, on the page and in exports. BioSketch’s own
+          drawings were taken out in November 2026; the library now holds the NIH, Bioicons and Servier collections.
+        </p>
+        <p className="hint">{single ? 'With this box selected, tap an icon in the library: it takes this place and size.' : 'Select one box at a time, then tap an icon in the library: it takes that place and size.'}</p>
+      </Section>
+    )
+  }
   return (
-    <Section title={def?.name ?? 'Icon'}>
+    <Section title={def.name}>
       {colors.length > 0 && (
         <Field label="Colours">
           <div className="swatches">
@@ -372,10 +484,14 @@ function IconProps({ node, single }: { node: IconNode; single: boolean }) {
       )}
       {single && reshaping && (
         <>
-          <button className="btn small primary" onClick={finishReshape}>
-            Done reshaping
-          </button>
-          <p className="hint">Drag the points to change the outline. Curves next to a point follow it.</p>
+          <div className="row wrap">
+            <button className="btn small primary" onClick={finishReshape}>
+              Done reshaping
+            </button>
+            <Info about="Reshaping an icon">
+              <p>Drag the points to change the outline. Curves next to a point follow it.</p>
+            </Info>
+          </div>
         </>
       )}
       {single && !reshaping && (
@@ -387,11 +503,15 @@ function IconProps({ node, single }: { node: IconNode; single: boolean }) {
             <button className="btn small" onClick={() => startReshape(node.id)}>
               <Icon name="pen" size={14} /> Reshape
             </button>
+            <Info about="Split into parts and Reshape">
+              <p>
+                <b>Split into parts</b> turns the icon into separate pieces: double-tap a piece to select it alone, then move, stretch, turn, recolour or delete it.
+              </p>
+              <p>
+                <b>Reshape</b> shows the points of the outline so you can drag them.
+              </p>
+            </Info>
           </div>
-          <p className="hint">
-            Split turns the icon into separate pieces: double-tap a piece to select it alone, then move, stretch, turn, recolour or delete it. Reshape shows the points
-            of the outline so you can drag them.
-          </p>
         </>
       )}
     </Section>
@@ -407,11 +527,12 @@ function ShapeProps({ node, single }: { node: ShapeNode; single: boolean }) {
     patchSelection((n) => {
       if (n.type !== 'shape') return n
       const { label: old, ...rest } = n
-      return text ? { ...rest, label: { ...(old ?? SHAPE_LABEL_DEFAULT), text } } : rest
+      // A shape grows downwards when the words need more lines than fit.
+      return text ? growToFitLabel({ ...rest, label: { ...(old ?? SHAPE_LABEL_DEFAULT), text } }) : rest
     }, 'shape-text')
   /** Change how the words look, on every selected shape that has some. */
   const setLabel = (change: Partial<NonNullable<ShapeNode['label']>>, merge?: string) =>
-    patchSelection((n) => (n.type === 'shape' && n.label ? { ...n, label: { ...n.label, ...change } } : n), merge)
+    patchSelection((n) => (n.type === 'shape' && n.label ? growToFitLabel({ ...n, label: { ...n.label, ...change } }) : n), merge)
   return (
     <Section title="Shape">
       <ShapePicker value={node.shape} onChange={(shape) => patch<ShapeNode>('shape', { shape })} />
@@ -434,7 +555,16 @@ function ShapeProps({ node, single }: { node: ShapeNode; single: boolean }) {
         onScale={(dashScale) => patch<ShapeNode>('shape', { dashScale: dashScale === 1 ? undefined : dashScale }, 'shape-dash')}
       />
       {single && (
-        <Field label="Text inside">
+        <Field
+          label="Text inside"
+          info={
+            <>
+              <p>Type here, or double-tap the shape and type on the page. Press Enter for a new line.</p>
+              <p>Long lines break to fit the shape, and the text stays in place when the shape is moved or resized.</p>
+              <p>Marks format the text: {MARKS}.</p>
+            </>
+          }
+        >
           <textarea
             ref={inside}
             className="text-input"
@@ -480,12 +610,6 @@ function ShapeProps({ node, single }: { node: ShapeNode; single: boolean }) {
           </Field>
         </>
       )}
-      {single && (
-        <p className="hint">
-          Long lines break to fit the shape, and the text stays in place when the shape is moved or resized. Press Enter for a new line; Ca^{'{2+}'}, H_{'{2}'}O,
-          *italic* and **bold** work here too.
-        </p>
-      )}
     </Section>
   )
 }
@@ -525,7 +649,17 @@ function TextProps({ node, single }: { node: TextNode; single: boolean }) {
     })
   }
   return (
-    <Section title="Text">
+    <Section
+      title="Text"
+      info={
+        single ? (
+          <>
+            <p>Select characters in the box, then press a button to raise, lower, slant or embolden them.</p>
+            <p>Or type the marks yourself: {MARKS}. A lone star stays a star, so significance marks (*, ***) can be typed as they are.</p>
+          </>
+        ) : undefined
+      }
+    >
       {single && (
         <>
           <textarea
@@ -551,9 +685,6 @@ function TextProps({ node, single }: { node: TextNode; single: boolean }) {
             </button>
           </div>
           <SymbolPicker onPick={(symbol) => insertSymbol(box.current, node.text, symbol, (text) => patch<TextNode>('text', { text }, 'text-edit'))} />
-          <p className="hint">
-            Select characters in the box, then press a button. Or type the marks yourself: Ca^{'{2+}'}, H_{'{2}'}O, *italic*, **bold**.
-          </p>
         </>
       )}
       <div className="row">
@@ -626,9 +757,18 @@ function OptionalNumber({ label, value, placeholder, onChange }: { label: string
 }
 
 /** The ends of one axis and whether it is logarithmic. */
-function AxisRange(props: { title: string; min: number | undefined; max: number | undefined; log: boolean; onMin: (v: number | undefined) => void; onMax: (v: number | undefined) => void; onLog: (v: boolean) => void }) {
+function AxisRange(props: { title: string; zero?: boolean; min: number | undefined; max: number | undefined; log: boolean; onMin: (v: number | undefined) => void; onMax: (v: number | undefined) => void; onLog: (v: boolean) => void }) {
   return (
-    <Field label={props.title}>
+    <Field
+      label={props.title}
+      info={
+        <>
+          <p>Leave a box empty and that end of the axis is chosen to fit the numbers.{props.zero ? ' The axis then includes zero, so that the height of a bar means what it seems to.' : ''}</p>
+          <p>A range you set cuts the data off at the edge of the plot: nothing is drawn beyond it.</p>
+          <p>A logarithmic axis shows only values above zero.</p>
+        </>
+      }
+    >
       <div className="row">
         <OptionalNumber label={`${props.title}: start`} value={props.min} placeholder="auto" onChange={props.onMin} />
         <span className="between">to</span>
@@ -672,7 +812,7 @@ function tableNotices(report: TableReport): string[] {
   if (report.unread) notices.push(`${report.unread} ${report.unread === 1 ? 'cell was' : 'cells were'} not read as ${report.unread === 1 ? 'a number' : 'numbers'} and left out (for example “${report.example}”).`)
   if (report.droppedValues || report.droppedGroups) {
     const parts = [report.droppedValues ? `${report.droppedValues} ${report.droppedValues === 1 ? 'value' : 'values'}` : '', report.droppedGroups ? `${report.droppedGroups} ${report.droppedGroups === 1 ? 'column' : 'columns'}` : ''].filter(Boolean)
-    notices.push(`The table is larger than a chart takes: ${parts.join(' and ')} were left out.`)
+    notices.push(`The table is larger than a chart takes: ${parts.join(' and ')} were left out${report.thinned ? ', spread evenly over the table so the shape of the cloud stays (every named point is kept)' : ''}.`)
   }
   if (report.commasUnclear) notices.push('Commas were read as decimal commas (1,234 is taken as 1.234). If yours separate thousands, remove them.')
   if (report.numericNames) notices.push('The names in the first row are all numbers. If that row holds values, choose “None” under “Rows of names”.')
@@ -730,12 +870,12 @@ function ChartProps({ node }: { node: ChartNode }) {
     crossed.current = null
     if (back && back.result === node.groups) {
       const b = back.before
-      return set({ kind: (b.kind === 'scatter') === (kind === 'scatter') ? kind : b.kind, groups: b.groups, brackets: b.brackets, test: b.test, refLines: b.refLines, fit: b.fit, xMin: b.xMin, xMax: b.xMax, xLog: b.xLog })
+      return set({ kind: (b.kind === 'scatter') === (kind === 'scatter') ? kind : b.kind, groups: b.groups, brackets: b.brackets, test: b.test, refLines: b.refLines, fit: b.fit, curve: b.curve, xMin: b.xMin, xMax: b.xMax, xLog: b.xLog, pointNames: b.pointNames })
     }
     const result = crossTable(node.groups, node.kind, kind)
     crossed.current = { before: node, result }
     const across = refLines.filter((l) => l.axis === 'y')
-    set({ kind, groups: result, brackets: undefined, test: undefined, fit: undefined, xMin: undefined, xMax: undefined, xLog: undefined, refLines: across.length ? across : undefined })
+    set({ kind, groups: result, brackets: undefined, test: undefined, fit: undefined, curve: undefined, xMin: undefined, xMax: undefined, xLog: undefined, pointNames: undefined, refLines: across.length ? across : undefined })
     toast(kind === 'scatter' ? 'A scatter chart reads the first column of the table as the x values. Choose another kind again to get your chart back.' : 'The x values became the first group. Choose Scatter again to get your chart back.')
   }
 
@@ -743,6 +883,7 @@ function ChartProps({ node }: { node: ChartNode }) {
   const series = chartSeries(node)
   const drawn = node.groups.map((group, index) => ({ group, index })).filter((c) => c.group.values.length)
   const fits = scatter ? scatterFits(node) : []
+  const curveMethods = curveMethodsText(node)
   const brackets = node.brackets ?? []
   const setBracket = (i: number, change: Partial<ChartBracket>) => set({ brackets: brackets.map((b, k) => (k === i ? { ...b, ...change } : b)) }, 'chart-bracket')
   const testing = !scatter && !!node.test?.by && !!chartAnalysis(node)?.ok
@@ -795,6 +936,9 @@ function ChartProps({ node }: { node: ChartNode }) {
     set({ refLines: [...refLines, { axis: 'y', value: node.yLog && middle <= 0 ? 1 : middle }] })
   }
   const hasLegend = grouped || (scatter && series.length > 1)
+  // The number written at every group: what the chart holds, as it is drawn.
+  const labels = usableValueLabels(node.valueLabels)
+  const setLabels = (change: Partial<ChartValueLabels>, merge?: string) => set({ valueLabels: usableValueLabels({ ...(labels ?? { show: usualValueLabel(node.kind) }), ...change }) }, merge)
   const colourBox = (entry: (typeof series)[number]) => (
     <input
       type="color"
@@ -818,9 +962,48 @@ function ChartProps({ node }: { node: ChartNode }) {
   }
 
   return (
-    <Section title="Chart">
+    <Section
+      title="Chart"
+      info={
+        <>
+          <p>Choose the kind of chart, paste your numbers, then set what the chart shows. Drag a corner of the chart on the page to resize it.</p>
+          <p>
+            {node.kind === 'bar'
+              ? 'A bar is the mean of its group.'
+              : node.kind === 'dot'
+                ? 'Every value is a dot; the line across them is the mean of the group.'
+                : node.kind === 'line'
+                  ? 'Each point is the mean of its group; the line joins them in the order of the columns.'
+                  : node.kind === 'box'
+                    ? 'The box runs from the first to the third quartile with a line at the median; each whisker ends at the furthest value within 1.5 box lengths, and values beyond are drawn as rings.'
+                    : node.kind === 'violin'
+                      ? 'The outline is a smoothed estimate of how the values are spread, from the smallest to the largest value; the line marks the median. All violins have the same greatest width.'
+                      : 'Every pair of x and y values is a point. A fitted line is the least-squares line of y on x, drawn across the x values of its series; on a logarithmic axis it is fitted to the logarithms.'}
+          </p>
+          <p>Titles and names accept {MARKS}.</p>
+        </>
+      }
+    >
       <Segmented label="Chart type" value={node.kind} options={CHART_OPTIONS} onChange={onKind} wrap />
-      <Field label="Describe a change">
+      <Field
+        label="Describe a change"
+        info={
+          <>
+            <p>Write in plain words what the chart should show, then press Apply or Enter. Several things at once are fine.</p>
+            <p>This box reads set phrases in your browser: no AI, nothing is sent anywhere. It tells you what it did and what it did not understand, and one Undo takes the whole instruction back.</p>
+            <p>Press an example to put it in the box:</p>
+            <ul className="examples">
+              {INSTRUCTION_EXAMPLES.map((example) => (
+                <li key={example}>
+                  <button className="example" onClick={() => setAsked(example)}>
+                    {example}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        }
+      >
         <textarea
           className="text-input"
           aria-label="Describe a change to the chart"
@@ -852,21 +1035,25 @@ function ChartProps({ node }: { node: ChartNode }) {
             ))}
           </div>
         )}
-        <details className="instruction-help">
-          <summary>What you can ask for</summary>
-          <p className="hint">Write in plain words; several things at once are fine. This box reads set phrases in your browser (no AI, nothing is sent anywhere) and tells you what it did or did not understand. Examples:</p>
-          <ul>
-            {INSTRUCTION_EXAMPLES.map((example) => (
-              <li key={example}>
-                <button className="example" onClick={() => setAsked(example)}>
-                  {example}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </details>
       </Field>
-      <Field label="Numbers">
+      <Field
+        label="Numbers"
+        info={
+          <>
+            <p>
+              {scatter
+                ? 'First column: the x values. Each further column: the y values of one series, with its name in the first row.'
+                : 'One column per group, with its name in the first row; one row per replicate.'}
+            </p>
+            <p>
+              {scatter
+                ? 'To write names beside points (genes, samples), put a column of names before the x values; only rows with a name are labelled.'
+                : 'For a grouped chart, add a row above with the category of each column (for example WT, WT, KO, KO).'}
+            </p>
+            <p>Paste from a spreadsheet, type with tabs, commas or spaces between the numbers, or import a .csv, .txt or .xlsx file (the first sheet).</p>
+          </>
+        }
+      >
         <textarea
           className="text-input table-input"
           aria-label="Numbers for the chart"
@@ -891,7 +1078,15 @@ function ChartProps({ node }: { node: ChartNode }) {
           }}
         />
       </Field>
-      <Field label="Rows of names at the top">
+      <Field
+        label="Rows of names at the top"
+        info={
+          <>
+            <p>How many rows at the top of the table hold names, not numbers. BioSketch guesses from the table.</p>
+            <p>Change it when a first row of numbers (doses, time points) is really a row of names, or when the table has no names at all.{scatter ? '' : ' With two rows the chart is grouped: categories above, series below.'}</p>
+          </>
+        }
+      >
         <Segmented
           label="Rows of names at the top"
           value={String(live ? live.report.head : ownHead) as '0' | '1' | '2'}
@@ -899,12 +1094,6 @@ function ChartProps({ node }: { node: ChartNode }) {
           onChange={(v) => read(shownText, Number(v) as 0 | 1 | 2)}
         />
       </Field>
-      <p className="hint">
-        {scatter
-          ? 'First column: the x values. Each further column: the y values of one series, with its name in the first row. To write names beside points (genes, samples), put a column of names before the x values; only rows with a name are labelled.'
-          : 'One column per group, with its name in the first row; one row per replicate. For a grouped chart, add a row above with the category of each column (for example WT, WT, KO, KO).'}{' '}
-        Paste from a spreadsheet, type with tabs, commas or spaces between the numbers, or import a .csv, .txt or .xlsx file (the first sheet).
-      </p>
       {[...(live ? tableNotices(live.report) : []), ...drawing.notes].map((note, i) => (
         <p key={i} className="notice">
           {note}
@@ -923,7 +1112,15 @@ function ChartProps({ node }: { node: ChartNode }) {
                     <span>
                       <b>{entry.name}</b>:{' '}
                       {scatter
-                        ? `${fits[i]?.points ?? 0} points${(fits[i]?.points ?? 0) < group.values.length ? ` of ${group.values.length} (the rest are not above zero)` : ''}${node.fit && fit ? `; line ${node.yLog ? 'log y' : 'y'} = ${short(fit.slope)} × ${node.xLog ? 'log x' : 'x'} ${fit.intercept < 0 ? '−' : '+'} ${short(Math.abs(fit.intercept))}, R² = ${short(fit.r2)}` : ''}`
+                        ? `${fits[i]?.points ?? 0} points${(fits[i]?.points ?? 0) < group.values.length ? ` of ${group.values.length} (the rest are not above zero)` : ''}${
+                            node.fit && node.curve === 'dose'
+                              ? fits[i]?.dose
+                                ? `; ${doseText(fits[i].dose!)}`
+                                : '; no curve could be fitted'
+                              : node.fit && fit
+                                ? `; line ${node.yLog ? 'log y' : 'y'} = ${short(fit.slope)} × ${node.xLog ? 'log x' : 'x'} ${fit.intercept < 0 ? '−' : '+'} ${short(Math.abs(fit.intercept))}, R² = ${short(fit.r2)}`
+                                : ''
+                          }`
                         : about(group)}
                     </span>
                   </li>
@@ -950,8 +1147,85 @@ function ChartProps({ node }: { node: ChartNode }) {
         </ul>
       )}
       {(node.kind === 'bar' || node.kind === 'dot' || node.kind === 'line') && (
-        <Field label="Error bars">
+        <Field
+          label="Error bars"
+          info={
+            <>
+              <p>
+                <b>SD</b>, the standard deviation, shows how much the values of a group scatter.
+              </p>
+              <p>
+                <b>SEM</b>, the standard error of the mean, is the SD divided by √n. It shows how precisely the mean is known and shrinks as the group grows.
+              </p>
+              <p>Say in the figure legend which of the two is drawn.</p>
+            </>
+          }
+        >
           <Segmented label="Error bars" value={node.error ?? 'none'} options={ERROR_OPTIONS} onChange={(error) => set({ error: error === 'none' ? undefined : error })} />
+        </Field>
+      )}
+      {!scatter && (
+        <Field
+          label="Number at each group"
+          info={
+            <>
+              <p>Writes one number at every group: its mean, its median, or how many values it has (n).</p>
+              <p>
+                {node.kind === 'bar'
+                  ? 'Inside the bar, the number stands under its top, or at the foot of the bar when an error bar or dots run through it. A number that does not fit inside is written above the bar.'
+                  : 'The number stands above everything drawn for the group. In a bar chart it can also stand inside the bar.'}
+              </p>
+              <p>Left automatic, the colour is white inside a dark bar and dark everywhere else.</p>
+              <p>{node.kind === 'box' || node.kind === 'violin' ? 'The line in the middle marks the median' : 'The chart itself draws the mean'}: if you write a different number, say in the figure legend what it is.</p>
+              <p>In words: “write the mean in each bar, in white”.</p>
+            </>
+          }
+        >
+          <select
+            aria-label="Number written at each group"
+            value={labels?.show ?? 'none'}
+            onChange={(e) => (e.target.value === 'none' ? set({ valueLabels: undefined }) : setLabels({ show: e.target.value as ChartValueLabels['show'] }))}
+          >
+            <option value="none">None</option>
+            <option value="mean">Mean</option>
+            <option value="median">Median</option>
+            <option value="n">Number of values (n)</option>
+          </select>
+          {labels && node.kind === 'bar' && (
+            <Segmented
+              label="Place of the numbers"
+              value={labels.above ? 'above' : 'inside'}
+              options={[
+                { value: 'inside', label: 'Inside the bar', title: 'Inside the bar where the number fits, above it otherwise' },
+                { value: 'above', label: 'Above the bar', title: 'Above the bar and its error bar' },
+              ]}
+              onChange={(v) => setLabels({ above: v === 'above' })}
+            />
+          )}
+          {labels && (
+            <div className="row">
+              {labels.show !== 'n' && (
+                <Field label="Decimals">
+                  <select aria-label="Decimals of the numbers" value={labels.decimals ?? 'auto'} onChange={(e) => setLabels({ decimals: e.target.value === 'auto' ? undefined : Number(e.target.value) })}>
+                    <option value="auto">Automatic</option>
+                    {Array.from({ length: VALUE_DECIMALS_MAX + 1 }, (_, d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+              <Field label={labels.color ? 'Colour' : 'Colour (automatic)'}>
+                <ColorInput label="Colour of the numbers" value={labels.color ?? '#2b2f36'} onChange={(color) => setLabels({ color }, 'chart-value-colour')} />
+              </Field>
+              {labels.color && (
+                <button className="btn small" onClick={() => setLabels({ color: undefined })}>
+                  Automatic colour
+                </button>
+              )}
+            </div>
+          )}
         </Field>
       )}
       {node.kind !== 'dot' && !scatter && (
@@ -959,13 +1233,72 @@ function ChartProps({ node }: { node: ChartNode }) {
           Show every value as a dot
         </Check>
       )}
-      {scatter && (
-        <Check checked={!!node.fit} onChange={(v) => set({ fit: v || undefined })}>
-          Draw a fitted straight line
-        </Check>
+      {node.kind === 'bar' && isGrouped(node) && (
+        <div className="with-info">
+          <Check checked={!!node.stacked} onChange={(v) => set({ stacked: v || undefined })}>
+            Stack the bars of each category
+          </Check>
+          <Info about="Stacked bars">
+            <p>The bars of one category stand on top of each other, in the order of the legend, instead of side by side. Each part is as tall as the mean of its series, so the whole bar is the sum of the means.</p>
+            <p>Error bars and single values are not drawn in stacked bars. A number at each group is written inside its part where it fits.</p>
+          </Info>
+        </div>
       )}
+      {scatter && (
+        <Field
+          label="Fitted line"
+          info={
+            <>
+              <p>
+                <b>Straight line.</b> The least-squares line through each series, on the values as they are plotted (their logarithms on a logarithmic axis).
+              </p>
+              <p>
+                <b>Dose-response curve.</b> The response moves from one plateau to the other along the logarithm of the dose (x): y = bottom + (top − bottom) / (1 + 10^((log EC50 − log x) × Hill
+                slope)), fitted by least squares. The EC50 (IC50 for a falling curve) is the dose halfway between the plateaus; its 95 % interval comes from the standard error of log EC50.
+                It is the curve R fits with nls and the model SSfpl, and GraphPad Prism calls “log(agonist) vs. response, variable slope (four parameters)”.
+              </p>
+              <p>A curve needs at least five points at four doses above zero. Where the points do not settle on one curve, none is drawn.</p>
+            </>
+          }
+        >
+          <Segmented
+            label="Line fitted to each series"
+            value={!node.fit ? 'none' : node.curve === 'dose' ? 'dose' : 'line'}
+            options={[
+              { value: 'none', label: 'None' },
+              { value: 'line', label: 'Straight line' },
+              { value: 'dose', label: 'Dose-response curve' },
+            ]}
+            onChange={(v) => set({ fit: v === 'none' ? undefined : true, curve: v === 'dose' ? 'dose' : undefined })}
+            wrap
+          />
+          {curveMethods && (
+            <div className="with-info">
+              <button
+                className="btn small"
+                onClick={async () => toast((await copyText(curveMethods)) ? 'Copied. Paste it into your methods or figure legend.' : 'Copying is blocked here. Open the “i” beside the button and copy the text from there.')}
+              >
+                Copy a text for the methods
+              </button>
+              <Info about="The text for the methods">
+                <p>{curveMethods}</p>
+              </Info>
+            </div>
+          )}
+        </Field>
+      )}
+      {scatter && <PointNamesField node={node} set={set} />}
       {showsPoints && (
-        <Field label="Points">
+        <Field
+          label="Points"
+          info={
+            <>
+              {series.length > 1 && <p>Change all points, or choose one group to give it a size and transparency of its own.</p>}
+              <p>The shape of a group’s points is chosen beside its colour, in the list above.</p>
+              <p>Transparent points show where many lie on top of each other.</p>
+            </>
+          }
+        >
           {series.length > 1 && (
             <select aria-label="Which points to change" value={one ? pointsFor : -1} onChange={(e) => setPointsFor(Number(e.target.value))}>
               <option value={-1}>All groups</option>
@@ -993,12 +1326,17 @@ function ChartProps({ node }: { node: ChartNode }) {
               Same as the other groups
             </button>
           )}
-          <p className="hint">
-            {series.length > 1 ? 'Change all points, or choose one group to give it a size and transparency of its own. ' : ''}The shape is chosen beside each group’s colour, above. Transparent points show where many lie on top of each other.
-          </p>
         </Field>
       )}
-      <Field label="Colours">
+      <Field
+        label="Colours"
+        info={
+          <>
+            <p>{PALETTES.find((p) => p.id === (node.palette ?? 'biosketch'))?.about}</p>
+            <p>Choosing a palette recolours every group. A single group can still be given its own colour, in the list above.</p>
+          </>
+        }
+      >
         <select
           aria-label="Colour palette"
           value={node.palette ?? 'biosketch'}
@@ -1024,7 +1362,6 @@ function ChartProps({ node }: { node: ChartNode }) {
             <span key={c} style={{ background: c }} />
           ))}
         </div>
-        <p className="hint">{PALETTES.find((p) => p.id === (node.palette ?? 'biosketch'))?.about} Choosing a palette recolours every group; a single group can still be given its own colour above.</p>
       </Field>
       {hasLegend && (
         <Field label="Legend">
@@ -1039,6 +1376,7 @@ function ChartProps({ node }: { node: ChartNode }) {
       )}
       <AxisRange
         title={scatter ? 'Range of the y axis' : 'Range of the value axis'}
+        zero={!scatter}
         min={node.yMin}
         max={node.yMax}
         log={!!node.yLog}
@@ -1057,7 +1395,16 @@ function ChartProps({ node }: { node: ChartNode }) {
           onLog={(v) => set({ xLog: v || undefined })}
         />
       )}
-      <Field label="Reference lines">
+      <Field
+        label="Reference lines"
+        info={
+          <>
+            <p>A dashed line across the plot at a value you choose, for example a threshold or a detection limit.{scatter ? ' In a scatter chart a line can also stand upright at an x value.' : ''}</p>
+            <p>The axis always reaches the line. A label is written on the line at its right end.</p>
+            <p>In words: “dotted line at 1.3 labelled cut-off”.</p>
+          </>
+        }
+      >
         {refLines.map((l, i) => (
           <div key={i} className="bracket-row">
             {scatter ? (
@@ -1078,11 +1425,19 @@ function ChartProps({ node }: { node: ChartNode }) {
         <button className="btn small" disabled={refLines.length >= MAX_REF_LINES} onClick={addLine}>
           Add a line
         </button>
-        <p className="hint">A dashed line across the plot at a value you choose, for example a threshold or a detection limit.</p>
       </Field>
       {!scatter && <ChartTestProps node={node} set={set} />}
       {!scatter && (
-        <Field label="Significance brackets">
+        <Field
+          label="Significance brackets"
+          info={
+            <>
+              <p>A bracket joins two groups and carries a label above them.</p>
+              <p>Type the label yourself (for example p = 0.03, ** or ns), or choose a test above and let the bracket show its result for these two groups: it then changes with the numbers.</p>
+              <p>Typing in the box of a bracket that follows the test replaces the result with your own label.</p>
+            </>
+          }
+        >
           {brackets.map((b, i) => (
             <div key={i} className="bracket-row">
               <select aria-label="First group" value={b.from} onChange={(e) => setBracket(i, { from: Number(e.target.value) })}>
@@ -1128,11 +1483,6 @@ function ChartProps({ node }: { node: ChartNode }) {
           >
             Add a bracket
           </button>
-          <p className="hint">
-            {testing
-              ? 'Choose two groups. A bracket that follows the test shows its result for these two groups and changes with the numbers; or type a label of your own.'
-              : 'Choose two groups and type the label yourself (for example p = 0.03, ** or ns), or choose a test above and let the brackets show its result.'}
-          </p>
         </Field>
       )}
       <Field label="Title">
@@ -1147,16 +1497,6 @@ function ChartProps({ node }: { node: ChartNode }) {
       <Field label="Text size">
         <NumberInput label="Size of the chart's text" value={node.fontSize ?? 13} min={6} max={60} onChange={(fontSize) => set({ fontSize }, 'chart-font')} />
       </Field>
-      <p className="hint">
-        Drag a corner to resize the chart. Titles and names accept Ca^{'{2+}'}, H_{'{2}'}O, *italic* and **bold**.{' '}
-        {node.kind === 'box'
-          ? 'The box runs from the first to the third quartile with a line at the median; each whisker ends at the furthest value within 1.5 box lengths, and values beyond are drawn as rings.'
-          : node.kind === 'violin'
-            ? 'The outline is a smoothed estimate of how the values are spread, from the smallest to the largest value; the line marks the median. All violins have the same greatest width.'
-            : scatter
-              ? 'A fitted line is the least-squares line of y on x, drawn across the x values of its series; on a logarithmic axis it is fitted to the logarithms.'
-              : 'The value axis includes zero unless you set its range or make it logarithmic.'}
-      </p>
     </Section>
   )
 }
@@ -1178,7 +1518,7 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
   /** Keep only the choices that are not the usual ones, so the figure stores nothing for an untouched chart. */
   const setTest = (change: Partial<ChartTest>) => {
     const next = { ...test, ...change }
-    const kept: ChartTest = { ...(next.by ? { by: next.by } : {}), ...(next.paired ? { paired: true } : {}), ...(next.versusFirst ? { versusFirst: true } : {}), ...(next.stars ? { stars: true } : {}) }
+    const kept: ChartTest = { ...(next.by ? { by: next.by } : {}), ...(next.paired ? { paired: true } : {}), ...(next.versusFirst ? { versusFirst: true } : {}), ...(next.across ? { across: true } : {}), ...(next.stars ? { stars: true } : {}) }
     set({ test: Object.keys(kept).length ? kept : undefined })
   }
   if (compared.problem) {
@@ -1189,6 +1529,7 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
     )
   }
   const result = outcome?.ok ? outcome.result : null
+  const methods = methodsText(node)
   const pairs = result ? result.pairs.map((p) => ({ from: compared.indexes[p.a], to: compared.indexes[p.b], a: compared.names[p.a], b: compared.names[p.b], p: p.p })) : []
   /** Brackets for the pairs the test finds different (with two groups: for the one pair, whatever it finds). */
   const addBrackets = () => {
@@ -1197,20 +1538,53 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
     if (out.added) set({ brackets: out.brackets })
     if (out.over) toast(`A chart takes at most ${MAX_BRACKETS} brackets: ${out.over} could not be added.`)
   }
-  const options: { value: 'none' | 'means' | 'ranks'; label: string; title: string }[] = [
-    { value: 'none', label: 'No test', title: 'Do not test; type the labels of brackets yourself' },
-    { value: 'means', label: TEST_SHORT[testFor(k, 'means', !!test.paired)], title: `Compare means: ${TEST_NAMES[testFor(k, 'means', !!test.paired)]}` },
-    { value: 'ranks', label: TEST_SHORT[testFor(k, 'ranks', !!test.paired)], title: `Compare ranks: ${TEST_NAMES[testFor(k, 'ranks', !!test.paired)]}` },
-  ]
-  const chosen = test.by ? testFor(k, test.by, !!test.paired) : null
+  // A chart with categories and series has two factors: one analysis is on offer for it.
+  const two = !!compared.factors
+  const options: { value: 'none' | 'means' | 'ranks'; label: string; title: string }[] = two
+    ? [
+        { value: 'none', label: 'No test', title: 'Do not test; type the labels of brackets yourself' },
+        { value: 'means', label: TEST_SHORT.twoWay, title: TEST_NAMES.twoWay },
+      ]
+    : [
+        { value: 'none', label: 'No test', title: 'Do not test; type the labels of brackets yourself' },
+        { value: 'means', label: TEST_SHORT[testFor(k, 'means', !!test.paired)], title: `Compare means: ${TEST_NAMES[testFor(k, 'means', !!test.paired)]}` },
+        { value: 'ranks', label: TEST_SHORT[testFor(k, 'ranks', !!test.paired)], title: `Compare ranks: ${TEST_NAMES[testFor(k, 'ranks', !!test.paired)]}` },
+      ]
+  const chosen = two ? (test.by ? ('twoWay' as const) : null) : test.by ? testFor(k, test.by, !!test.paired) : null
 
   return (
-    <Field label="Statistical test">
-      <p className="hint">How do you want to compare the groups?</p>
-      <Check checked={!!test.paired} onChange={(paired) => setTest({ paired })}>
-        Each row is one sample (animal, culture, patient) measured in every group
-      </Check>
-      {k > 2 && (
+    <Field
+      label="Statistical test"
+      info={
+        <>
+          <p>Say how the groups were measured: tick the box when each row of the table is one sample measured in every group{k > 2 ? ', and choose which pairs of groups to compare' : ''}.</p>
+          <p>BioSketch then suggests a test for this table. The suggestion is advice: choose the test yourself below, and its result appears under it.</p>
+          <p>All p values are two-sided and worked out as R does by default. Results are not stored: they follow the numbers in the table.</p>
+        </>
+      }
+    >
+      {two && (
+        <>
+          <p className="hint">This table has two factors: the categories along the bottom and the series in the legend. Which pairs do you want to compare?</p>
+          <Segmented
+            label="Pairs to compare"
+            value={test.across ? 'across' : 'within'}
+            options={[
+              { value: 'within', label: 'Series within each category', title: `For example ${compared.factors!.series.slice(0, 2).join(' against ')} within ${compared.factors!.categories[0]}` },
+              { value: 'across', label: 'Categories within each series', title: `For example ${compared.factors!.categories.slice(0, 2).join(' against ')} within ${compared.factors!.series[0]}` },
+            ]}
+            onChange={(v) => setTest({ across: v === 'across' })}
+            wrap
+          />
+        </>
+      )}
+      {!two && <p className="hint">How do you want to compare the groups?</p>}
+      {!two && (
+        <Check checked={!!test.paired} onChange={(paired) => setTest({ paired })}>
+          Each row is one sample (animal, culture, patient) measured in every group
+        </Check>
+      )}
+      {!two && k > 2 && (
         <Segmented
           label="Pairs of groups to compare"
           value={test.versusFirst ? 'first' : 'all'}
@@ -1222,23 +1596,48 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
           wrap
         />
       )}
+      <div className="with-info">
+        <button className="btn small" onClick={() => useEditor.setState({ dialog: 'analysis' })}>
+          Ask Claude which analysis fits…
+        </button>
+        <Info about="Asking Claude">
+          <p>Describe your experiment in your own words, paste a request into your own Claude app, and paste its plan back. Claude chooses among the analyses BioSketch can work out and gives its reasons.</p>
+          <p>Nothing is sent from here and it costs nothing. The request holds a summary of each group, not the table. BioSketch works out every number itself.</p>
+        </Info>
+      </div>
       <div className="advice" role="note" aria-label="Suggested test">
         {advice.test ? (
           <>
             <p className="advice-title">
-              Suggested: <b>{TEST_NAMES[advice.test]}</b>
+              <span>
+                Suggested: <b>{TEST_NAMES[advice.test]}</b>
+              </span>
+              <Info about={`The suggested test, ${TEST_NAMES[advice.test]}`}>
+                <p>
+                  <b>What it does.</b> {advice.does}
+                </p>
+                <p>
+                  <b>Why it fits this table.</b>
+                </p>
+                <ul>
+                  {advice.why.map((reason, i) => (
+                    <li key={i}>{reason}</li>
+                  ))}
+                </ul>
+                {advice.cautions.length > 0 && (
+                  <>
+                    <p>
+                      <b>Keep in mind.</b>
+                    </p>
+                    <ul>
+                      {advice.cautions.map((caution, i) => (
+                        <li key={i}>{caution}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </Info>
             </p>
-            <p>
-              <b>What it does.</b> {advice.does}
-            </p>
-            <p>
-              <b>Why it fits this table.</b>
-            </p>
-            <ul>
-              {advice.why.map((reason, i) => (
-                <li key={i}>{reason}</li>
-              ))}
-            </ul>
             {advice.cautions.length > 0 && (
               <>
                 <p>
@@ -1263,18 +1662,51 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
           </p>
         )}
       </div>
-      {k >= 2 && <Segmented label="Test" value={test.by ?? 'none'} options={options} onChange={(by) => setTest({ by: by === 'none' ? undefined : by })} wrap />}
-      {chosen && advice.test && chosen !== advice.test && (
-        <p className="hint">
-          <b>{TEST_NAMES[chosen]}.</b> {TEST_DOES[chosen]}
-        </p>
+      {k >= 2 && (
+        <div className="with-info">
+          <Segmented label="Test" value={test.by ?? 'none'} options={options} onChange={(by) => setTest({ by: by === 'none' ? undefined : by })} wrap />
+          <Info about="The tests on offer for this table">
+            {(two ? (['means'] as const) : (['means', 'ranks'] as const)).map((by) => {
+              const id = two ? ('twoWay' as const) : testFor(k, by, !!test.paired)
+              return (
+                <p key={by}>
+                  <b>
+                    {TEST_NAMES[id]}
+                    {id === chosen ? ' (chosen)' : ''}.
+                  </b>{' '}
+                  {TEST_DOES[id]}
+                </p>
+              )
+            })}
+            <p>
+              <b>No test.</b> Nothing is worked out; you type the labels of brackets yourself.
+            </p>
+          </Info>
+        </div>
       )}
       {outcome && !outcome.ok && <p className="notice">{outcome.problem}</p>}
       {result && (
         <div className="test-result" aria-label="Result of the test">
-          <p>
-            <b>{TEST_NAMES[result.test]}</b>: {result.statistic}, {pText(result.p)}
-          </p>
+          {result.effects ? (
+            <>
+              <p>
+                <b>{TEST_NAMES[result.test]}</b>
+              </p>
+              <ul className="chart-summary">
+                {result.effects.map((e, i) => (
+                  <li key={i}>
+                    <span>
+                      {e.name}: {e.statistic}, {pText(e.p)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p>
+              <b>{TEST_NAMES[result.test]}</b>: {result.statistic}, {pText(result.p)}
+            </p>
+          )}
           {k > 2 && (
             <>
               <p className="hint">Pairs ({result.pairMethod}):</p>
@@ -1295,14 +1727,32 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
               {note}
             </p>
           ))}
-          <Check checked={!!test.stars} onChange={(v) => setTest({ stars: v })}>
-            Brackets show stars instead of the p value
-          </Check>
-          {test.stars && <p className="hint">{STARS_KEY}</p>}
+          <div className="with-info">
+            <Check checked={!!test.stars} onChange={(v) => setTest({ stars: v })}>
+              Brackets show stars instead of the p value
+            </Check>
+            <Info about="What the stars stand for">
+              <p>{STARS_KEY}</p>
+              <p>Give this key in the figure legend.</p>
+            </Info>
+          </div>
           <button className="btn small" onClick={addBrackets}>
             {k === 2 ? 'Add a bracket with the result' : 'Add brackets where p < 0.05'}
           </button>
-          <p className="hint">All p values are two-sided and worked out as R does by default. Results are not stored: they follow the numbers in the table.</p>
+          {methods && (
+            <div className="with-info">
+              <button
+                className="btn small"
+                onClick={async () => toast((await copyText(methods)) ? 'Copied. Paste it into your methods or figure legend.' : 'Copying is blocked here. Open the “i” beside the button and copy the text from there.')}
+              >
+                Copy a text for the methods
+              </button>
+              <Info about="The text for the methods">
+                <p>{methods}</p>
+                <p>It says what was done, in words a journal accepts. Whether a difference matters is for you to write.</p>
+              </Info>
+            </div>
+          )}
         </div>
       )}
     </Field>
@@ -1311,9 +1761,9 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
 
 function ImageProps({ node }: { node: ImageNode }) {
   return (
-    <Section title="Picture">
+    <Section title="Picture" info={<p>Drag a corner to resize the picture; hold Shift to stretch it. Arrows can attach to pictures.</p>}>
       <p className="hint">
-        {Math.round(node.w)} × {Math.round(node.h)} on the page. Drag a corner to resize; hold Shift to stretch. Arrows can attach to pictures.
+        {Math.round(node.w)} × {Math.round(node.h)} on the page.
       </p>
     </Section>
   )
@@ -1321,14 +1771,22 @@ function ImageProps({ node }: { node: ImageNode }) {
 
 function ConnectorProps({ node }: { node: ConnectorNode }) {
   return (
-    <Section title="Arrow">
+    <Section
+      title="Arrow"
+      info={
+        <>
+          <p>Drag an end onto an icon to attach it: the arrow then follows the icon.</p>
+          <p>Drag the diamond to curve the arrow, or to move the middle part of a right-angled one. Drag the small dot to move the label.</p>
+        </>
+      }
+    >
       <Segmented label="Arrow type" value={node.kind} options={KIND_OPTIONS} onChange={(kind) => patch<ConnectorNode>('connector', { kind })} />
       <Field label="Line shape">
         <Segmented
           label="Line shape"
           value={node.route === 'elbow' ? 'elbow' : 'straight'}
           options={ROUTE_OPTIONS}
-          onChange={(route) => patch<ConnectorNode>('connector', { route: route === 'elbow' ? 'elbow' : undefined, bend: undefined })}
+          onChange={(route) => patch<ConnectorNode>('connector', { route: route === 'elbow' ? 'elbow' : undefined, bend: undefined, legs: undefined })}
         />
       </Field>
       <div className="row">
@@ -1366,7 +1824,6 @@ function ConnectorProps({ node }: { node: ConnectorNode }) {
           Straighten
         </button>
       </div>
-      <p className="hint">Drag an end onto an icon to attach it. Drag the diamond to curve the arrow or move its middle segment. Drag the small dot to move the label.</p>
     </Section>
   )
 }
@@ -1414,6 +1871,49 @@ function StrokeProps({ node }: { node: StrokeNode }) {
         </Field>
       </div>
     </Section>
+  )
+}
+
+/**
+ * Resize as one picture: the selected objects, or, with nothing selected, the whole figure with
+ * its page. Unlike dragging a corner, the thickness of outlines and arrows follows.
+ */
+function ResizeTogether({ whole }: { whole: boolean }) {
+  const [percent, setPercent] = useState(150)
+  const what = whole ? 'everything' : 'the selection'
+  return (
+    <Field
+      label={whole ? 'Resize everything together' : 'Resize the selection together'}
+      info={
+        whole ? (
+          <p>
+            Every object, its text and the thickness of its lines change by the same factor, and the page with them: the figure looks the same, only larger or smaller. Icons
+            and labels you add afterwards have their usual size. To look closer without changing the figure, use the zoom buttons at the top.
+          </p>
+        ) : (
+          <p>
+            The selected objects, their text and the thickness of their lines change by the same factor, so they look the same, only larger or smaller. Dragging a corner
+            resizes too, but leaves lines as thick as they were.
+          </p>
+        )
+      }
+    >
+      <div className="row wrap resize-together">
+        <button className="btn small" aria-label={`Make ${what} smaller, to 80 percent`} onClick={() => resizeAsPicture(0.8)}>
+          − Smaller
+        </button>
+        <button className="btn small" aria-label={`Make ${what} larger, to 125 percent`} onClick={() => resizeAsPicture(1.25)}>
+          + Larger
+        </button>
+        <span className="resize-by">
+          <NumberInput label={`Percentage to resize ${what} to`} value={percent} min={10} max={1000} step={5} onChange={setPercent} />
+          <span aria-hidden="true">%</span>
+          <button className="btn small" disabled={percent === 100} onClick={() => resizeAsPicture(percent / 100)}>
+            Apply
+          </button>
+        </span>
+      </div>
+    </Field>
   )
 }
 
@@ -1467,6 +1967,7 @@ function Arrange({ nodes }: { nodes: FigNode[] }) {
           <Icon name="trash" size={14} /> Delete
         </button>
       </div>
+      {nodes.length > 1 && <ResizeTogether whole={false} />}
       {rotatable && (
         <Field label="Rotation (degrees)">
           <NumberInput
@@ -1552,18 +2053,7 @@ function PageProps() {
           <ColorInput label="Page colour" value={doc.background} onChange={(background) => patchDoc({ background }, 'page-bg')} />
         </Field>
       </div>
-      <Field label="Icon style">
-        <Segmented
-          label="Style of the built-in icons"
-          value={doc.iconStyle ?? 'outlined'}
-          options={STYLE_OPTIONS}
-          onChange={(v) => {
-            const iconStyle = v === 'flat' ? 'flat' : undefined
-            patchDoc({ iconStyle })
-            rememberStyle(iconStyle)
-          }}
-        />
-      </Field>
+      <ResizeTogether whole />
       <Field label="Printed width (for journals)">
         <select
           value={doc.widthMm ? (PRINT_WIDTHS.some((w) => w.mm === doc.widthMm) ? String(doc.widthMm) : 'custom') : ''}
@@ -1601,7 +2091,16 @@ function AddToPage() {
   const guides = useEditor((s) => s.doc.nodes.reduce((n, node) => n + (node.guide ? 1 : 0), 0))
   const file = useRef<HTMLInputElement>(null)
   return (
-    <Section title="Add to the page">
+    <Section
+      title="Add to the page"
+      info={
+        <>
+          <p>Pictures (micrographs, plots) can also be dragged in from your computer or pasted.</p>
+          <p>A chart is drawn from numbers you paste, and stays editable.</p>
+          <p>A panel letter is the next of A, B, C…</p>
+        </>
+      }
+    >
       <div className="row wrap">
         <button className="btn small" onClick={() => file.current?.click()}>
           <Icon name="image" size={14} /> Picture
@@ -1613,7 +2112,6 @@ function AddToPage() {
           <Icon name="chart" size={14} /> Chart
         </button>
       </div>
-      <p className="hint">Pictures (micrographs, plots) can also be dragged in from your computer or pasted. A chart is drawn from numbers you paste, and stays editable.</p>
       <Field label="Panels">
         <select
           aria-label="Divide the page into panels"
@@ -1675,17 +2173,16 @@ function ToolOptions() {
   switch (tool) {
     case 'shape':
       return (
-        <Section title="Shape tool">
+        <Section title="Shape tool" info={<p>Drag on the page to draw. Hold Shift for a square or circle. Double-tap any shape to type inside it.</p>}>
           <ShapePicker value={shapeKind} onChange={(shapeKind) => set({ shapeKind })} />
           <Check checked={shapeText} onChange={(shapeText) => set({ shapeText })}>
             Type text inside after drawing
           </Check>
-          <p className="hint">Drag on the page to draw. Hold Shift for a square or circle. Double-tap any shape to type inside it.</p>
         </Section>
       )
     case 'connector':
       return (
-        <Section title="Arrow tool">
+        <Section title="Arrow tool" info={<p>Drag from one icon to another. Ends that start or finish on an icon stay attached when you move it. Hold Alt to keep an end free.</p>}>
           <Segmented label="Arrow type" value={connectorKind} options={KIND_OPTIONS} onChange={(connectorKind) => set({ connectorKind })} />
           <Field label="Line shape">
             <Segmented label="Line shape" value={connectorRoute} options={ROUTE_OPTIONS} onChange={(connectorRoute) => set({ connectorRoute })} />
@@ -1695,22 +2192,23 @@ function ToolOptions() {
           <Field label="Fading">
             <Segmented label="Fading" value={connectorFade ?? 'none'} options={FADE_OPTIONS} onChange={(fade) => set({ connectorFade: fade === 'none' ? null : fade })} />
           </Field>
-          <p className="hint">Drag from one icon to another. Ends that start or finish on an icon stay attached when you move it. Hold Alt to keep an end free.</p>
         </Section>
       )
     case 'membrane':
       return (
-        <Section title="Membrane brush">
+        <Section title="Membrane brush" info={<p>Draw a line to lay down a lipid bilayer. Finish near where you started to close it into a cell. Hold Shift for a straight membrane.</p>}>
           <Field label={`Thickness ${membraneThickness}`}>
             <Range label="Membrane thickness" value={membraneThickness} min={10} max={70} onChange={(membraneThickness) => set({ membraneThickness })} />
           </Field>
-          <p className="hint">Draw a line to lay down a lipid bilayer. Finish near where you started to close it into a cell. Hold Shift for a straight membrane.</p>
         </Section>
       )
     case 'pen':
     case 'eraser':
       return (
-        <Section title={tool === 'pen' ? 'Sketch pen' : 'Sketch eraser'}>
+        <Section
+          title={tool === 'pen' ? 'Sketch pen' : 'Sketch eraser'}
+          info={<p>{tool === 'pen' ? 'Sketch freely with a pen, finger or mouse. With an Apple Pencil, one finger moves the page and two fingers zoom.' : 'Drag over sketch strokes to remove them. Other objects are not affected.'}</p>}
+        >
           {tool === 'pen' && (
             <div className="row">
               <Field label="Colour">
@@ -1721,11 +2219,6 @@ function ToolOptions() {
               </Field>
             </div>
           )}
-          <p className="hint">
-            {tool === 'pen'
-              ? 'Sketch freely with a pen, finger or mouse. With an Apple Pencil, one finger moves the page and two fingers zoom.'
-              : 'Drag over sketch strokes to remove them. Other objects are not affected.'}
-          </p>
           <button
             className="btn small"
             disabled={!strokes}
