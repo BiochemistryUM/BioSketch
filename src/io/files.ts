@@ -6,9 +6,10 @@
 import { isHexColor, normalizeHex, sanitizeBody } from '../icons/svg'
 import { uid } from '../model/doc'
 import { DASH_SCALE_MAX, DASH_SCALE_MIN, DASH_STYLES } from '../model/dash'
-import { MAX_BRACKETS, MAX_GROUPS, MAX_VALUES, usable, usableEnds } from '../model/chart'
+import { LEGEND_PLACES, MAX_BRACKETS, MAX_GROUPS, MAX_ROWS, MAX_VALUES, POINT_SHAPES, ownPointStyle, pointStyle, usable, usableEnds, usableRefLines } from '../model/chart'
+import { paletteId } from '../model/palettes'
 import { SHAPE_KINDS } from '../model/shapes'
-import type { ChartBracket, ChartGroup, ChartKind, ConnectorKind, DashStyle, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign } from '../model/types'
+import type { ChartBracket, ChartGroup, ChartKind, ChartTest, ConnectorKind, DashStyle, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign } from '../model/types'
 
 const num = (v: unknown, fallback: number, min = -1e6, max = 1e6): number =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
@@ -182,16 +183,25 @@ function node(raw: unknown): FigNode | null {
         if (!raw || typeof raw !== 'object') continue
         const g = raw as Record<string, unknown>
         const name = typeof g.name === 'string' ? g.name.slice(0, 60) : ''
-        const shared = { name: name || `Group ${groups.length + 1}`, ...(isHexColor(g.color) ? { color: normalizeHex(g.color) } : {}) }
+        const shape = POINT_SHAPES.find((s) => s === g.shape)
+        const shared = { name: name || `Group ${groups.length + 1}`, ...(isHexColor(g.color) ? { color: normalizeHex(g.color) } : {}), ...(shape && shape !== 'circle' ? { shape } : {}), ...ownPointStyle(g.pointSize, g.pointOpacity) }
         const list = (Array.isArray(g.values) ? g.values : []).slice(0, MAX_VALUES)
         if (kind === 'scatter') {
           // A point is kept only when both of its numbers are good, so x and y can never drift apart.
           const xs = Array.isArray(g.xs) ? g.xs : []
-          const pairs = list.map((v, k) => [xs[k], v]).filter((p): p is [number, number] => finite(p[0]) && finite(p[1]))
-          groups.push({ ...shared, values: pairs.map((p) => p[1]), xs: pairs.map((p) => p[0]) })
+          // The name of a point stays with its numbers.
+          const names = Array.isArray(g.labels) ? g.labels : []
+          const pairs = list.map((v, k) => ({ x: xs[k], v, name: typeof names[k] === 'string' ? (names[k] as string).slice(0, 40) : '' })).filter((p): p is { x: number; v: number; name: string } => finite(p.x) && finite(p.v))
+          groups.push({ ...shared, values: pairs.map((p) => p.v), xs: pairs.map((p) => p.x), ...(pairs.some((p) => p.name) ? { labels: pairs.map((p) => p.name) } : {}) })
         } else {
           const category = typeof g.category === 'string' && g.category.trim() ? { category: g.category.slice(0, 60) } : {}
-          groups.push({ ...shared, values: list.filter(finite), ...category })
+          // The row of each value is kept only when it makes sense for every value: whole numbers
+          // that rise down the column. Values and rows are filtered together, so they cannot drift apart.
+          const at = Array.isArray(g.rows) && g.rows.length === (Array.isArray(g.values) ? g.values.length : 0) ? g.rows.slice(0, MAX_VALUES) : null
+          const cells = list.map((v, k) => ({ v, r: at ? at[k] : k })).filter((c): c is { v: number; r: unknown } => finite(c.v))
+          const rowsOk = !!at && cells.every((c, k) => Number.isInteger(c.r) && (c.r as number) >= 0 && (c.r as number) < MAX_ROWS && (k === 0 || (c.r as number) > (cells[k - 1].r as number)))
+          const gaps = rowsOk && cells.some((c, k) => c.r !== k)
+          groups.push({ ...shared, values: cells.map((c) => c.v), ...category, ...(gaps ? { rows: cells.map((c) => c.r as number) } : {}) })
         }
       }
       // The ends of an axis are kept by the same rule the chart is drawn by, so reopening changes nothing.
@@ -203,8 +213,18 @@ function node(raw: unknown): FigNode | null {
         const b = raw as Record<string, unknown>
         const inTable = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) < groups.length
         if (!inTable(b.from) || !inTable(b.to) || b.from === b.to) continue
-        brackets.push({ from: b.from, to: b.to, label: typeof b.label === 'string' ? b.label.slice(0, 40) : '' })
+        brackets.push({ from: b.from, to: b.to, label: typeof b.label === 'string' ? b.label.slice(0, 40) : '', ...(bool(b.auto) ? { auto: true } : {}) })
       }
+      // How the groups are compared. Only the choices are kept: results are worked out from the numbers.
+      const t = kind !== 'scatter' && o.test && typeof o.test === 'object' ? (o.test as Record<string, unknown>) : {}
+      const test: ChartTest = {
+        ...(t.by === 'means' || t.by === 'ranks' ? { by: t.by } : {}),
+        ...(bool(t.paired) ? { paired: true } : {}),
+        ...(bool(t.versusFirst) ? { versusFirst: true } : {}),
+        ...(bool(t.stars) ? { stars: true } : {}),
+      }
+      const refLines = usableRefLines(o.refLines, kind, kind === 'scatter' && o.xLog === true, o.yLog === true)
+      const legend = LEGEND_PLACES.find((p) => p === o.legend)
       return {
         ...base,
         type: 'chart',
@@ -217,6 +237,10 @@ function node(raw: unknown): FigNode | null {
         groups,
         ...(o.error === 'sd' || o.error === 'sem' ? { error: o.error } : {}),
         ...(bool(o.points) ? { points: true } : {}),
+        ...pointStyle(o.pointSize, o.pointOpacity),
+        ...(paletteId(o.palette) ? { palette: paletteId(o.palette) } : {}),
+        ...(refLines.length ? { refLines } : {}),
+        ...(legend ? { legend } : {}),
         ...(typeof o.title === 'string' && o.title.trim() ? { title: o.title.slice(0, 120) } : {}),
         ...(typeof o.yLabel === 'string' && o.yLabel.trim() ? { yLabel: o.yLabel.slice(0, 120) } : {}),
         ...(typeof o.xLabel === 'string' && o.xLabel.trim() ? { xLabel: o.xLabel.slice(0, 120) } : {}),
@@ -229,6 +253,7 @@ function node(raw: unknown): FigNode | null {
         ...(kind === 'scatter' && bool(o.xLog) ? { xLog: true } : {}),
         ...(kind === 'scatter' && bool(o.fit) ? { fit: true } : {}),
         ...(brackets.length ? { brackets } : {}),
+        ...(Object.keys(test).length ? { test } : {}),
       }
     }
     case 'membrane': {

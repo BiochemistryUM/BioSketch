@@ -57,7 +57,15 @@ A change is done when all of these hold:
 | Text inside a shape is part of the shape (`label` on a shape node), drawn by the label renderer through `shapeLabelNode` (`src/model/nodes.ts`) and typed in place with the same editor as a text label. Lines are broken to fit the shape when it is drawn (`wrapText`); the figure stores the text as typed | One object to move, resize and turn, and the words stay in place. It reuses label formatting, measuring and export, so there is no second text engine. Boxes built by the AI and the example figures are made this way too. Figures from before have a box grouped with a separate label: that still works, a double-tap on such a box types in its label (`labelPartner`), and both kinds are read as the box's label when a figure is shown to the AI. |
 | Rectangles, rounded rectangles and ellipses are SVG's own elements; every other shape kind (triangle, diamond, hexagon, cylinder, callout, bracket) is one path from `shapePath` in `src/model/shapes.ts`, which also says where an arrow meets the outline (`outlineAlong`) and where the words inside go (`shapeTextArea`) | Old figures and exports are unchanged, and a new kind is added in one file: its path, and its corners if arrows should follow slanted sides. A bracket is an open line and is never filled. |
 | A chart is an object of its own (`chart` node) that keeps its numbers; `src/model/chart.ts` reads the pasted table (plain, grouped with a second row of names, or scatter with x in the first column), builds the axes (range set by hand, logarithmic) and lays out every bar, box, violin, point, tick, legend entry, bracket and word, and the renderer only draws that list | The chart stays editable and looks the same on the page and in every export, with real text. Its words go through the label renderer, so the usual marks work. No charting library. The AI neither sees nor makes charts. |
-| Chart statistics live in `src/model/chartStats.ts` and follow stated, common defaults: quartiles by linear interpolation (R `quantile` type 7), Tukey whiskers at 1.5 × IQR with outliers as rings, a Gaussian kernel density with Silverman's rule-of-thumb bandwidth (R `bw.nrd0`) for violins, ordinary least squares for fitted lines. Tests pin each to values from R | Scientists publish these plots, so a definition must be one they can name in their methods, and a wrong number is worse than a missing feature. BioSketch draws significance brackets with the label the scientist types; it runs no statistical test. Any test added later must be pinned to a reference in the same way. |
+| Chart statistics live in `src/model/chartStats.ts` and follow stated, common defaults: quartiles by linear interpolation (R `quantile` type 7), Tukey whiskers at 1.5 × IQR with outliers as rings, a Gaussian kernel density with Silverman's rule-of-thumb bandwidth (R `bw.nrd0`) for violins, ordinary least squares for fitted lines. Tests pin each to values from R | Scientists publish these plots, so a definition must be one they can name in their methods, and a wrong number is worse than a missing feature. Anything added later must be pinned to a reference in the same way. |
+| Statistical tests (`src/model/chartTests.ts`, distributions in `src/model/distributions.ts`) cover one factor: two or several groups, separate or paired samples, means or ranks, eight tests in all (Welch t, paired t, Mann–Whitney, Wilcoxon signed-rank, one-way ANOVA, repeated-measures ANOVA, Kruskal–Wallis, Friedman). With several groups pairs follow: Tukey after a one-way ANOVA for every pair, otherwise the two-group test of the same family with Holm's correction (after a one-way ANOVA: t tests with pooled scatter). All two-sided, each the default of R's function of the same name, pinned to R 4.4 through `tests/stats-reference.json`, which `scripts/stats-reference.R` writes | One named method per design, so a scientist can copy it into the methods. No statistics library: the distributions are a few hundred lines and every one is checked against R. |
+| A chart stores only the choices for its test (`test`: means or ranks, paired, each with the first group, stars) and which brackets follow it (`auto`); p values are worked out from the numbers every time the chart is drawn (`chartAnalysis`, `bracketLabel` in `src/model/chart.ts`, remembered per table) | A stored p value goes stale the moment the table is edited. The page, the panel and every export show the same result because they share the layout. |
+| The panel suggests a test for every table (`suggest` in `chartTests.ts`, `chartAdvice`): the scientist says whether rows are the same sample and which pairs to compare; the design picks the family; means are suggested unless a Shapiro–Wilk test on the residuals gives p below 0.05, then ranks. The box says what the test does, why it fits this table, and what to keep in mind (few values, a rank test that cannot reach 0.05, very unequal scatter, rows left out) | The owner asked for a suggestion with an explanation for every table. It is advice in words, worked out in the browser, with no AI request; the scientist chooses the test. |
+| The look of a chart's points belongs to the group: a shape (`shape`: circle, square, triangle, diamond, each covering the area of the circle it replaces, `pointPath`), and a size and transparency that overrule the chart's (`pointSize`, `pointOpacity` on the chart for all points, on a group for its own). The legend shows the mark for charts made of points and a colour square for bars, boxes and violins; it stands at the right unless `legend` says above, below, inside or hidden | Asked for by the owner, first for all points, then per group (a volcano plot wants faint small grey points and bold coloured ones). Transparency is SVG `fill-opacity`, so every export keeps it. |
+| Dashed lines at chosen values are `refLines` on the chart (along the value axis; along x too in a scatter chart; dashed, dotted or solid, with a label), and the axis reaches them. A scatter chart writes a name beside a point when the table has a column of words before the x values (`labels` on the group, at most 100 on a chart, each placed right, left, above or below its point where no earlier name stands) | What a volcano plot needs besides points: thresholds and gene names. Names come from the table, not from clicking points, so they survive pasting new numbers. `usableRefLines` decides what is drawn and what is saved. |
+| Groups without a colour of their own take one from the chart's palette (`palette`, `src/model/palettes.ts`): BioSketch's own, four colour-blind-friendly ones (Okabe–Ito, Tol bright, Viridis, Greys) and five common ones (Tableau 10, Matplotlib, ColorBrewer Set 1, Set 2, Dark 2). Choosing a palette clears the groups' own colours | The values are copied from their sources (R's `palette.colors` and `viridisLite`, matplotlib, Paul Tol), so a palette can be named in a legend. Only the four published as colour-blind safe are called so. |
+| A table can be read from a file (`src/io/tables.ts`): CSV, tab-separated or plain text in UTF-8, UTF-16 or the Windows character set, and the first sheet of an Excel workbook (.xlsx), which is unpacked by hand (the ZIP's list of files, the browser's `DecompressionStream`, three XML parts). The result is the same text that could have been pasted and goes through `readTable` | Biologists keep their numbers in Excel. No library to ship, like the PowerPoint export. A file is as untrusted as the clipboard: size limits before and after unpacking, XML parsed as data, and every value still passes `readTable` and `validateDoc`. |
+| The instruction box of a chart (`src/model/chartCommands.ts`, `applyInstruction`) reads set phrases in the browser: no AI, no request, the same result for the same words. It cuts the text into clauses; each reader takes its phrase out and makes its change; words left over that are not small talk are reported. It only sets what the panel can set, and one Undo takes an instruction back | The owner asked for a box where the scientist describes a change ("upright dotted line at x = 2", "fit a regression line"). A phrase reader costs nothing, works offline and never invents a setting; the price is a fixed vocabulary, so it must say what it did not understand, word for word, and never guess. The copy-paste AI route stays the place for open-ended requests. |
 | A line that is not solid keeps `dashed: true`, with `dashStyle` (dotted, long, dash-and-dot; absent = plain dashes) and `dashScale` beside it (`src/model/dash.ts`) | Figures saved before the styles existed open unchanged, and AI answers keep their simple `dashed` yes/no. Dots are near-zero dashes that only show with round line ends, so the renderer rounds the ends whenever a pattern has dots. |
 | AI returns a structured "scene" (icon ids, positions, arrows), never images or SVG | Output stays editable, uses attributed library icons, and avoids journal bans on AI-generated images. |
 | The AI complements the request in three ways, none of which costs an extra request: "Plan first" (the request asks Claude to describe its plan and ask questions in the chat before it answers with the figure; Claude app route only), `notes` in the scene (assumptions, stand-ins for missing icons, open questions, shown after building), and a layout check done by BioSketch itself (`tidyScene` in `src/ai/layout.ts`: plain geometry that moves elements back onto the page and apart) | Looked at how other tools do it (planning agents, self-checking renderers) and kept what fits a tool with no server and no paid requests. The layout check runs for new figures only: when a figure is changed, the scientist placed those things. |
@@ -80,8 +88,11 @@ A change is done when all of these hold:
   `describe` (names of objects in words), `panels` (panel layouts),
   (boxes, resize, connectors), `doc` (group, align, reorder, copy), `connector`, `dash` (line
   styles), `shapes` (outlines of the shape kinds), `richtext` (label marks, symbols), `chart`
-  (charts from pasted numbers: tables, axes, layout), `chartStats` (quartiles, density, fitted
-  line), `membrane`.
+  (charts from pasted numbers: tables, axes, layout, the groups a test compares), `chartCommands`
+  (the instruction box: phrases to settings), `palettes` (colour palettes of charts), `chartStats`
+  (quartiles, density, fitted line), `chartTests` (the statistical tests, Shapiro–Wilk, the
+  suggestion of a test), `distributions` (t, F, chi-squared, normal, studentized range, exact
+  Wilcoxon), `membrane`.
 - `src/render/DocNodes.tsx` draws nodes as SVG, for both canvas and export.
 - `src/canvas/` pointer input (mouse, touch, pen), selection handles, in-place text editing.
 - `src/ui/` panels, top bar, dialogs, the objects list (`ObjectsList.tsx`). `src/actions.ts` commands. `src/store.ts` state and undo.
@@ -91,14 +102,15 @@ A change is done when all of these hold:
   (`split.ts`), reshaping point by point (`path.ts` path data, `reshape.ts`) and lazily loaded icon
   packs (`packs.ts`, files in `public/icon-packs/`), and the flat cartoon look (`flat.ts` hand-composed
   icons and the layer helpers, `style.ts` redrawing the other icons by rule).
-- `src/io/` export (SVG/PNG/PDF/attribution), PowerPoint files (`pptx.ts`), file validation, saved figures (`storage.ts`),
+- `src/io/` export (SVG/PNG/PDF/attribution), PowerPoint files (`pptx.ts`), tables from CSV and Excel files (`tables.ts`), file validation, saved figures (`storage.ts`),
   autosave, placing pictures (`images.ts`). `src/figures.ts` new/open/copy/delete a figure.
 - `src/ai/` scene format and prompt (`scene.ts`), the Claude API call (`client.ts`), the copy-paste
   route (`bridge.ts`), changing an existing figure (`revise.ts`), and the layout check on a new
   figure (`layout.ts`).
 - `scripts/import-icons.mjs` builds an icon pack from a folder of SVG files. `scripts/bioicons.mjs`
   builds the Bioicons (CC0) and Servier (CC BY 3.0) packs in `public/icon-packs/` from a copy of
-  the Bioicons repository.
+  the Bioicons repository. `scripts/stats-reference.R` works out the reference values of the
+  statistical tests in R and writes `tests/stats-reference.json` (run it again after changing it).
 - `tests/` unit tests (vitest + jsdom). `public/` web manifest, service worker, app icons.
 
 ## Conventions
@@ -152,7 +164,7 @@ A change is done when all of these hold:
   callout's pointer and the bracket's direction are fixed (turn the shape to change them); the
   AI can only ask for boxes, ovals and frames. The symbol picker is in the side panel only, not
   beside a label being typed in place, and arrow labels have none.
-- Charts: no statistical tests (brackets carry a label the scientist types). No two-way layouts
+- Charts: no two-way layouts
   beyond category × series, no stacked bars, no curve fitting other than a straight line, no
   confidence band on the fitted line. Choices a reviewer questioned and that stand as stated
   behaviour: on a logarithmic axis the box plot's quartiles and fences, and a bar's mean and SD,
@@ -163,10 +175,41 @@ A change is done when all of these hold:
   is a guess). An independent review (four reviewers, each finding cross-checked) ran once and
   its confirmed findings are fixed and tested in `tests/chart-review.test.ts`; the fixes
   themselves were not reviewed again, and no exported file with a chart was opened.
-- Next stages of the analysis tool, agreed in outline but not started: built-in tests for the
-  common designs (two groups; one factor with several groups; paired or not; parametric or
-  rank-based) pinned to R, then a guided choice of analysis from the scientist's description
-  through the copy-paste AI route, where the AI proposes a plan and BioSketch does the arithmetic.
+- Chart looks, table import and the instruction box (November 2026). Tried in the browser on a
+  desktop and a tablet-sized window: a volcano plot built from typed instructions, a palette, one
+  group's points, and files given to the file input by script (a quoted CSV, an Excel file written
+  by openpyxl, a file that is no table). Not done: the system's file picker was not clicked
+  through; no workbook saved by Excel itself, Numbers or LibreOffice was opened (the test file
+  keeps texts inline, Excel keeps them in a shared list, which only a hand-built workbook covers);
+  nothing on an iPad; no exported file opened to look at shapes, transparency or dotted lines.
+- Chart looks, what is missing: a single point cannot be styled or named by clicking it (names
+  come from the table, styles from its group); names of points can still overlap points and lines;
+  the legend inside the plot can cover data; reference lines have one colour; only the first
+  sheet of a workbook is read and dates arrive as Excel's day numbers; old .xls files are refused.
+- Instruction box: a fixed vocabulary in English. It does not know "undo", colours by shade
+  ("light blue"), rotation of names, or anything the panel cannot set. A group whose name holds
+  " and " or a comma is not recognised inside a longer sentence. Asked for a test by name, it
+  runs the test of that family that fits the number of groups and says which. Open-ended requests
+  through the copy-paste AI route are not built.
+- Statistical tests, first stage built (November 2026). Not offered: tests for grouped charts
+  (two factors), Dunnett's test (each group with the first uses Holm instead), a correction for
+  sphericity in the repeated-measures ANOVA, Student's t test with equal variances, correlation
+  for scatter charts, effect sizes and confidence intervals, a methods sentence to copy. On a
+  logarithmic axis tests use the values the chart shows (above zero), as typed, not their
+  logarithms. Holm's correction always counts every pair that is compared (all pairs, or each
+  with the first), not only the pairs that have a bracket. The suggestion rests on one check
+  (Shapiro–Wilk on the residuals), which is weak with few values and is a pretest; the box says
+  so. Tried in the browser with the sample chart on a desktop and a tablet-sized window, results
+  compared with R by hand there too; not tried on an iPad, no exported file opened, and no
+  independent review of the arithmetic beyond the pinned values.
+- Where BioSketch and R differ on purpose: R's `ptukey` is approximate for a large range with
+  two or three degrees of freedom and beyond 25000 degrees of freedom (those points are checked
+  against SciPy); R's signed-rank test does not see ties between changes that are equal on paper
+  but not in binary (4.1 − 6.9 and 4.9 − 7.7), BioSketch rounds differences to 12 digits and the
+  reference runs R with `digits.rank = 12`.
+- Next stage of the analysis tool, agreed in outline but not started: a guided choice of analysis
+  from the scientist's description through the copy-paste AI route, where the AI proposes a plan
+  and BioSketch does the arithmetic.
 - Reshaping an icon: curve handles cannot be set separately, points cannot be added or removed,
   and the handles were dragged with simulated pointer events only.
 - PowerPoint export was opened in PowerPoint for Mac only; Keynote and Google Slides (which use
@@ -209,6 +252,12 @@ A change is done when all of these hold:
   different pair of groups when a column was inserted.
 - Anything the chart panel can store must survive `validateDoc` unchanged, and be drawn by the
   same rule (`usableEnds`), or the chart changes when the figure is reopened.
+- A column of a chart's table with an empty or unreadable cell keeps the row of each value
+  (`rows` on the group). Without it the values below a gap slide up, and a paired test compares
+  the wrong rows without any sign of it. Whatever builds or filters a group's values must treat
+  `rows` with them (`readTable`, `tableText`, `validateDoc`).
+- Titles typed into the instruction box keep the scientist's characters (a typographic minus in
+  "−log_{10} p"); only the copy that is searched for phrases is lower-cased and normalised.
 - An arc in a path cannot follow a dragged end point (its radius stops fitting); reshaping turns
   arcs into curves first (`curvesOnly`).
 - A pack icon used in a figure is stored in the figure too; lists that show both must not show

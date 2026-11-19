@@ -171,6 +171,8 @@ export interface ImageNode extends NodeBase {
 }
 
 export type ChartKind = 'bar' | 'dot' | 'line' | 'box' | 'violin' | 'scatter'
+/** The mark drawn for a data point. */
+export type PointShape = 'circle' | 'square' | 'triangle' | 'diamond'
 
 /**
  * One column of a chart's table: a group (condition) with its replicate values. In a grouped
@@ -182,18 +184,57 @@ export interface ChartGroup {
   values: number[]
   /** Colour of its bar or points. Absent = the next of the standard colours. */
   color?: string
+  /** The mark drawn for its points. Absent = a circle. */
+  shape?: PointShape
+  /** Size and solidity of its points, where they differ from the chart's (see `pointSize`, `pointOpacity` of the chart). */
+  pointSize?: number
+  pointOpacity?: number
   /** Grouped charts: the category on the x axis this group belongs to (for example the genotype). */
   category?: string
   /** Scatter charts: the x value of every point, as many as there are values. */
   xs?: number[]
+  /** Scatter charts: the name written beside each point (a gene, a sample), as many as there are values; '' = no name. Absent = no point has one. */
+  labels?: string[]
+  /**
+   * The row of the table each value stands in, when the column has gaps (an empty or unreadable
+   * cell above a value). Absent = the values fill the rows from the top. Paired tests compare
+   * values row by row, so the rows must survive.
+   */
+  rows?: number[]
 }
 
-/** A bracket over two groups with a label the scientist typed (for example "p = 0.03", "**" or "ns"). */
+/** A bracket over two groups, with a label the scientist typed (for example "p = 0.03", "**" or "ns") or the result of the chart's test. */
 export interface ChartBracket {
   /** Places of the two groups in `groups`. */
   from: number
   to: number
   label: string
+  /** The label is the result of the chart's test for these two groups, worked out again whenever the numbers change; `label` is not used. */
+  auto?: boolean
+}
+
+/** A dashed line across the plot at one value, for example a threshold: along the value axis (`y`), or along the x axis of a scatter chart. */
+export interface ChartRefLine {
+  axis: 'x' | 'y'
+  value: number
+  label?: string
+  /** How the line is drawn. Absent = dashed. */
+  dash?: 'dotted' | 'solid'
+}
+
+/** Where the legend stands when it is not at the right of the plot. */
+export type LegendPlace = 'top' | 'bottom' | 'inside' | 'insideLeft' | 'none'
+
+/** How the scientist wants the groups of a chart compared, and with which family of test. */
+export interface ChartTest {
+  /** Compare means (t test, analysis of variance) or ranks (Mann-Whitney, Kruskal-Wallis and their paired forms). Absent = no test is run. */
+  by?: 'means' | 'ranks'
+  /** Each row of the table is one sample measured in every group. */
+  paired?: boolean
+  /** With several groups: compare each group with the first only, not every pair. */
+  versusFirst?: boolean
+  /** Brackets show stars instead of the p value. */
+  stars?: boolean
 }
 
 /** A chart drawn from numbers the scientist pasted in. The numbers stay in the figure, so the chart can be changed later. */
@@ -210,6 +251,10 @@ export interface ChartNode extends NodeBase {
   error?: 'sd' | 'sem'
   /** Draw every value as a point (a dot chart always does). */
   points?: boolean
+  /** How large the points are, as a multiple of their usual size (0.25 to 4). Absent = 1. */
+  pointSize?: number
+  /** How solid the points of single values are, 0.1 to 1. Absent = 1 (not transparent). */
+  pointOpacity?: number
   title?: string
   /** Title of the value axis. */
   yLabel?: string
@@ -229,6 +274,14 @@ export interface ChartNode extends NodeBase {
   /** Scatter charts: draw the least-squares straight line through each series. */
   fit?: boolean
   brackets?: ChartBracket[]
+  /** The palette that colours groups without a colour of their own (an id of `PALETTES`). Absent = the usual colours. */
+  palette?: string
+  /** Dashed lines at chosen values (thresholds). */
+  refLines?: ChartRefLine[]
+  /** Where the legend stands. Absent = at the right of the plot. */
+  legend?: LegendPlace
+  /** The statistical test for the groups. Its results are never stored: they are worked out from the numbers. */
+  test?: ChartTest
 }
 
 export type FigNode = IconNode | ShapeNode | TextNode | ConnectorNode | MembraneNode | StrokeNode | ImageNode | ChartNode

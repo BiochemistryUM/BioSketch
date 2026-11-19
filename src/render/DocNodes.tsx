@@ -5,7 +5,7 @@ import { getStroke } from 'perfect-freehand'
 import { memo, useMemo } from 'react'
 import { getIcon } from '../icons/library'
 import { iconMarkup } from '../icons/svg'
-import { chartLayout } from '../model/chart'
+import { chartLayout, pointPath } from '../model/chart'
 import { BAR_WIDTH, connectorShape, fadeStops } from '../model/connector'
 import { dashArray, hasDots } from '../model/dash'
 import { round } from '../model/geometry'
@@ -135,18 +135,45 @@ function ChartView({ node, interactive }: { node: ChartNode; interactive: boolea
           <path key={`p${i}`} d={p.d} fill={p.fill ?? 'none'} stroke={p.stroke} strokeWidth={p.width} strokeLinejoin="round" strokeLinecap="round" />
         ))}
         {chart.circles.map((c, i) =>
-          c.ring ? <circle key={`c${i}`} cx={c.cx} cy={c.cy} r={c.r} fill="none" stroke={c.fill} strokeWidth={1.2} /> : <circle key={`c${i}`} cx={c.cx} cy={c.cy} r={c.r} fill={c.fill} />,
+          c.ring ? (
+            <circle key={`c${i}`} cx={c.cx} cy={c.cy} r={c.r} fill="none" stroke={c.fill} strokeWidth={1.2} />
+          ) : c.shape && c.shape !== 'circle' ? (
+            <path key={`c${i}`} d={pointPath(c.shape, c.cx, c.cy, c.r)} fill={c.fill} fillOpacity={c.opacity} />
+          ) : (
+            <circle key={`c${i}`} cx={c.cx} cy={c.cy} r={c.r} fill={c.fill} fillOpacity={c.opacity} />
+          ),
         )}
         {chart.lines.map((l, i) => (
           <line key={`l${i}`} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={INK} strokeWidth={l.width} strokeLinecap="round" />
+        ))}
+        {chart.dashes.map((l, i) => (
+          // A dotted line is made of near-zero dashes with round ends, like dotted lines elsewhere in a figure.
+          <line
+            key={`d${i}`}
+            x1={l.x1}
+            y1={l.y1}
+            x2={l.x2}
+            y2={l.y2}
+            stroke={INK}
+            strokeWidth={l.style === 'dotted' ? 1.6 : 1}
+            strokeDasharray={l.style === 'solid' ? undefined : l.style === 'dotted' ? '0.1 4' : '5 4'}
+            strokeLinecap={l.style === 'dotted' ? 'round' : undefined}
+          />
         ))}
       </g>
       {chart.rules.map((l, i) => (
         <line key={`a${i}`} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={INK} strokeWidth={l.width} strokeLinecap="round" />
       ))}
-      {chart.swatches.map((s, i) => (
-        <rect key={`s${i}`} x={s.x} y={s.y} width={s.size} height={s.size} fill={s.fill} stroke={INK} strokeWidth={0.8} />
-      ))}
+      {chart.swatches.map((s, i) =>
+        // An entry for points shows their mark, drawn as the points are; any other a colour square.
+        !s.shape ? (
+          <rect key={`s${i}`} x={s.x} y={s.y} width={s.size} height={s.size} fill={s.fill} stroke={INK} strokeWidth={0.8} />
+        ) : s.shape === 'circle' ? (
+          <circle key={`s${i}`} cx={s.x + s.size / 2} cy={s.y + s.size / 2} r={s.size * 0.4} fill={s.fill} />
+        ) : (
+          <path key={`s${i}`} d={pointPath(s.shape, s.x + s.size / 2, s.y + s.size / 2, s.size * 0.4)} fill={s.fill} />
+        ),
+      )}
       {chart.texts.map((t, i) => (
         <TextView key={`t${i}`} node={t} interactive={false} />
       ))}

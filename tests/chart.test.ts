@@ -40,8 +40,9 @@ describe('reading a pasted table', () => {
   it('copes with groups of different sizes, gaps, words among the numbers and negative values', () => {
     expect(parseTable('A\tB\tC\n1\t5\t\n2\t\t-3\nn.d.\t6\t-4.5')).toEqual([
       { name: 'A', values: [1, 2] },
-      { name: 'B', values: [5, 6] },
-      { name: 'C', values: [-3, -4.5] },
+      // A column with a gap remembers the row of each value: paired tests compare row with row.
+      { name: 'B', values: [5, 6], rows: [0, 2] },
+      { name: 'C', values: [-3, -4.5], rows: [1, 2] },
     ])
     expect(parseTable('1e3\t2.5E-1')).toEqual([{ name: 'Group 1', values: [1000] }, { name: 'Group 2', values: [0.25] }])
     expect(parseTable('')).toEqual([])
@@ -52,7 +53,7 @@ describe('reading a pasted table', () => {
 
   it('writes the groups back as the table that was read', () => {
     const groups = parseTable('A\tB\tC\n1\t5\t\n2\t\t-3')
-    expect(tableText(groups)).toBe('A\tB\tC\n1\t5\t-3\n2\t\t')
+    expect(tableText(groups)).toBe('A\tB\tC\n1\t5\t\n2\t\t-3')
     expect(parseTable(tableText(SAMPLE_CHART))).toEqual(SAMPLE_CHART)
     expect(parseTable('x'.repeat(30) + '\n1').length).toBe(1)
     expect(parseTable(Array.from({ length: 40 }, (_, i) => i).join('\t'))).toHaveLength(24)

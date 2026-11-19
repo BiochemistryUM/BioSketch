@@ -838,6 +838,126 @@ input[type='checkbox'] {
   width: 100%;
 }
 
+.sub-label {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.palette-strip {
+  display: flex;
+  height: 14px;
+  margin: 6px 0;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.palette-strip span {
+  flex: 1;
+}
+
+.instruction-answer p {
+  margin: 6px 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.instruction-answer .did::before {
+  content: '✓ ';
+  color: #2f8f5b;
+  font-weight: 700;
+}
+
+.instruction-help {
+  margin-top: 6px;
+  font-size: 12.5px;
+}
+
+.instruction-help summary {
+  cursor: pointer;
+  color: var(--muted);
+  min-height: 28px;
+}
+
+.instruction-help ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.instruction-help .example {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.shape-select {
+  flex: none;
+  width: auto;
+  min-width: 0;
+  padding: 2px 4px;
+  font-size: 12.5px;
+}
+
+.bracket-source {
+  grid-column: 1 / -1;
+  justify-self: start;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+.advice {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #eef5ff;
+  font-size: 12.5px;
+  line-height: 1.45;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.advice p {
+  margin: 0 0 6px;
+}
+
+.advice ul {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+
+.advice li {
+  margin-bottom: 3px;
+}
+
+.advice .advice-title {
+  font-size: 13.5px;
+}
+
+.test-result {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.test-result > p {
+  margin: 0 0 6px;
+}
+
 .table-input {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;

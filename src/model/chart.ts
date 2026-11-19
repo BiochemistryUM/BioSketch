@@ -9,16 +9,24 @@
 //  - scatter: the first column holds x, every further column the y values of one series.
 
 import { bandwidth, boxStats, density, fitLine, type BoxStats, type Fit } from './chartStats'
+import { analyse, pText, stars, suggest, type Advice, type Outcome } from './chartTests'
 import { measureText, wrapText } from './nodes'
-import type { ChartGroup, ChartKind, ChartNode, TextNode } from './types'
+import { PALETTES, paletteColours } from './palettes'
+import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartRefLine, ChartTest, LegendPlace, PointShape, TextNode } from './types'
 
 export const MAX_GROUPS = 24
 /** Values kept per group. Large enough for per-cell measurements; a table beyond it is cut and the scientist is told. */
 export const MAX_VALUES = 5000
+/** The furthest row of a table whose place is remembered (see `rows` of a group). */
+export const MAX_ROWS = 20000
 export const MAX_BRACKETS = 30
+export const MAX_REF_LINES = 12
+/** The most points of a scatter chart that are named on the chart; more would cover it in words. */
+export const MAX_POINT_LABELS = 100
+export const LEGEND_PLACES: LegendPlace[] = ['top', 'bottom', 'inside', 'insideLeft', 'none']
 export const CHART_FONT = 13
 /** Colours given to groups that have none of their own, in turn. */
-export const CHART_COLOURS = ['#6fa8dc', '#e58a87', '#7cc48f', '#f3c95e', '#8fd3cc', '#b7a3e6', '#f0a04b', '#aab4c3']
+export const CHART_COLOURS = PALETTES[0].colours
 /** A violin drawn from fewer values than this suggests a shape the data cannot support: such a group is shown as dots. */
 export const VIOLIN_MIN = 4
 const INK = '#2b2f36'
@@ -72,7 +80,9 @@ function splitLoose(line: string): string[] {
  * Names: `header` says how many rows of names the table starts with. Left out, it is guessed:
  * a first row with a word in it holds names, and a second row made only of words makes the chart
  * a grouped one (category above, series below; an empty category repeats the one to its left).
- * For a scatter chart the first column is x.
+ * For a scatter chart the first column is x. If the first column holds words and no numbers, it
+ * holds the names of the points (genes, samples) and x is the column after it; a point whose row
+ * has a name is labelled with it.
  */
 export function readTable(text: string, kind: ChartKind = 'bar', header?: 0 | 1 | 2): TableReport {
   const report: TableReport = { groups: [], head: 0, unread: 0, droppedValues: 0, droppedGroups: 0, commasUnclear: false, numericNames: false }
@@ -148,13 +158,17 @@ export function readTable(text: string, kind: ChartKind = 'bar', header?: 0 | 1 
   }
 
   if (scatter) {
-    const xs = rows.map((row) => read(row[0]))
-    for (let col = 1; col < width; col++) {
-      const points: [number, number][] = []
+    // A first column of words, without a single number, names the points; x is then the next column.
+    const first = rows.map((row) => (row[0] ?? '').trim())
+    const named = width > 2 && first.some(isWord) && first.every((c) => c === '' || isWord(c))
+    const xCol = named ? 1 : 0
+    const xs = rows.map((row) => read(row[xCol]))
+    for (let col = xCol + 1; col < width; col++) {
+      const points: [number, number, string][] = []
       rows.forEach((row, r) => {
         const y = read(row[col])
         // A point needs both of its numbers.
-        if (Number.isFinite(xs[r]) && Number.isFinite(y)) points.push([xs[r], y])
+        if (Number.isFinite(xs[r]) && Number.isFinite(y)) points.push([xs[r], y, named ? first[r].slice(0, 40) : ''])
       })
       const name = nameOf(col)
       if (!points.length && !name) continue
@@ -164,7 +178,7 @@ export function readTable(text: string, kind: ChartKind = 'bar', header?: 0 | 1 
       }
       report.droppedValues += Math.max(0, points.length - MAX_VALUES)
       const kept = points.slice(0, MAX_VALUES)
-      report.groups.push({ name: name || `Series ${report.groups.length + 1}`, values: kept.map((p) => p[1]), xs: kept.map((p) => p[0]) })
+      report.groups.push({ name: name || `Series ${report.groups.length + 1}`, values: kept.map((p) => p[1]), xs: kept.map((p) => p[0]), ...(kept.some((p) => p[2]) ? { labels: kept.map((p) => p[2]) } : {}) })
     }
     return report
   }
@@ -172,16 +186,19 @@ export function readTable(text: string, kind: ChartKind = 'bar', header?: 0 | 1 
   let category = ''
   for (let col = 0; col < width; col++) {
     if (head === 2 && cells[0][col]) category = cells[0][col].slice(0, 60)
-    const values = rows.map((row) => read(row[col])).filter((v) => Number.isFinite(v))
+    const read1 = rows.map((row, r) => ({ r, v: read(row[col]) })).filter((c) => Number.isFinite(c.v))
     const name = nameOf(col)
     // A column with neither a name nor a number is an empty one between two others.
-    if (!values.length && !name) continue
+    if (!read1.length && !name) continue
     if (report.groups.length >= MAX_GROUPS) {
       report.droppedGroups++
       continue
     }
-    report.droppedValues += Math.max(0, values.length - MAX_VALUES)
-    report.groups.push({ name: name || `Group ${report.groups.length + 1}`, values: values.slice(0, MAX_VALUES), ...(head === 2 && category ? { category } : {}) })
+    report.droppedValues += Math.max(0, read1.length - MAX_VALUES)
+    const kept = read1.slice(0, MAX_VALUES)
+    // A column with gaps remembers the row of each value, so that paired tests still compare row with row.
+    const gaps = kept.some((c, i) => c.r !== i) && kept[kept.length - 1].r < MAX_ROWS
+    report.groups.push({ name: name || `Group ${report.groups.length + 1}`, values: kept.map((c) => c.v), ...(head === 2 && category ? { category } : {}), ...(gaps ? { rows: kept.map((c) => c.r) } : {}) })
   }
   return report
 }
@@ -195,37 +212,48 @@ export const headRows = (groups: ChartGroup[], kind: ChartKind): 1 | 2 => (kind 
 /** The groups written back as a tab-separated table, for the box the scientist edits. Read it again with `headRows`. */
 export function tableText(groups: ChartGroup[], kind: ChartKind = 'bar'): string {
   if (kind === 'scatter') {
-    // One row per x value; series that share an x share the row.
-    const rows: { x: number; ys: (number | undefined)[] }[] = []
-    const rowOf = new Map<string, number>()
+    // One row per x value (and name, when points have names); series that share both share the row.
+    const rows: { x: number; name: string; ys: (number | undefined)[] }[] = []
+    const rowAt = new Map<string, number>()
+    const named = groups.some((g) => g.labels?.some(Boolean))
     groups.forEach((g, col) => {
-      const seen = new Map<number, number>()
+      const seen = new Map<string, number>()
       ;(g.xs ?? []).forEach((x, k) => {
-        const nth = seen.get(x) ?? 0
-        seen.set(x, nth + 1)
-        const key = `${x}#${nth}`
-        if (!rowOf.has(key)) {
-          rowOf.set(key, rows.length)
-          rows.push({ x, ys: [] })
+        const name = g.labels?.[k] ?? ''
+        const nth = seen.get(`${x}#${name}`) ?? 0
+        seen.set(`${x}#${name}`, nth + 1)
+        const key = `${x}#${name}#${nth}`
+        if (!rowAt.has(key)) {
+          rowAt.set(key, rows.length)
+          rows.push({ x, name, ys: [] })
         }
-        rows[rowOf.get(key)!].ys[col] = g.values[k]
+        rows[rowAt.get(key)!].ys[col] = g.values[k]
       })
     })
-    return [['x', ...groups.map((g) => g.name)].join('\t'), ...rows.map((r) => [r.x, ...groups.map((_, col) => r.ys[col] ?? '')].join('\t'))].join('\n')
+    return [[...(named ? ['Name'] : []), 'x', ...groups.map((g) => g.name)].join('\t'), ...rows.map((r) => [...(named ? [r.name] : []), r.x, ...groups.map((_, col) => r.ys[col] ?? '')].join('\t'))].join('\n')
   }
-  const count = Math.max(0, ...groups.map((g) => g.values.length))
+  const count = Math.max(0, ...groups.map((g) => (g.values.length ? rowOf(g, g.values.length - 1) + 1 : 0)))
   const lines = headRows(groups, kind) === 2 ? [groups.map((g) => g.category ?? '').join('\t')] : []
   lines.push(groups.map((g) => g.name).join('\t'))
-  for (let r = 0; r < count; r++) lines.push(groups.map((g) => (r < g.values.length ? String(g.values[r]) : '')).join('\t'))
+  // Every value goes back to the row it was read from; `next` is the value of each group still to be written.
+  const next = groups.map(() => 0)
+  for (let r = 0; r < count; r++) {
+    lines.push(groups.map((g, col) => (next[col] < g.values.length && rowOf(g, next[col]) === r ? String(g.values[next[col]++]) : '')).join('\t'))
+  }
   return lines.join('\n')
 }
+
+/** The row of the table that value `k` of a group stands in. */
+export const rowOf = (group: ChartGroup, k: number): number => group.rows?.[k] ?? k
 
 /**
  * The same table read as the other family of chart: a scatter chart takes its first column as x,
  * every other kind takes every column as a group. Going there and back does not return the
  * same groups, so whoever calls this should keep the original to go back to.
  */
-export const crossTable = (groups: ChartGroup[], from: ChartKind, to: ChartKind): ChartGroup[] => parseTable(tableText(groups, from), to, 1)
+export const crossTable = (groups: ChartGroup[], from: ChartKind, to: ChartKind): ChartGroup[] =>
+  // The names of points belong to a scatter chart only: any other kind would read them as an empty group.
+  parseTable(tableText(from === 'scatter' ? groups.map(({ labels: _names, ...g }) => g) : groups, from), to, 1)
 
 // ---------- keeping what belongs to a group when the table changes ----------
 
@@ -285,6 +313,115 @@ export function stats(values: number[]): Stats {
   const mean = values.reduce((a, b) => a + b, 0) / n
   const sd = n > 1 ? Math.sqrt(values.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1)) : 0
   return { n, mean, sd, sem: sd / Math.sqrt(n) }
+}
+
+// ---------- comparing the groups with a test ----------
+
+/** The groups of a chart as a test takes them. */
+export interface Compared {
+  /** Places of the compared groups in the chart's table, in order, with their names. */
+  indexes: number[]
+  names: string[]
+  /** The values of each group. For a paired design: the rows that have a value in every group, in the same order everywhere. */
+  samples: number[][]
+  /** Paired design: rows left out because a value is missing in at least one group. */
+  leftOut: number
+  /** Why this chart has nothing a test could compare. */
+  problem?: string
+}
+
+export const GROUPED_PROBLEM = 'This chart has categories and series, that is two factors. Tests for such tables are not built yet; you can still type the labels of brackets yourself.'
+
+interface Comparison {
+  compared: Compared
+  advice: Advice
+  outcome: Outcome | null
+}
+
+/** Comparisons already worked out, by the chart's table: a chart is laid out again on every change of size, its numbers rarely change. */
+const comparisons = new WeakMap<ChartGroup[], Map<string, Comparison>>()
+
+function compare(node: ChartNode): Comparison {
+  const test: ChartTest = node.test ?? {}
+  const key = [node.kind === 'scatter', !!node.yLog, test.by ?? '', !!test.paired, !!test.versusFirst].join('|')
+  let known = comparisons.get(node.groups)
+  if (!known) comparisons.set(node.groups, (known = new Map()))
+  const done = known.get(key)
+  if (done) return done
+
+  const design = { paired: !!test.paired, versusFirst: !!test.versusFirst }
+  const compared: Compared = { indexes: [], names: [], samples: [], leftOut: 0 }
+  if (node.kind === 'scatter') compared.problem = 'Tests compare groups; a scatter chart has series of points instead.'
+  else if (isGrouped(node)) compared.problem = GROUPED_PROBLEM
+  else {
+    const drawn = drawnGroups(node).filter((c) => shownValues(node, c.group).length)
+    compared.indexes = drawn.map((c) => c.index)
+    compared.names = drawn.map((c) => c.group.name)
+    if (design.paired) {
+      // Row by row: only rows with a value (one the chart shows) in every group count.
+      const byRow = drawn.map((c) => new Map(c.group.values.map((v, k) => [rowOf(c.group, k), v] as const).filter(([, v]) => !node.yLog || v > 0)))
+      const all = [...new Set(byRow.flatMap((m) => [...m.keys()]))].sort((a, b) => a - b)
+      const complete = all.filter((r) => byRow.every((m) => m.has(r)))
+      compared.samples = byRow.map((m) => complete.map((r) => m.get(r)!))
+      compared.leftOut = all.length - complete.length
+    } else compared.samples = drawn.map((c) => shownValues(node, c.group))
+  }
+
+  let advice: Advice
+  let outcome: Outcome | null = null
+  if (compared.problem) advice = { test: null, by: null, does: '', why: [compared.problem], cautions: [] }
+  else {
+    advice = suggest(compared.names, compared.samples, design)
+    if (compared.leftOut) advice.cautions.unshift(`${compared.leftOut} ${compared.leftOut === 1 ? 'row is' : 'rows are'} left out of a paired test: a value is missing in at least one group.`)
+    if (node.yLog) advice.cautions.push('The value axis is logarithmic, but tests are worked out on the values as typed, not on their logarithms (for a test on ranks that makes no difference).')
+    if (test.by) outcome = analyse(compared.samples, { by: test.by, ...design })
+  }
+  const result = { compared, advice, outcome }
+  known.set(key, result)
+  return result
+}
+
+/** The groups of the chart as a test compares them (see `Compared`). */
+export const chartSamples = (node: ChartNode): Compared => compare(node).compared
+
+/** Which test fits the chart's table, with what the test does and why it applies. */
+export const chartAdvice = (node: ChartNode): Advice => compare(node).advice
+
+/** The result of the test chosen for the chart; null when none is chosen. Places in `pairs` refer to `chartSamples(node).indexes`. */
+export const chartAnalysis = (node: ChartNode): Outcome | null => compare(node).outcome
+
+/** The p value the chart's test gives for two groups (places in the chart's table): undefined when that pair is not compared, null when it cannot be worked out. */
+export function pairP(node: ChartNode, from: number, to: number): number | null | undefined {
+  const { compared, outcome } = compare(node)
+  if (!outcome?.ok) return undefined
+  const [a, b] = [compared.indexes.indexOf(from), compared.indexes.indexOf(to)]
+  if (a < 0 || b < 0) return undefined
+  return outcome.result.pairs.find((p) => (p.a === a && p.b === b) || (p.a === b && p.b === a))?.p
+}
+
+/** What a bracket says: the words the scientist typed or, for a bracket that follows the test, its result for the two groups. */
+export function bracketLabel(node: ChartNode, bracket: ChartBracket): string {
+  if (!bracket.auto) return bracket.label
+  const p = pairP(node, bracket.from, bracket.to)
+  if (p === undefined) return ''
+  if (p === null) return 'n/a'
+  return node.test?.stars ? stars(p) : pText(p)
+}
+
+/**
+ * The chart's brackets with one more for every pair the test finds different (p below 0.05; with
+ * two groups, for the one pair whatever the test finds), each following the test. `added` counts
+ * the new ones, `over` those that did not fit, and `different` says whether any pair is different.
+ */
+export function withTestBrackets(node: ChartNode): { brackets: ChartBracket[]; added: number; over: number; different: boolean } {
+  const { compared, outcome } = compare(node)
+  const brackets = node.brackets ?? []
+  if (!outcome?.ok) return { brackets, added: 0, over: 0, different: false }
+  const two = compared.samples.length === 2
+  const pairs = outcome.result.pairs.map((p) => ({ from: compared.indexes[p.a], to: compared.indexes[p.b], p: p.p })).filter((p) => two || (p.p !== null && p.p < 0.05))
+  const wanted = pairs.filter((p) => !brackets.some((b) => (b.from === p.from && b.to === p.to) || (b.from === p.to && b.to === p.from)))
+  const room = Math.max(0, MAX_BRACKETS - brackets.length)
+  return { brackets: [...brackets, ...wanted.slice(0, room).map((p) => ({ from: p.from, to: p.to, label: '', auto: true }))], added: Math.min(room, wanted.length), over: Math.max(0, wanted.length - room), different: pairs.length > 0 }
 }
 
 // ---------- the value axis ----------
@@ -427,12 +564,18 @@ export interface ChartDrawing {
   lines: { x1: number; y1: number; x2: number; y2: number; width: number }[]
   /** Outlines and joining lines: a violin (filled), the line of a line chart, a fitted line. */
   paths: { d: string; stroke: string; width: number; fill?: string }[]
-  /** Points. A `ring` is drawn hollow (an outlier of a box plot). */
-  circles: { cx: number; cy: number; r: number; fill: string; ring?: boolean }[]
+  /**
+   * Points. A `ring` is drawn hollow (an outlier of a box plot). `shape` is the mark (absent = a
+   * circle; `r` is then the radius of the circle with the same area, see `pointPath`), `opacity`
+   * how solid it is (absent = fully).
+   */
+  circles: { cx: number; cy: number; r: number; fill: string; ring?: boolean; shape?: PointShape; opacity?: number }[]
+  /** Dashed lines at chosen values (thresholds), cut off at the edge of the plot like the data. */
+  dashes: { x1: number; y1: number; x2: number; y2: number; style?: 'dotted' | 'solid' }[]
   /** Axes, tick marks and brackets: never cut off. */
   rules: { x1: number; y1: number; x2: number; y2: number; width: number }[]
-  /** Colour squares of the legend. */
-  swatches: { x: number; y: number; size: number; fill: string }[]
+  /** Colour squares of the legend. With a `shape` the entry stands for points and shows their mark instead. */
+  swatches: { x: number; y: number; size: number; fill: string; shape?: PointShape }[]
   /** Words, as labels the label renderer draws (so superscripts and other marks work in them). */
   texts: TextNode[]
   /** The plot area, in the chart's own box. */
@@ -447,7 +590,59 @@ const r1 = (v: number): number => Math.round(v * 10) / 10
 const unique = <T>(items: T[]): T[] => [...new Set(items)]
 
 /** The colour of group `i`: its own, or the next of the standard ones. */
-export const groupColour = (group: ChartGroup, i: number): string => group.color ?? CHART_COLOURS[i % CHART_COLOURS.length]
+export const groupColour = (group: ChartGroup, i: number, palette?: string): string => group.color ?? paletteColours(palette)[i % paletteColours(palette).length]
+
+export const POINT_SHAPES: PointShape[] = ['circle', 'square', 'triangle', 'diamond']
+export const POINT_SIZE_MIN = 0.25
+export const POINT_SIZE_MAX = 4
+export const POINT_OPACITY_MIN = 0.1
+
+/**
+ * The size and solidity of a chart's points as they are drawn and saved: within their limits, and
+ * absent when they are the usual ones.
+ */
+export function pointStyle(size: unknown, opacity: unknown): { pointSize?: number; pointOpacity?: number } {
+  const s = typeof size === 'number' && Number.isFinite(size) ? Math.min(POINT_SIZE_MAX, Math.max(POINT_SIZE_MIN, size)) : 1
+  const o = typeof opacity === 'number' && Number.isFinite(opacity) ? Math.min(1, Math.max(POINT_OPACITY_MIN, opacity)) : 1
+  return { ...(s !== 1 ? { pointSize: s } : {}), ...(o !== 1 ? { pointOpacity: o } : {}) }
+}
+
+/** A group's own size and solidity of points as they are saved: within their limits, kept even when they are the usual ones (they then overrule the chart's). */
+export function ownPointStyle(size: unknown, opacity: unknown): { pointSize?: number; pointOpacity?: number } {
+  return {
+    ...(typeof size === 'number' && Number.isFinite(size) ? { pointSize: Math.min(POINT_SIZE_MAX, Math.max(POINT_SIZE_MIN, size)) } : {}),
+    ...(typeof opacity === 'number' && Number.isFinite(opacity) ? { pointOpacity: Math.min(1, Math.max(POINT_OPACITY_MIN, opacity)) } : {}),
+  }
+}
+
+/** How the points of one group are drawn: its own size and solidity where it has them, otherwise the chart's. */
+function pointsOf(node: ChartNode, own: { pointSize?: number; pointOpacity?: number }): { scale: number; solid: { opacity?: number } } {
+  const s = pointStyle(own.pointSize ?? node.pointSize, own.pointOpacity ?? node.pointOpacity)
+  return { scale: s.pointSize ?? 1, solid: s.pointOpacity !== undefined ? { opacity: s.pointOpacity } : {} }
+}
+
+/**
+ * The outline of a point that is not a circle, centred on (cx, cy). Every shape covers the same
+ * area as a circle of radius `r`, so no group looks heavier than another. The triangle points up.
+ */
+export function pointPath(shape: PointShape, cx: number, cy: number, r: number): string {
+  const at = (dx: number, dy: number): string => `${r1(cx + dx)} ${r1(cy + dy)}`
+  if (shape === 'square') {
+    const half = (r * Math.sqrt(Math.PI)) / 2
+    return `M${at(-half, -half)}L${at(half, -half)}L${at(half, half)}L${at(-half, half)}Z`
+  }
+  if (shape === 'diamond') {
+    const half = r * Math.sqrt(Math.PI / 2)
+    return `M${at(0, -half)}L${at(half, 0)}L${at(0, half)}L${at(-half, 0)}Z`
+  }
+  if (shape === 'triangle') {
+    const side = r * Math.sqrt((4 * Math.PI) / Math.sqrt(3))
+    const height = (side * Math.sqrt(3)) / 2
+    return `M${at(0, (-2 * height) / 3)}L${at(side / 2, height / 3)}L${at(-side / 2, height / 3)}Z`
+  }
+  // A circle, should anything ask for its outline.
+  return `M${at(-r, 0)}A${r1(r)} ${r1(r)} 0 1 0 ${at(r, 0)}A${r1(r)} ${r1(r)} 0 1 0 ${at(-r, 0)}Z`
+}
 
 /** How far the error bar reaches above and below the mean. */
 function errorOf(node: ChartNode, s: Stats): number {
@@ -465,9 +660,9 @@ export const isGrouped = (node: ChartNode): boolean => node.kind !== 'scatter' &
  * colour each, shared across categories), otherwise every group. `groups` lists the places in the
  * chart's table that take the colour.
  */
-export function chartSeries(node: ChartNode): { name: string; colour: string; groups: number[] }[] {
+export function chartSeries(node: ChartNode): { name: string; colour: string; shape?: PointShape; pointSize?: number; pointOpacity?: number; groups: number[] }[] {
   const drawn = drawnGroups(node)
-  if (!isGrouped(node)) return drawn.map((c, i) => ({ name: c.group.name, colour: groupColour(c.group, i), groups: [c.index] }))
+  if (!isGrouped(node)) return drawn.map((c, i) => ({ name: c.group.name, colour: groupColour(c.group, i, node.palette), ...markOf(c.group.shape), ...ownPointStyle(c.group.pointSize, c.group.pointOpacity), groups: [c.index] }))
   // A series is a name. The same name twice within one category is two series, or the second
   // would be drawn on top of the first.
   const seriesOf = new Map<number, string>()
@@ -480,9 +675,22 @@ export function chartSeries(node: ChartNode): { name: string; colour: string; gr
   }
   return unique(drawn.map((c) => seriesOf.get(c.index)!)).map((name, i) => {
     const members = drawn.filter((c) => seriesOf.get(c.index) === name)
-    return { name, colour: members.find((c) => c.group.color)?.group.color ?? CHART_COLOURS[i % CHART_COLOURS.length], groups: members.map((c) => c.index) }
+    const colours = paletteColours(node.palette)
+    return {
+      name,
+      colour: members.find((c) => c.group.color)?.group.color ?? colours[i % colours.length],
+      ...markOf(members.find((c) => c.group.shape)?.group.shape),
+      ...ownPointStyle(members.find((c) => c.group.pointSize !== undefined)?.group.pointSize, members.find((c) => c.group.pointOpacity !== undefined)?.group.pointOpacity),
+      groups: members.map((c) => c.index),
+    }
   })
 }
+
+/** A shape as it is kept on a mark: nothing for a circle, the usual one. */
+const markOf = (shape: PointShape | undefined): { shape?: PointShape } => (shape && shape !== 'circle' ? { shape } : {})
+
+/** True when the chart draws a point for single values or means, so that the shape and size of points matter. */
+export const hasPoints = (node: ChartNode): boolean => node.kind === 'scatter' || node.kind === 'dot' || node.kind === 'line' || !!node.points
 
 /** The values of a group that the chart can show and that its statistics are worked out from: on a logarithmic axis, those above zero. */
 export const shownValues = (node: ChartNode, group: ChartGroup): number[] => (node.yLog && node.kind !== 'scatter' ? group.values.filter((v) => v > 0) : group.values)
@@ -498,14 +706,27 @@ function sharedNotes(node: ChartNode, axes: { axis: Axis; name: string }[]): str
   return notes
 }
 
-const empty = (): ChartDrawing => ({ rects: [], lines: [], paths: [], circles: [], rules: [], swatches: [], texts: [], clip: { x: 0, y: 0, w: 0, h: 0 }, clipped: false, notes: [] })
+const empty = (): ChartDrawing => ({ rects: [], lines: [], paths: [], circles: [], dashes: [], rules: [], swatches: [], texts: [], clip: { x: 0, y: 0, w: 0, h: 0 }, clipped: false, notes: [] })
+
+/** The reference lines of a chart that can be drawn: finite values, above zero on a logarithmic axis, along x only in a scatter chart. The same rule decides what is saved. */
+export function usableRefLines(lines: unknown, kind: ChartKind, xLog: boolean, yLog: boolean): ChartRefLine[] {
+  const out: ChartRefLine[] = []
+  for (const raw of Array.isArray(lines) ? lines.slice(0, MAX_REF_LINES) : []) {
+    if (!raw || typeof raw !== 'object') continue
+    const l = raw as Record<string, unknown>
+    const axis = l.axis === 'x' && kind === 'scatter' ? 'x' : l.axis === 'y' ? 'y' : null
+    if (!axis || !usable(l.value) || ((axis === 'x' ? xLog : yLog) && l.value <= 0)) continue
+    out.push({ axis, value: l.value, ...(typeof l.label === 'string' && l.label.trim() ? { label: l.label.slice(0, 40) } : {}), ...(l.dash === 'dotted' || l.dash === 'solid' ? { dash: l.dash } : {}) })
+  }
+  return out
+}
 
 /**
- * Shared by every kind of chart: lettering, margins, the value axis on the left and the legend on
- * the right. `right` is the room kept free at the right edge; `rows` says how many lines the names
- * along the bottom take, given the width of the plot.
+ * Shared by every kind of chart: lettering, margins, the value axis on the left and the legend
+ * (at the right unless the scientist put it elsewhere). `right` is the room kept free at the right
+ * edge; `rows` says how many lines the names along the bottom take, given the width of the plot.
  */
-function frame(node: ChartNode, out: ChartDrawing, yAxis: Axis, legend: { name: string; colour: string }[], right: number, rows: (pw: number, fs: number) => number) {
+function frame(node: ChartNode, out: ChartDrawing, yAxis: Axis, legend: { name: string; colour: string; shape?: PointShape }[], right: number, rows: (pw: number, fs: number) => number) {
   const fs = node.fontSize ?? CHART_FONT
   const words = (text: string, x: number, top: number, extra: Partial<TextNode> = {}): TextNode => ({
     id: node.id, type: 'text', x: r1(x), y: r1(top), text, fontSize: fs, fill: INK, align: 'center', rotation: 0, ...extra,
@@ -516,23 +737,56 @@ function frame(node: ChartNode, out: ChartDrawing, yAxis: Axis, legend: { name: 
   // Room around the plot: title on top, numbers and axis title on the left, names below, legend on the right.
   const tickWidth = Math.max(...yAxis.ticks.map((t) => widthOf(t.label)))
   const left = (node.yLabel ? fs * 1.7 : 2) + tickWidth + 10
-  const top = node.title ? fs * 2 : fs * 0.8
-  const legendWidth = legend.length ? Math.max(...legend.map((l) => widthOf(l.name))) + fs + 16 : 0
+  const place: LegendPlace | 'right' = legend.length ? (node.legend ?? 'right') : 'none'
+  const widest = legend.length ? Math.max(...legend.map((l) => widthOf(l.name))) : 0
+  const legendWidth = place === 'right' ? widest + fs + 16 : 0
   const px = left
-  const py = top
   const pw = Math.max(10, node.w - left - right - legendWidth)
+  // Above or below the plot the entries stand side by side, on as many rows as they need.
+  const mark = fs * 0.8 + 5
+  const across: { x: number; row: number }[] = []
+  const rowWidths: number[] = []
+  if (place === 'top' || place === 'bottom') {
+    let x = 0
+    let row = 0
+    for (const entry of legend) {
+      const w = mark + widthOf(entry.name)
+      if (x > 0 && x + w > pw) {
+        row++
+        x = 0
+      }
+      across.push({ x, row })
+      rowWidths[row] = x + w
+      x += w + fs * 1.2
+    }
+  }
+  const legendHeight = rowWidths.length * fs * 1.5 + (rowWidths.length ? fs * 0.3 : 0)
+  const head = node.title ? fs * 2 : fs * 0.8
+  const top = head + (place === 'top' ? legendHeight : 0)
+  const py = top
   // One line of names takes what it always did; every further line one line more.
   const below = fs * (0.65 + 1.25 * Math.max(1, rows(pw, fs)))
-  const ph = Math.max(10, node.h - top - below - (node.xLabel ? fs * 1.5 : 0))
+  const ph = Math.max(10, node.h - top - below - (node.xLabel ? fs * 1.5 : 0) - (place === 'bottom' ? legendHeight : 0))
   out.clip = { x: r1(px), y: r1(py), w: r1(pw), h: r1(ph) }
   const xEnds = usableEnds(node.xMin, node.xMax, !!node.xLog)
   const yEnds = usableEnds(node.yMin, node.yMax, !!node.yLog)
   out.clipped = [yEnds.min, yEnds.max, ...(node.kind === 'scatter' ? [xEnds.min, xEnds.max] : [])].some((v) => v !== undefined)
 
   legend.forEach((entry, i) => {
-    const y = py + i * fs * 1.5
-    out.swatches.push({ x: r1(px + pw + right + 4), y: r1(y + fs * 0.2), size: r1(fs * 0.8), fill: entry.colour })
-    out.texts.push(words(entry.name, px + pw + right + 4 + fs * 0.8 + 5, y, { align: 'left' }))
+    if (place === 'none') return
+    let x: number
+    let y: number
+    if (place === 'top' || place === 'bottom') {
+      // Each row is centred on the plot.
+      x = px + Math.max(0, (pw - rowWidths[across[i].row]) / 2) + across[i].x
+      y = (place === 'top' ? (node.title ? fs * 2 : fs * 0.4) : py + ph + below + (node.xLabel ? fs * 1.5 : 0) + fs * 0.3) + across[i].row * fs * 1.5
+    } else {
+      // In a column: at the right of the plot, or inside it in one of its upper corners.
+      x = place === 'inside' ? px + pw - widest - mark - 8 : place === 'insideLeft' ? px + 10 : px + pw + right + 4
+      y = py + (place === 'right' ? 0 : 6) + i * fs * 1.5
+    }
+    out.swatches.push({ x: r1(x), y: r1(y + fs * 0.2), size: r1(fs * 0.8), fill: entry.colour, ...(entry.shape ? { shape: entry.shape } : {}) })
+    out.texts.push(words(entry.name, x + mark, y, { align: 'left' }))
   })
   if (node.title) out.texts.push(words(node.title, px + pw / 2, 2, { bold: true }))
   if (node.yLabel) {
@@ -567,6 +821,11 @@ interface Column {
   /** Place of the group in the chart's table. */
   index: number
   colour: string
+  /** The mark of its points, when it is not a circle. */
+  shape?: PointShape
+  /** How large its points are (1 = usual) and how solid. */
+  scale: number
+  solid: { opacity?: number }
   /** The values that can be shown (on a logarithmic axis: those above zero). */
   values: number[]
   s: Stats
@@ -648,7 +907,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
   const log = !!node.yLog
 
   let hidden = 0
-  const cols: Column[] = drawn.map(({ group, index }, i) => {
+  const cols: Column[] = drawn.map(({ group, index }) => {
     const values = shownValues(node, group)
     hidden += group.values.length - values.length
     const s = stats(values)
@@ -657,16 +916,19 @@ function columnLayout(node: ChartNode): ChartDrawing {
     // a dot chart every value and its error bar; a box or violin simply every value.
     const reach = node.kind === 'bar' || node.kind === 'line' ? [s.mean, s.mean - err, s.mean + err, ...(showPoints ? values : [])] : node.kind === 'dot' ? [...values, s.mean - err, s.mean + err] : values
     const shown = values.length ? (log ? reach.filter((v) => v > 0) : reach) : []
-    const colour = grouped ? series.find((x) => x.groups.includes(index))!.colour : groupColour(group, i)
+    const own = series.find((x) => x.groups.includes(index))!
+    const { colour, shape } = own
     // A logarithmic axis has no zero to stand a bar on: it starts below the smallest value of the
     // group, so that a bar or a mean always has a visible height above the bottom of the axis.
-    return { group, index, colour, values, s, box: boxStats(values), err, lo: Math.min(...shown, ...(log ? values : [])), hi: Math.max(...shown), cx: 0, width: 0 }
+    return { group, index, colour, ...(shape ? { shape } : {}), ...pointsOf(node, own), values, s, box: boxStats(values), err, lo: Math.min(...shown, ...(log ? values : [])), hi: Math.max(...shown), cx: 0, width: 0 }
   })
   const live = cols.filter((c) => c.values.length)
 
   // A linear axis includes zero, so the height of a bar means what it seems to; a logarithmic one cannot.
-  const lo = Math.min(...(log ? [] : [0]), ...live.map((c) => c.lo))
-  const hi = Math.max(...(log ? [] : [0]), ...live.map((c) => c.hi))
+  // Reference lines are part of what the chart shows, so the axis reaches them.
+  const refs = usableRefLines(node.refLines, node.kind, false, log)
+  const lo = Math.min(...(log ? [] : [0]), ...live.map((c) => c.lo), ...(live.length ? refs.map((l) => l.value) : []))
+  const hi = Math.max(...(log ? [] : [0]), ...live.map((c) => c.hi), ...(live.length ? refs.map((l) => l.value) : []))
   const axis = axisFor(Number.isFinite(lo) ? lo : 1, Number.isFinite(hi) ? hi : 10, { min: node.yMin, max: node.yMax, log })
 
   const notes = sharedNotes(node, [{ axis, name: 'value axis' }])
@@ -680,13 +942,18 @@ function columnLayout(node: ChartNode): ChartDrawing {
   const draw = (headroom: number): { out: ChartDrawing; short: number; room: number } => {
     const out = empty()
     out.notes = [...notes]
-    const f = frame(node, out, axis, grouped ? series : [], 8, (pw, fs) => Math.max(...fitNames(pw, fs).map((t) => t.split('\n').length), 1))
+    // The legend of a chart made of points shows their marks; of bars, boxes and violins, colour squares.
+    const marks = node.kind === 'dot' || node.kind === 'line'
+    const legend = series.map((x) => ({ name: x.name, colour: x.colour, ...(marks ? { shape: x.shape ?? ('circle' as const) } : {}) }))
+    const f = frame(node, out, axis, grouped ? legend : [], 8, (pw, fs) => Math.max(...fitNames(pw, fs).map((t) => t.split('\n').length), 1))
     const { fs, words, rule, px, py, pw, ph } = f
     const line = (x1: number, y1: number, x2: number, y2: number, width = 1.2) => out.lines.push({ x1: r1(x1), y1: r1(y1), x2: r1(x2), y2: r1(y2), width })
     const top = py + headroom
     const y = (v: number): number => top + (1 - axis.at(v)) * (py + ph - top)
     const base = y(log ? axis.min : Math.max(axis.min, Math.min(axis.max, 0)))
     const dot = Math.max(1.8, fs * 0.2)
+    // The rings of a box plot's outliers follow the size set for the whole chart.
+    const ring = dot * (pointStyle(node.pointSize, 1).pointSize ?? 1)
 
     // Where each column stands. In a grouped chart the series of one category stand side by side;
     // the points of a line chart stand in the middle of their category, one line per series.
@@ -708,7 +975,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
     const points = (c: Column, radius: number, fill: string) => {
       // Values are spread sideways in a fixed pattern, so the same data always gives the same picture.
       const spread = c.width * 0.16
-      c.values.forEach((v, j) => out.circles.push({ cx: r1(c.cx + (((j * 3) % 7) - 3) / 3 * spread), cy: r1(y(v)), r: r1(radius), fill }))
+      c.values.forEach((v, j) => out.circles.push({ cx: r1(c.cx + (((j * 3) % 7) - 3) / 3 * spread), cy: r1(y(v)), r: r1(radius * c.scale), fill, ...(c.shape ? { shape: c.shape } : {}), ...c.solid }))
     }
 
     for (const c of live) {
@@ -733,7 +1000,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
         out.rects.push({ x: r1(cx - half), y: r1(y(b.q3)), w: r1(half * 2), h: r1(Math.abs(y(b.q1) - y(b.q3))), fill: c.colour })
         line(cx - half, y(b.median), cx + half, y(b.median), 2)
         // Outliers are drawn as rings, unless every value is shown as a dot anyway.
-        if (!showPoints) for (const v of b.outliers) out.circles.push({ cx: r1(cx), cy: r1(y(v)), r: r1(dot * 1.2), fill: INK, ring: true })
+        if (!showPoints) for (const v of b.outliers) out.circles.push({ cx: r1(cx), cy: r1(y(v)), r: r1(ring * 1.2), fill: INK, ring: true })
       }
       if (violin) {
         // The outline follows the estimated density, from the smallest to the largest value. On a
@@ -766,8 +1033,16 @@ function columnLayout(node: ChartNode): ChartDrawing {
         if (!ok.length) continue
         const colour = ok[0].colour
         out.paths.push({ d: ok.map((c, i) => `${i ? 'L' : 'M'}${r1(c.cx)} ${r1(y(c.s.mean))}`).join(''), stroke: colour, width: 2 })
-        for (const c of ok) out.circles.push({ cx: r1(c.cx), cy: r1(y(c.s.mean)), r: r1(dot * 1.5), fill: colour })
+        // The marks of the means take the shape and size of the points, and stay solid.
+        for (const c of ok) out.circles.push({ cx: r1(c.cx), cy: r1(y(c.s.mean)), r: r1(dot * 1.5 * c.scale), fill: colour, ...(c.shape ? { shape: c.shape } : {}) })
       }
+    }
+
+    for (const l of refs) {
+      const at = y(l.value)
+      out.dashes.push({ x1: r1(px), y1: r1(at), x2: r1(px + pw), y2: r1(at), ...(l.dash ? { style: l.dash } : {}) })
+      // The label sits on the line at its right end, unless the line lies outside the range that was set.
+      if (l.label && axis.at(l.value) >= 0 && axis.at(l.value) <= 1) out.texts.push(words(l.label, px + pw - 3, at - fs * 1.25 - 1, { align: 'right' }))
     }
 
     // Names along the bottom: the categories of a grouped chart, otherwise every group. A name
@@ -784,7 +1059,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
     const placed: { x1: number; x2: number; y: number }[] = []
     let highest = py
     const wanted = (node.brackets ?? [])
-      .map((b) => ({ a: live.find((c) => c.index === b.from), b: live.find((c) => c.index === b.to), label: b.label }))
+      .map((b) => ({ a: live.find((c) => c.index === b.from), b: live.find((c) => c.index === b.to), label: bracketLabel(node, b) }))
       .filter((b): b is { a: Column; b: Column; label: string } => !!b.a && !!b.b && b.a !== b.b)
       .map((b) => ({ x1: Math.min(b.a.cx, b.b.cx), x2: Math.max(b.a.cx, b.b.cx), label: b.label }))
       .sort((p, q) => p.x2 - p.x1 - (q.x2 - q.x1) || p.x1 - q.x1)
@@ -835,7 +1110,12 @@ function columnLayout(node: ChartNode): ChartDrawing {
 interface Series {
   name: string
   colour: string
+  shape?: PointShape
+  scale: number
+  solid: { opacity?: number }
   points: [number, number][]
+  /** The name of each point; '' where it has none. */
+  names: string[]
   fit: Fit | null
 }
 
@@ -843,12 +1123,13 @@ interface Series {
 function scatterSeries(node: ChartNode): { series: Series[]; hidden: number } {
   let hidden = 0
   const series = drawnGroups(node).map((c, i) => {
-    const pairs = c.group.values.map((v, k) => [c.group.xs?.[k] ?? NaN, v] as [number, number]).filter(([x, v]) => Number.isFinite(x) && Number.isFinite(v))
-    const points = pairs.filter(([x, v]) => (!node.xLog || x > 0) && (!node.yLog || v > 0))
-    hidden += pairs.length - points.length
+    const all = c.group.values.map((v, k) => ({ p: [c.group.xs?.[k] ?? NaN, v] as [number, number], name: c.group.labels?.[k] ?? '' })).filter(({ p }) => Number.isFinite(p[0]) && Number.isFinite(p[1]))
+    const shown = all.filter(({ p: [x, v] }) => (!node.xLog || x > 0) && (!node.yLog || v > 0))
+    const points = shown.map((s) => s.p)
+    hidden += all.length - points.length
     // The line is fitted to the values as they are plotted: to their logarithms on a logarithmic axis.
     const plotted = points.map(([x, v]) => [node.xLog ? Math.log10(x) : x, node.yLog ? Math.log10(v) : v] as [number, number])
-    return { name: c.group.name, colour: groupColour(c.group, i), points, fit: fitLine(plotted) }
+    return { name: c.group.name, colour: groupColour(c.group, i, node.palette), ...markOf(c.group.shape), ...pointsOf(node, c.group), points, names: shown.map((s) => s.name), fit: fitLine(plotted) }
   })
   return { series, hidden }
 }
@@ -868,7 +1149,10 @@ function scatterLayout(node: ChartNode): ChartDrawing {
   const out = empty()
   const { series, hidden } = scatterSeries(node)
   const all = series.flatMap((s) => s.points)
-  const xAxis = scatterAxis(all.map((p) => p[0]), { min: node.xMin, max: node.xMax, log: node.xLog })
+  // Reference lines are part of what the chart shows, so the axes reach them.
+  const refs = all.length ? usableRefLines(node.refLines, 'scatter', !!node.xLog, !!node.yLog) : []
+  const refAt = (axis: 'x' | 'y'): number[] => refs.filter((l) => l.axis === axis).map((l) => l.value)
+  const xAxis = scatterAxis([...all.map((p) => p[0]), ...refAt('x')], { min: node.xMin, max: node.xMax, log: node.xLog })
 
   // The two ends of every fitted line, as values: the line runs across the x values of its own
   // series only (it says nothing beyond them), and the value axis is made to hold it.
@@ -881,7 +1165,7 @@ function scatterLayout(node: ChartNode): ChartDrawing {
     })
   }
   const lineEnds = series.map(fitEnds).map((ends) => (ends.every(([, v]) => usable(v) && (!node.yLog || v > 0)) ? ends : []))
-  const yAxis = scatterAxis([...all.map((p) => p[1]), ...lineEnds.flat().map((p) => p[1])], { min: node.yMin, max: node.yMax, log: node.yLog })
+  const yAxis = scatterAxis([...all.map((p) => p[1]), ...lineEnds.flat().map((p) => p[1]), ...refAt('y')], { min: node.yMin, max: node.yMax, log: node.yLog })
 
   out.notes = sharedNotes(node, [{ axis: yAxis, name: 'y axis' }, { axis: xAxis, name: 'x axis' }])
   if (hidden) out.notes.push(`${hidden} ${hidden === 1 ? 'point is' : 'points are'} zero or negative on a logarithmic axis: ${hidden === 1 ? 'it' : 'they'} cannot be shown, and the fitted line is worked out without ${hidden === 1 ? 'it' : 'them'}.`)
@@ -889,17 +1173,53 @@ function scatterLayout(node: ChartNode): ChartDrawing {
   // The last number along the bottom is centred under the end of the axis: keep room for half of it.
   const fs = node.fontSize ?? CHART_FONT
   const widest = Math.max(...xAxis.ticks.map((t) => textWidth(t.label, fs)))
-  const f = frame(node, out, yAxis, series.length > 1 ? series.map((s) => ({ name: s.name, colour: s.colour })) : [], Math.max(fs, widest / 2 + 2), () => 1)
+  const f = frame(node, out, yAxis, series.length > 1 ? series.map((s) => ({ name: s.name, colour: s.colour, shape: s.shape ?? ('circle' as const) })) : [], Math.max(fs, widest / 2 + 2), () => 1)
   const { words, rule, px, py, pw, ph } = f
   const x = (v: number): number => px + xAxis.at(v) * pw
   const y = (v: number): number => py + (1 - yAxis.at(v)) * ph
   const dot = Math.max(2.2, fs * 0.26)
 
+  for (const l of refs) {
+    const axis = l.axis === 'x' ? xAxis : yAxis
+    const inside = axis.at(l.value) >= 0 && axis.at(l.value) <= 1
+    if (l.axis === 'x') {
+      out.dashes.push({ x1: r1(x(l.value)), y1: r1(py), x2: r1(x(l.value)), y2: r1(py + ph), ...(l.dash ? { style: l.dash } : {}) })
+      if (l.label && inside) out.texts.push(words(l.label, x(l.value) + 4, py + 1, { align: 'left' }))
+    } else {
+      out.dashes.push({ x1: r1(px), y1: r1(y(l.value)), x2: r1(px + pw), y2: r1(y(l.value)), ...(l.dash ? { style: l.dash } : {}) })
+      if (l.label && inside) out.texts.push(words(l.label, px + pw - 3, y(l.value) - fs * 1.25 - 1, { align: 'right' }))
+    }
+  }
+
   series.forEach((s, i) => {
     const ends = lineEnds[i].map(([vx, vy]) => [x(vx), y(vy)])
     if (ends.length === 2 && ends.flat().every((v) => Number.isFinite(v))) out.paths.push({ d: `M${ends.map((e) => `${r1(e[0])} ${r1(e[1])}`).join('L')}`, stroke: s.colour, width: 2 })
-    for (const [vx, vy] of s.points) out.circles.push({ cx: r1(x(vx)), cy: r1(y(vy)), r: r1(dot), fill: s.colour })
+    for (const [vx, vy] of s.points) out.circles.push({ cx: r1(x(vx)), cy: r1(y(vy)), r: r1(dot * s.scale), fill: s.colour, ...(s.shape ? { shape: s.shape } : {}), ...s.solid })
   })
+
+  // Names of points, a little smaller than the rest of the lettering. Each goes to the right of
+  // its point, or failing that to the left, above or below: the first place inside the plot that
+  // no earlier name occupies. Points outside the range that was set get none.
+  const named = series.flatMap((s) => s.points.map(([vx, vy], k) => ({ name: s.names[k], cx: x(vx), cy: y(vy), gap: dot * s.scale + 2 }))).filter((p) => p.name && p.cx >= px - 0.5 && p.cx <= px + pw + 0.5 && p.cy >= py - 0.5 && p.cy <= py + ph + 0.5)
+  if (named.length > MAX_POINT_LABELS) out.notes.push(`${named.length} points have a name; only the first ${MAX_POINT_LABELS} are written on the chart. Keep names in the table only for the points you want to label.`)
+  const small = Math.max(6, fs * 0.85)
+  const taken: { x: number; y: number; w: number; h: number }[] = []
+  for (const p of named.slice(0, MAX_POINT_LABELS)) {
+    const w = measureText(words(p.name, 0, 0, { fontSize: small })).w
+    const h = small * 1.25
+    const gap = p.gap
+    const places = [
+      { x: p.cx + gap, y: p.cy - h / 2 },
+      { x: p.cx - gap - w, y: p.cy - h / 2 },
+      { x: p.cx - w / 2, y: p.cy - gap - h },
+      { x: p.cx - w / 2, y: p.cy + gap },
+    ]
+    const inPlot = places.filter((b) => b.x >= px && b.x + w <= px + pw && b.y >= py && b.y + h <= py + ph)
+    const free = inPlot.find((b) => !taken.some((t) => b.x < t.x + t.w && t.x < b.x + w && b.y < t.y + t.h && t.y < b.y + h))
+    const box = free ?? inPlot[0] ?? places[0]
+    taken.push({ ...box, w, h })
+    out.texts.push(words(p.name, box.x, box.y, { align: 'left', fontSize: small }))
+  }
 
   drawValueAxis(f, yAxis, y, out, py)
   rule(px, py + ph, px + pw, py + ph)

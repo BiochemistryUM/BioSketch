@@ -26,11 +26,19 @@ import { placeImageFile } from '../io/images'
 import { removeNodes } from '../model/doc'
 import { SYMBOL_GROUPS, insertText, wrapSelection } from '../model/richtext'
 import { SHAPE_KINDS, shapePath } from '../model/shapes'
-import { carryOver, chartLayout, chartSeries, crossTable, headRows, isGrouped, readTable, scatterFits, shownValues, stats, tableText, type TableReport } from '../model/chart'
+import {
+  MAX_BRACKETS, MAX_REF_LINES, POINT_OPACITY_MIN, POINT_SIZE_MAX, POINT_SIZE_MIN,
+  bracketLabel, carryOver, chartAdvice, chartAnalysis, chartLayout, chartSamples, chartSeries, crossTable, hasPoints, headRows, isGrouped, pointStyle, readTable, scatterFits, shownValues, stats, tableText, withTestBrackets,
+  type TableReport,
+} from '../model/chart'
+import { INSTRUCTION_EXAMPLES, applyInstruction } from '../model/chartCommands'
+import { PALETTES, paletteColours } from '../model/palettes'
+import { TABLE_ACCEPT, tableFromFile } from '../io/tables'
 import { boxStats } from '../model/chartStats'
+import { STARS_KEY, TEST_DOES, TEST_NAMES, TEST_SHORT, pText, stars, testFor } from '../model/chartTests'
 import { DASH_SCALE_MAX, DASH_SCALE_MIN, dashArray, hasDots, lineStyleOf, lineStylePatch, type Dashable, type LineStyle } from '../model/dash'
 import { SHAPE_LABEL_DEFAULT } from '../model/nodes'
-import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ConnectorFade, ConnectorKind, ConnectorNode, FigNode, FontFamily, IconNode, ImageNode, MembraneNode, ShapeKind, ShapeNode, StrokeNode, TextAlign, TextNode } from '../model/types'
+import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartRefLine, ChartTest, ConnectorFade, ConnectorKind, ConnectorNode, FigNode, FontFamily, IconNode, ImageNode, LegendPlace, MembraneNode, PointShape, ShapeKind, ShapeNode, StrokeNode, TextAlign, TextNode } from '../model/types'
 import { toast, useEditor } from '../store'
 import { PANEL_LAYOUTS, type PanelLayout } from '../model/panels'
 import { rememberStyle } from '../figures'
@@ -633,6 +641,22 @@ function AxisRange(props: { title: string; min: number | undefined; max: number 
   )
 }
 
+const SHAPE_OPTIONS: { value: PointShape; label: string }[] = [
+  { value: 'circle', label: '● Circle' },
+  { value: 'square', label: '■ Square' },
+  { value: 'triangle', label: '▲ Triangle' },
+  { value: 'diamond', label: '◆ Diamond' },
+]
+
+const LEGEND_OPTIONS: { value: LegendPlace | 'right'; label: string }[] = [
+  { value: 'right', label: 'Right of the plot' },
+  { value: 'top', label: 'Above the plot' },
+  { value: 'bottom', label: 'Below the plot' },
+  { value: 'inside', label: 'Inside, top right' },
+  { value: 'insideLeft', label: 'Inside, top left' },
+  { value: 'none', label: 'Hidden' },
+]
+
 /** What a group is called in a list: its category first in a grouped chart. */
 const groupName = (g: ChartGroup): string => (g.category ? `${g.category} · ${g.name}` : g.name)
 
@@ -676,12 +700,25 @@ function ChartProps({ node }: { node: ChartNode }) {
     const report = head === guess.head ? guess : readTable(text, node.kind, head)
     if (!report.groups.some((g) => g.values.length)) {
       setTyped({ text, groups: node.groups, head: chosen, report })
-      return
+      return false
     }
     const carried = carryOver(node.groups, report.groups, node.brackets)
     setTyped({ text, groups: carried.groups, head: chosen, report })
     set({ groups: carried.groups, brackets: carried.brackets }, 'chart-data')
     if (carried.lost) toast(`${carried.lost === 1 ? 'A bracket was' : `${carried.lost} brackets were`} removed: ${carried.lost === 1 ? 'one of its groups is' : 'their groups are'} no longer in the table.`)
+    return true
+  }
+
+  /** Put the table of a file (CSV, text or Excel) in the chart, as if it had been pasted. */
+  const tableFile = useRef<HTMLInputElement>(null)
+  const importTable = async (file: File) => {
+    try {
+      const table = await tableFromFile(file)
+      const found = read(table.text, undefined)
+      toast(found ? `Table read from “${file.name}”.${table.note ? ` ${table.note}` : ''}` : `No numbers were found in “${file.name}”.`)
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'This file could not be read.')
+    }
   }
 
   // Going to a scatter chart and back reads the table twice, which loses things. The chart as it
@@ -693,11 +730,12 @@ function ChartProps({ node }: { node: ChartNode }) {
     crossed.current = null
     if (back && back.result === node.groups) {
       const b = back.before
-      return set({ kind: (b.kind === 'scatter') === (kind === 'scatter') ? kind : b.kind, groups: b.groups, brackets: b.brackets, fit: b.fit, xMin: b.xMin, xMax: b.xMax, xLog: b.xLog })
+      return set({ kind: (b.kind === 'scatter') === (kind === 'scatter') ? kind : b.kind, groups: b.groups, brackets: b.brackets, test: b.test, refLines: b.refLines, fit: b.fit, xMin: b.xMin, xMax: b.xMax, xLog: b.xLog })
     }
     const result = crossTable(node.groups, node.kind, kind)
     crossed.current = { before: node, result }
-    set({ kind, groups: result, brackets: undefined, fit: undefined, xMin: undefined, xMax: undefined, xLog: undefined })
+    const across = refLines.filter((l) => l.axis === 'y')
+    set({ kind, groups: result, brackets: undefined, test: undefined, fit: undefined, xMin: undefined, xMax: undefined, xLog: undefined, refLines: across.length ? across : undefined })
     toast(kind === 'scatter' ? 'A scatter chart reads the first column of the table as the x values. Choose another kind again to get your chart back.' : 'The x values became the first group. Choose Scatter again to get your chart back.')
   }
 
@@ -707,6 +745,56 @@ function ChartProps({ node }: { node: ChartNode }) {
   const fits = scatter ? scatterFits(node) : []
   const brackets = node.brackets ?? []
   const setBracket = (i: number, change: Partial<ChartBracket>) => set({ brackets: brackets.map((b, k) => (k === i ? { ...b, ...change } : b)) }, 'chart-bracket')
+  const testing = !scatter && !!node.test?.by && !!chartAnalysis(node)?.ok
+  const showsPoints = hasPoints(node)
+  // Size and transparency of points: for all groups, or for the one chosen here.
+  const [pointsFor, setPointsFor] = useState(-1)
+  const one = pointsFor >= 0 && pointsFor < series.length && series.length > 1 ? series[pointsFor] : null
+  const shownPoints = pointStyle(one?.pointSize ?? node.pointSize, one?.pointOpacity ?? node.pointOpacity)
+  const setPoints = (change: { pointSize?: number; pointOpacity?: number }, merge: string) =>
+    one ? set({ groups: node.groups.map((g, k) => (one.groups.includes(k) ? { ...g, ...change } : g)) }, merge) : set('pointSize' in change ? { pointSize: pointStyle(change.pointSize, 1).pointSize } : { pointOpacity: pointStyle(1, change.pointOpacity).pointOpacity }, merge)
+  // The instruction box: what was typed, and what the last instruction did.
+  const [asked, setAsked] = useState('')
+  const [answer, setAnswer] = useState<{ done: string[]; unclear: string[] } | null>(null)
+  const instruct = () => {
+    const result = applyInstruction(node, asked)
+    if (result.done.length) {
+      // The whole instruction is one change, so one Undo takes it back.
+      const { id: _id, type: _type, ...change } = result.node
+      set({ ...Object.fromEntries(Object.keys(node).filter((key) => key !== 'id' && key !== 'type' && !(key in change)).map((key) => [key, undefined])), ...change })
+    }
+    setAnswer({ done: result.done, unclear: result.unclear })
+    if (!result.unclear.length) setAsked('')
+  }
+  /** The mark of a series' points, beside its colour. */
+  const shapeBox = (entry: (typeof series)[number]) =>
+    showsPoints && (
+      <select
+        className="shape-select"
+        aria-label={`Shape of the points of ${entry.name}`}
+        title={`Shape of the points of ${entry.name}`}
+        value={entry.shape ?? 'circle'}
+        onChange={(e) => {
+          const shape = e.target.value as PointShape
+          set({ groups: node.groups.map((g, k) => (entry.groups.includes(k) ? (shape === 'circle' ? (({ shape: _usual, ...rest }) => rest)(g) : { ...g, shape }) : g)) })
+        }}
+      >
+        {SHAPE_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    )
+  const refLines = node.refLines ?? []
+  const setLine = (i: number, change: Partial<ChartRefLine>) => set({ refLines: refLines.map((l, k) => (k === i ? { ...l, ...change } : l)) }, 'chart-line')
+  /** A new line goes through the middle of the data, where it can be seen and dragged from by typing. */
+  const addLine = () => {
+    const values = node.groups.flatMap((g) => g.values).sort((a, b) => a - b)
+    const middle = values.length ? Number(values[Math.floor(values.length / 2)].toPrecision(2)) : 1
+    set({ refLines: [...refLines, { axis: 'y', value: node.yLog && middle <= 0 ? 1 : middle }] })
+  }
+  const hasLegend = grouped || (scatter && series.length > 1)
   const colourBox = (entry: (typeof series)[number]) => (
     <input
       type="color"
@@ -732,6 +820,52 @@ function ChartProps({ node }: { node: ChartNode }) {
   return (
     <Section title="Chart">
       <Segmented label="Chart type" value={node.kind} options={CHART_OPTIONS} onChange={onKind} wrap />
+      <Field label="Describe a change">
+        <textarea
+          className="text-input"
+          aria-label="Describe a change to the chart"
+          rows={2}
+          value={asked}
+          placeholder="e.g. box plot with all points; line at 5 labelled limit; legend at the top"
+          onChange={(e) => setAsked(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && asked.trim()) {
+              e.preventDefault()
+              instruct()
+            }
+          }}
+        />
+        <button className="btn small" disabled={!asked.trim()} onClick={instruct}>
+          Apply
+        </button>
+        {answer && (
+          <div className="instruction-answer" role="status">
+            {answer.done.map((line, i) => (
+              <p key={`d${i}`} className="did">
+                {line}
+              </p>
+            ))}
+            {answer.unclear.map((line, i) => (
+              <p key={`u${i}`} className="notice">
+                {line}
+              </p>
+            ))}
+          </div>
+        )}
+        <details className="instruction-help">
+          <summary>What you can ask for</summary>
+          <p className="hint">Write in plain words; several things at once are fine. This box reads set phrases in your browser (no AI, nothing is sent anywhere) and tells you what it did or did not understand. Examples:</p>
+          <ul>
+            {INSTRUCTION_EXAMPLES.map((example) => (
+              <li key={example}>
+                <button className="example" onClick={() => setAsked(example)}>
+                  {example}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
+      </Field>
       <Field label="Numbers">
         <textarea
           className="text-input table-input"
@@ -741,6 +875,20 @@ function ChartProps({ node }: { node: ChartNode }) {
           spellCheck={false}
           value={shownText}
           onChange={(e) => read(e.target.value, live?.head)}
+        />
+        <button className="btn small" title="Read the table from a CSV, text or Excel file" onClick={() => tableFile.current?.click()}>
+          Import a table from a file…
+        </button>
+        <input
+          ref={tableFile}
+          type="file"
+          accept={TABLE_ACCEPT}
+          hidden
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) void importTable(f)
+            e.target.value = ''
+          }}
         />
       </Field>
       <Field label="Rows of names at the top">
@@ -753,9 +901,9 @@ function ChartProps({ node }: { node: ChartNode }) {
       </Field>
       <p className="hint">
         {scatter
-          ? 'First column: the x values. Each further column: the y values of one series, with its name in the first row.'
+          ? 'First column: the x values. Each further column: the y values of one series, with its name in the first row. To write names beside points (genes, samples), put a column of names before the x values; only rows with a name are labelled.'
           : 'One column per group, with its name in the first row; one row per replicate. For a grouped chart, add a row above with the category of each column (for example WT, WT, KO, KO).'}{' '}
-        Paste from a spreadsheet, or type with tabs, commas or spaces between the numbers.
+        Paste from a spreadsheet, type with tabs, commas or spaces between the numbers, or import a .csv, .txt or .xlsx file (the first sheet).
       </p>
       {[...(live ? tableNotices(live.report) : []), ...drawing.notes].map((note, i) => (
         <p key={i} className="notice">
@@ -771,6 +919,7 @@ function ChartProps({ node }: { node: ChartNode }) {
                 return (
                   <li key={i}>
                     {colourBox(entry)}
+                    {shapeBox(entry)}
                     <span>
                       <b>{entry.name}</b>:{' '}
                       {scatter
@@ -784,6 +933,7 @@ function ChartProps({ node }: { node: ChartNode }) {
                 ...series.map((entry, i) => (
                   <li key={`s${i}`}>
                     {colourBox(entry)}
+                    {shapeBox(entry)}
                     <span>
                       <b>{entry.name}</b>
                     </span>
@@ -814,6 +964,79 @@ function ChartProps({ node }: { node: ChartNode }) {
           Draw a fitted straight line
         </Check>
       )}
+      {showsPoints && (
+        <Field label="Points">
+          {series.length > 1 && (
+            <select aria-label="Which points to change" value={one ? pointsFor : -1} onChange={(e) => setPointsFor(Number(e.target.value))}>
+              <option value={-1}>All groups</option>
+              {series.map((entry, i) => (
+                <option key={i} value={i}>
+                  Only {entry.name}
+                  {entry.pointSize !== undefined || entry.pointOpacity !== undefined ? ' (has its own)' : ''}
+                </option>
+              ))}
+            </select>
+          )}
+          <span className="sub-label">Size {Math.round((shownPoints.pointSize ?? 1) * 100)}%</span>
+          <Range label={`Size of the points${one ? ` of ${one.name}` : ''}`} value={shownPoints.pointSize ?? 1} min={POINT_SIZE_MIN} max={POINT_SIZE_MAX} step={0.25} onChange={(v) => setPoints({ pointSize: v }, 'chart-point-size')} />
+          <span className="sub-label">{Math.round((1 - (shownPoints.pointOpacity ?? 1)) * 100)}% transparent</span>
+          <Range
+            label={`Transparency of the points${one ? ` of ${one.name}` : ''}`}
+            value={1 - (shownPoints.pointOpacity ?? 1)}
+            min={0}
+            max={1 - POINT_OPACITY_MIN}
+            step={0.05}
+            onChange={(v) => setPoints({ pointOpacity: Math.round((1 - v) * 100) / 100 }, 'chart-point-opacity')}
+          />
+          {one && (one.pointSize !== undefined || one.pointOpacity !== undefined) && (
+            <button className="btn small" onClick={() => set({ groups: node.groups.map((g, k) => (one.groups.includes(k) ? (({ pointSize: _s, pointOpacity: _o, ...rest }) => rest)(g) : g)) })}>
+              Same as the other groups
+            </button>
+          )}
+          <p className="hint">
+            {series.length > 1 ? 'Change all points, or choose one group to give it a size and transparency of its own. ' : ''}The shape is chosen beside each group’s colour, above. Transparent points show where many lie on top of each other.
+          </p>
+        </Field>
+      )}
+      <Field label="Colours">
+        <select
+          aria-label="Colour palette"
+          value={node.palette ?? 'biosketch'}
+          onChange={(e) => set({ palette: e.target.value === 'biosketch' ? undefined : e.target.value, groups: node.groups.map(({ color: _own, ...g }) => g) })}
+        >
+          <optgroup label="Colour-blind friendly">
+            {PALETTES.filter((p) => p.safe).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Common">
+            {PALETTES.filter((p) => !p.safe).map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </optgroup>
+        </select>
+        <div className="palette-strip" aria-hidden="true">
+          {paletteColours(node.palette).map((c) => (
+            <span key={c} style={{ background: c }} />
+          ))}
+        </div>
+        <p className="hint">{PALETTES.find((p) => p.id === (node.palette ?? 'biosketch'))?.about} Choosing a palette recolours every group; a single group can still be given its own colour above.</p>
+      </Field>
+      {hasLegend && (
+        <Field label="Legend">
+          <select aria-label="Place of the legend" value={node.legend ?? 'right'} onChange={(e) => set({ legend: e.target.value === 'right' ? undefined : (e.target.value as LegendPlace) })}>
+            {LEGEND_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
       <AxisRange
         title={scatter ? 'Range of the y axis' : 'Range of the value axis'}
         min={node.yMin}
@@ -834,6 +1057,30 @@ function ChartProps({ node }: { node: ChartNode }) {
           onLog={(v) => set({ xLog: v || undefined })}
         />
       )}
+      <Field label="Reference lines">
+        {refLines.map((l, i) => (
+          <div key={i} className="bracket-row">
+            {scatter ? (
+              <select aria-label="Direction of the line" value={l.axis} onChange={(e) => setLine(i, { axis: e.target.value === 'x' ? 'x' : 'y' })}>
+                <option value="y">Across, at y =</option>
+                <option value="x">Upright, at x =</option>
+              </select>
+            ) : (
+              <span className="between">Across, at</span>
+            )}
+            <OptionalNumber label="Value the line is drawn at" value={l.value} placeholder="value" onChange={(value) => value !== undefined && setLine(i, { value })} />
+            <input type="text" className="text-line" aria-label="Label of the line" value={l.label ?? ''} placeholder="label, e.g. p = 0.05" onChange={(e) => setLine(i, { label: e.target.value.trim() ? e.target.value.slice(0, 40) : undefined })} />
+            <button className="icon-only" aria-label="Remove this line" title="Remove this line" onClick={() => set({ refLines: refLines.length > 1 ? refLines.filter((_, k) => k !== i) : undefined })}>
+              <Icon name="close" size={14} />
+            </button>
+          </div>
+        ))}
+        <button className="btn small" disabled={refLines.length >= MAX_REF_LINES} onClick={addLine}>
+          Add a line
+        </button>
+        <p className="hint">A dashed line across the plot at a value you choose, for example a threshold or a detection limit.</p>
+      </Field>
+      {!scatter && <ChartTestProps node={node} set={set} />}
       {!scatter && (
         <Field label="Significance brackets">
           {brackets.map((b, i) => (
@@ -852,20 +1099,40 @@ function ChartProps({ node }: { node: ChartNode }) {
                   </option>
                 ))}
               </select>
-              <input type="text" className="text-line" aria-label="Label of the bracket" value={b.label} placeholder="e.g. p = 0.03" onChange={(e) => setBracket(i, { label: e.target.value.slice(0, 40) })} />
+              <input
+                type="text"
+                className="text-line"
+                aria-label="Label of the bracket"
+                value={bracketLabel(node, b)}
+                placeholder={b.auto ? 'not compared by the test' : 'e.g. p = 0.03'}
+                onChange={(e) => setBracket(i, { label: e.target.value.slice(0, 40), auto: undefined })}
+              />
               <button className="icon-only" aria-label="Remove this bracket" title="Remove this bracket" onClick={() => set({ brackets: brackets.length > 1 ? brackets.filter((_, k) => k !== i) : undefined })}>
                 <Icon name="close" size={14} />
               </button>
+              {b.auto ? (
+                <span className="bracket-source">Follows the test. Type in the box to write your own label.</span>
+              ) : (
+                testing && (
+                  <button className="btn small bracket-source" onClick={() => setBracket(i, { auto: true, label: '' })}>
+                    Use the result of the test
+                  </button>
+                )
+              )}
             </div>
           ))}
           <button
             className="btn small"
-            disabled={drawn.length < 2 || brackets.length >= 30}
-            onClick={() => set({ brackets: [...brackets, { from: drawn[0].index, to: drawn[Math.min(1, drawn.length - 1)].index, label: '*' }] })}
+            disabled={drawn.length < 2 || brackets.length >= MAX_BRACKETS}
+            onClick={() => set({ brackets: [...brackets, { from: drawn[0].index, to: drawn[Math.min(1, drawn.length - 1)].index, ...(testing ? { label: '', auto: true } : { label: '*' }) }] })}
           >
             Add a bracket
           </button>
-          <p className="hint">Choose two groups and type the label yourself (for example p = 0.03, ** or ns). BioSketch draws the bracket; it does not test your data.</p>
+          <p className="hint">
+            {testing
+              ? 'Choose two groups. A bracket that follows the test shows its result for these two groups and changes with the numbers; or type a label of your own.'
+              : 'Choose two groups and type the label yourself (for example p = 0.03, ** or ns), or choose a test above and let the brackets show its result.'}
+          </p>
         </Field>
       )}
       <Field label="Title">
@@ -891,6 +1158,154 @@ function ChartProps({ node }: { node: ChartNode }) {
               : 'The value axis includes zero unless you set its range or make it logarithmic.'}
       </p>
     </Section>
+  )
+}
+
+/** The most pairs listed in the panel; a chart with many groups has hundreds. */
+const PAIRS_LISTED = 28
+
+/**
+ * The statistical test of a chart: how the scientist wants to compare the groups, the test
+ * BioSketch suggests for this table with what it does and why it fits, and the result of the
+ * test that was chosen.
+ */
+function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<ChartNode>, merge?: string) => void }) {
+  const compared = chartSamples(node)
+  const advice = chartAdvice(node)
+  const outcome = chartAnalysis(node)
+  const test: ChartTest = node.test ?? {}
+  const k = compared.samples.length
+  /** Keep only the choices that are not the usual ones, so the figure stores nothing for an untouched chart. */
+  const setTest = (change: Partial<ChartTest>) => {
+    const next = { ...test, ...change }
+    const kept: ChartTest = { ...(next.by ? { by: next.by } : {}), ...(next.paired ? { paired: true } : {}), ...(next.versusFirst ? { versusFirst: true } : {}), ...(next.stars ? { stars: true } : {}) }
+    set({ test: Object.keys(kept).length ? kept : undefined })
+  }
+  if (compared.problem) {
+    return (
+      <Field label="Statistical test">
+        <p className="hint">{compared.problem}</p>
+      </Field>
+    )
+  }
+  const result = outcome?.ok ? outcome.result : null
+  const pairs = result ? result.pairs.map((p) => ({ from: compared.indexes[p.a], to: compared.indexes[p.b], a: compared.names[p.a], b: compared.names[p.b], p: p.p })) : []
+  /** Brackets for the pairs the test finds different (with two groups: for the one pair, whatever it finds). */
+  const addBrackets = () => {
+    const out = withTestBrackets(node)
+    if (!out.added && !out.over) return toast(k === 2 || out.different ? `The chart already has ${k === 2 ? 'this bracket' : 'these brackets'}.` : 'No pair of groups has p below 0.05, so there is no bracket to add.')
+    if (out.added) set({ brackets: out.brackets })
+    if (out.over) toast(`A chart takes at most ${MAX_BRACKETS} brackets: ${out.over} could not be added.`)
+  }
+  const options: { value: 'none' | 'means' | 'ranks'; label: string; title: string }[] = [
+    { value: 'none', label: 'No test', title: 'Do not test; type the labels of brackets yourself' },
+    { value: 'means', label: TEST_SHORT[testFor(k, 'means', !!test.paired)], title: `Compare means: ${TEST_NAMES[testFor(k, 'means', !!test.paired)]}` },
+    { value: 'ranks', label: TEST_SHORT[testFor(k, 'ranks', !!test.paired)], title: `Compare ranks: ${TEST_NAMES[testFor(k, 'ranks', !!test.paired)]}` },
+  ]
+  const chosen = test.by ? testFor(k, test.by, !!test.paired) : null
+
+  return (
+    <Field label="Statistical test">
+      <p className="hint">How do you want to compare the groups?</p>
+      <Check checked={!!test.paired} onChange={(paired) => setTest({ paired })}>
+        Each row is one sample (animal, culture, patient) measured in every group
+      </Check>
+      {k > 2 && (
+        <Segmented
+          label="Pairs of groups to compare"
+          value={test.versusFirst ? 'first' : 'all'}
+          options={[
+            { value: 'all', label: 'Every pair', title: 'Compare every group with every other' },
+            { value: 'first', label: `Each with “${compared.names[0]}”`, title: 'Compare each group with the first one only, for example a control' },
+          ]}
+          onChange={(v) => setTest({ versusFirst: v === 'first' })}
+          wrap
+        />
+      )}
+      <div className="advice" role="note" aria-label="Suggested test">
+        {advice.test ? (
+          <>
+            <p className="advice-title">
+              Suggested: <b>{TEST_NAMES[advice.test]}</b>
+            </p>
+            <p>
+              <b>What it does.</b> {advice.does}
+            </p>
+            <p>
+              <b>Why it fits this table.</b>
+            </p>
+            <ul>
+              {advice.why.map((reason, i) => (
+                <li key={i}>{reason}</li>
+              ))}
+            </ul>
+            {advice.cautions.length > 0 && (
+              <>
+                <p>
+                  <b>Keep in mind.</b>
+                </p>
+                <ul>
+                  {advice.cautions.map((caution, i) => (
+                    <li key={i}>{caution}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {advice.by && test.by !== advice.by && (
+              <button className="btn small" onClick={() => setTest({ by: advice.by ?? undefined })}>
+                Use this test
+              </button>
+            )}
+          </>
+        ) : (
+          <p>
+            <b>No test to suggest.</b> {advice.why.join(' ')}
+          </p>
+        )}
+      </div>
+      {k >= 2 && <Segmented label="Test" value={test.by ?? 'none'} options={options} onChange={(by) => setTest({ by: by === 'none' ? undefined : by })} wrap />}
+      {chosen && advice.test && chosen !== advice.test && (
+        <p className="hint">
+          <b>{TEST_NAMES[chosen]}.</b> {TEST_DOES[chosen]}
+        </p>
+      )}
+      {outcome && !outcome.ok && <p className="notice">{outcome.problem}</p>}
+      {result && (
+        <div className="test-result" aria-label="Result of the test">
+          <p>
+            <b>{TEST_NAMES[result.test]}</b>: {result.statistic}, {pText(result.p)}
+          </p>
+          {k > 2 && (
+            <>
+              <p className="hint">Pairs ({result.pairMethod}):</p>
+              <ul className="chart-summary">
+                {pairs.slice(0, PAIRS_LISTED).map((p, i) => (
+                  <li key={i}>
+                    <span>
+                      {p.a} and {p.b}: {p.p === null ? 'cannot be worked out' : `${pText(p.p)} (${stars(p.p)})`}
+                    </span>
+                  </li>
+                ))}
+                {pairs.length > PAIRS_LISTED && <li>and {pairs.length - PAIRS_LISTED} more pairs: add a bracket to see any of them.</li>}
+              </ul>
+            </>
+          )}
+          {result.notes.map((note, i) => (
+            <p key={i} className="notice">
+              {note}
+            </p>
+          ))}
+          <Check checked={!!test.stars} onChange={(v) => setTest({ stars: v })}>
+            Brackets show stars instead of the p value
+          </Check>
+          {test.stars && <p className="hint">{STARS_KEY}</p>}
+          <button className="btn small" onClick={addBrackets}>
+            {k === 2 ? 'Add a bracket with the result' : 'Add brackets where p < 0.05'}
+          </button>
+          <p className="hint">All p values are two-sided and worked out as R does by default. Results are not stored: they follow the numbers in the table.</p>
+        </div>
+      )}
+    </Field>
   )
 }
 

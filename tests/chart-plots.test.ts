@@ -51,7 +51,7 @@ describe('grouped tables', () => {
 
   it('do not mistake a row of data with a word in it for a second row of names', () => {
     const groups = parseTable('A\tB\nn.d.\t5\n2\t6')
-    expect(groups).toEqual([{ name: 'A', values: [2] }, { name: 'B', values: [5, 6] }])
+    expect(groups).toEqual([{ name: 'A', values: [2], rows: [1] }, { name: 'B', values: [5, 6] }])
     expect(parseTable('A\tB\n1\t2').every((g) => g.category === undefined)).toBe(true)
   })
 
