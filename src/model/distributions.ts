@@ -312,3 +312,44 @@ export function signedRankTwoSided(v: number, n: number): number {
   else for (let s = 0; s <= Math.floor(v + 1e-9); s++) tail += counts[s]
   return Math.min(1, (2 * tail) / 2 ** n)
 }
+
+// ---------- Dunnett's distribution ----------
+
+/**
+ * Dunnett's test: the two-sided p value of a comparison of one group with the control when `k`
+ * groups are each compared with it. `t` is the t statistic of the comparison (spread pooled over
+ * all groups, `df` degrees of freedom) and `lambdas` has one entry per comparison,
+ * sqrt(n_i / (n_i + n_0)) for a group of n_i values and a control of n_0. The p value is the chance
+ * that the largest of the k statistics is at least `t` when no group differs from the control.
+ *
+ * The statistics share the control and the pooled spread, and no more: given the mean of the
+ * control and the spread they are independent, so the chance is an integral over those two
+ * (the form Dunnett gave; R: multcomp's glht with mcp("Dunnett"), which integrates by simulation).
+ */
+export function dunnettUpper(t: number, lambdas: number[], df: number): number {
+  if (!Number.isFinite(t) || !(df > 0) || !lambdas.length) return NaN
+  const a = Math.abs(t)
+  const roots = lambdas.map((l) => Math.sqrt(Math.max(1e-12, 1 - l * l)))
+  /** All statistics within ±a, given the spread (as a share u of its true value). */
+  const within = (u: number): number =>
+    integrate(
+      (z) => {
+        let all = Math.exp(-0.5 * z * z) / Math.sqrt(2 * Math.PI)
+        for (let i = 0; i < lambdas.length && all > 0; i++) all *= normalBelow((lambdas[i] * z + a * u) / roots[i]) - normalBelow((lambdas[i] * z - a * u) / roots[i])
+        return all
+      },
+      -9,
+      9,
+      18,
+    )
+  // The spread: u² · df follows a chi-squared distribution with df degrees of freedom.
+  const logNorm = Math.log(2) + (df / 2) * Math.log(df / 2) - logGamma(df / 2)
+  const density = (u: number): number => (u > 0 ? Math.exp(logNorm + (df - 1) * Math.log(u) - (df * u * u) / 2) : 0)
+  // With many degrees of freedom the spread is known as good as exactly.
+  if (df > 2e5) return Math.min(1, Math.max(0, 1 - within(1)))
+  const sd = 1 / Math.sqrt(2 * df)
+  const lo = Math.max(0, 1 - 12 * sd)
+  const hi = df < 3 ? 1 + 40 * sd : 1 + 14 * sd
+  const inside = integrate((u) => within(u) * density(u), lo, hi, 36)
+  return Math.min(1, Math.max(0, 1 - inside))
+}

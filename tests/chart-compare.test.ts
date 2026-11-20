@@ -129,7 +129,8 @@ describe('the result of the test', () => {
     expect(pairP(node, 4, 3)).toBeCloseTo(ref.several.tukey[5], 7)
     expect(pairP(node, 0, 1)).toBeUndefined()
     const first = { ...node, test: { by: 'means' as const, versusFirst: true } }
-    expect(pairP(first, 1, 3)).toBeCloseTo(ref.several.pooledFirstHolm[1], 9)
+    // Each group with the first: Dunnett's test.
+    expect(pairP(first, 1, 3)).toBeCloseTo(ref.several.dunnettFirst[1], 9)
     expect(pairP(first, 2, 3)).toBeUndefined()
   })
 
@@ -249,8 +250,8 @@ describe('the text for the methods', () => {
     expect(tukey).toContain('The 4 groups were compared by one-way analysis of variance (ANOVA), followed by Tukey’s test for every pair of groups.')
     expect(tukey).toContain('(aov, TukeyHSD)')
     const first = methodsText(chart({ groups: four(), test: { by: 'means', versusFirst: true } }))!
-    expect(first).toContain('followed by two-sided t tests of each group against A, with the variance pooled over all groups, with Holm’s correction for multiple comparisons.')
-    expect(first).toContain('(aov, p.adjust with method "holm")')
+    expect(first).toContain('followed by Dunnett’s test of each group against A (two-sided).')
+    expect(first).toContain('(aov, glht with mcp "Dunnett" of the package multcomp)')
     const ranks = methodsText(chart({ groups: four(), test: { by: 'ranks' } }))!
     expect(ranks).toContain('with the Kruskal–Wallis test, followed by two-sided Mann–Whitney tests of every pair of groups with Holm’s correction for multiple comparisons.')
   })

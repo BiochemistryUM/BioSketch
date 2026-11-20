@@ -8,11 +8,11 @@
 //    example the treatment);
 //  - scatter: the first column holds x, every further column the y values of one series.
 
-import { bandwidth, boxStats, compareEc50, correlation, density, doseResponseAt, fitDose, fitLine, type BoxStats, type Correlation, type DoseFit, type Fit } from './chartStats'
+import { bandwidth, boxStats, compareEc50, correlation, density, doseResponseAt, fitDose, fitLine, type BoxStats, type Correlation, type DoseFit, type Fit, lineBand } from './chartStats'
 import { tCritical } from './distributions'
-import { cellColour, heatColour, heatMatrix } from './heatmap'
+import { cellColour, heatColour, heatMatrix, treeLines } from './heatmap'
 import { renameVennSet, vennOf, vennParts } from './venn'
-import { kaplanMeier, logRank, type KaplanMeier, type Subject } from './survival'
+import { kaplanMeier, logRank, type KaplanMeier, type Subject, hazardRatios, type HazardRatio } from './survival'
 import { analyseTwoWay, suggestTwoWay, type Factors } from './twoWay'
 import { STARS_KEY, analyse, holm, pText, stars, suggest, type Advice, type Outcome, type TestId } from './chartTests'
 import { measureText, wrapText } from './nodes'
@@ -571,7 +571,7 @@ export function methodsText(node: ChartNode): string | null {
     pairedT: `${both} a paired t test (two-sided).`,
     mannWhitney: `${both} the Mann–Whitney test (two-sided, ${exactness}).`,
     signedRank: `${both} the Wilcoxon signed-rank test (two-sided, ${exactness}).`,
-    anova: `${all} by one-way analysis of variance (ANOVA), followed by ${design.versusFirst ? `two-sided t tests of ${which}, with the variance pooled over all groups, ${holm}` : 'Tukey’s test for every pair of groups'}.`,
+    anova: `${all} by one-way analysis of variance (ANOVA), followed by ${design.versusFirst ? `Dunnett’s test of ${which} (two-sided)` : 'Tukey’s test for every pair of groups'}.`,
     kruskal: `${all} with the Kruskal–Wallis test, followed by two-sided Mann–Whitney tests of ${which} ${holm}.`,
     repeatedAnova: `${all} by repeated-measures analysis of variance (ANOVA, sphericity assumed), followed by two-sided paired t tests of ${which} ${holm}.`,
     friedman: `${all} with the Friedman test, followed by two-sided Wilcoxon signed-rank tests of ${which} ${holm}.`,
@@ -584,7 +584,7 @@ export function methodsText(node: ChartNode): string | null {
   if (node.yLog) parts.push('The tests were worked out on the values as measured, not on their logarithms.')
   parts.push(r.effects ? `Result: ${r.effects.map((e) => `${e.name.replace(/ \(.*$/, '').toLowerCase()}, ${e.statistic}, ${pText(e.p)}`).join('; ')}.` : `Result: ${r.statistic}, ${pText(r.p)}.`)
   if (node.test?.stars) parts.push(`${STARS_KEY}.`)
-  parts.push(`Statistics were worked out in BioSketch, which gives the results of R 4.4 (${R_FUNCTIONS[r.test]}${k > 2 ? (r.test === 'anova' && !design.versusFirst ? ', TukeyHSD' : ', p.adjust with method "holm"') : ''}).`)
+  parts.push(`Statistics were worked out in BioSketch, which gives the results of R 4.4 (${R_FUNCTIONS[r.test]}${k > 2 ? (r.test === 'anova' ? (design.versusFirst ? ', glht with mcp "Dunnett" of the package multcomp' : ', TukeyHSD') : ', p.adjust with method "holm"') : ''}).`)
   return parts.join(' ')
 }
 
@@ -758,7 +758,8 @@ export interface ChartDrawing {
   rects: ({ x: number; y: number; w: number; h: number; fill: string; edge?: string } & Tagged)[]
   lines: ({ x1: number; y1: number; x2: number; y2: number; width: number } & Tagged)[]
   /** Outlines and joining lines: a violin (filled), the line of a line chart, a fitted line. */
-  paths: ({ d: string; stroke: string; width: number; fill?: string } & Tagged)[]
+  /** `opacity` makes the fill see-through (a confidence band). */
+  paths: ({ d: string; stroke: string; width: number; fill?: string; opacity?: number } & Tagged)[]
   /**
    * Points. A `ring` is drawn hollow (an outlier of a box plot). `shape` is the mark (absent = a
    * circle; `r` is then the radius of the circle with the same area, see `pointPath`), `opacity`
@@ -2038,6 +2039,25 @@ function scatterLayout(node: ChartNode): ChartDrawing {
   const places = drawnGroups(node).map((c) => c.index)
   series.forEach((s, i) => {
     nowPart(out, { what: 'fit', at: i })
+    // The 95 % confidence band of the fitted line, under the line and the points.
+    if (node.band && s.fit && lineEnds[i].length === 2) {
+      const [from, to] = [lineEnds[i][0][0], lineEnds[i][1][0]].map((vx) => (node.xLog ? Math.log10(vx) : vx))
+      const steps = 40
+      const edge: { px: number; hi: number; lo: number }[] = []
+      for (let k = 0; k <= steps; k++) {
+        const at = from + ((to - from) * k) / steps
+        const reach = lineBand(s.fit, at)
+        if (reach === null) break
+        const mid = s.fit.intercept + s.fit.slope * at
+        const [hi, lo] = [mid + reach, mid - reach].map((v) => y(node.yLog ? 10 ** v : v))
+        edge.push({ px: x(node.xLog ? 10 ** at : at), hi, lo })
+      }
+      if (edge.length === steps + 1 && edge.every((e) => [e.px, e.hi, e.lo].every((v) => Number.isFinite(v)))) {
+        const upper = edge.map((e) => `${r1(e.px)} ${r1(e.hi)}`)
+        const lower = edge.map((e) => `${r1(e.px)} ${r1(e.lo)}`).reverse()
+        out.paths.push({ d: `M${[...upper, ...lower].join('L')}Z`, stroke: 'none', width: 0, fill: s.colour, opacity: 0.18 })
+      }
+    }
     const ends = lineEnds[i].map(([vx, vy]) => [x(vx), y(vy)])
     if (ends.length === 2 && ends.flat().every((v) => Number.isFinite(v))) out.paths.push({ d: `M${ends.map((e) => `${r1(e[0])} ${r1(e[1])}`).join('L')}`, stroke: s.colour, width: 2 })
     const curve = curves[i].map(([vx, vy]) => [x(vx), y(vy)]).filter((p) => p.every((v) => Number.isFinite(v)))
@@ -2210,6 +2230,8 @@ export interface SurvivalSummary {
   test: { chi2: number; df: number; p: number } | null
   /** Every pair of groups by a log-rank test of its own, corrected by Holm; empty with two groups. */
   pairs: { a: string; b: string; p: number | null }[]
+  /** The hazard of every group after the first against the first (Cox's model); empty with fewer than two groups. */
+  hazards: { name: string; against: string; ratio: HazardRatio | null }[]
 }
 
 const survivals = new WeakMap<ChartGroup[], Map<string, SurvivalSummary>>()
@@ -2234,10 +2256,15 @@ export function survivalOf(node: ChartNode): SurvivalSummary {
     const known2 = pairs.flatMap((x, i) => (x.p === null ? [] : [{ v: x.p, i }]))
     holm(known2.map((x) => x.v)).forEach((v, k) => (pairs[known2[k].i].p = v))
   }
-  const out = { groups, test: test ? { chi2: test.chi2, df: test.df, p: test.p } : null, pairs }
+  const ratios = live.length > 1 ? hazardRatios(live.map((g) => g.subjects)) : null
+  const hazards = ratios ? live.slice(1).map((g, i) => ({ name: g.name, against: live[0].name, ratio: ratios[i] })) : []
+  const out = { groups, test: test ? { chi2: test.chi2, df: test.df, p: test.p } : null, pairs, hazards }
   known.set(key, out)
   return out
 }
+
+/** A hazard ratio in words: "0.208 (95 % interval 0.0516 to 0.84), p = 0.0275". */
+export const hazardText = (h: HazardRatio): string => `${sig3(h.ratio)} (95 % interval ${sig3(h.lower)} to ${sig3(h.upper)}), ${pText(h.p)}`
 
 /** The log-rank test in words: "log-rank test, χ² = 4.44, df = 1, p = 0.0351". */
 export const logRankText = (t: { chi2: number; df: number; p: number }): string => `χ² = ${sig3(t.chi2)}, df = ${t.df}, ${pText(t.p)}`
@@ -2248,15 +2275,17 @@ export const survivalText = (g: SurvivalGroup): string => `n = ${g.km.n}, ${g.km
 /** What a methods section can say about a chart's survival curves; null when it draws none. */
 export function survivalMethodsText(node: ChartNode): string | null {
   if (!isSurvival(node)) return null
-  const { groups, test, pairs } = survivalOf(node)
+  const { groups, test, pairs, hazards } = survivalOf(node)
   const live = groups.filter((g) => g.subjects.length)
   if (!live.length) return null
+  const told = hazards.filter((h) => h.ratio)
   return [
-    'Survival was estimated by the Kaplan–Meier method; ticks on the curves mark subjects that left the study without the event (censored).',
+    `Survival was estimated by the Kaplan–Meier method; ticks on the curves mark subjects that left the study without the event (censored)${node.band ? ', and the shaded bands are 95 % confidence intervals (log transformation, Greenwood’s variance)' : ''}.`,
     `${live.map((g) => `${g.name ? `${g.name}: ` : ''}${survivalText(g)}`).join('; ')}.`,
     test ? `Groups were compared with the log-rank test: ${logRankText(test)}.` : '',
     pairs.length ? `Pairs of groups were compared by log-rank tests with Holm’s correction for multiple comparisons: ${pairs.map((x) => `${x.a} and ${x.b}, ${x.p === null ? 'not defined' : pText(x.p)}`).join('; ')}.` : '',
-    'Worked out in BioSketch, which gives the results of the survival package of R (survfit, survdiff).',
+    told.length ? `Hazard ratios against ${told[0].against} came from a Cox proportional hazards model (Efron’s method for tied times, Wald intervals and tests): ${told.map((h) => `${h.name}, ${hazardText(h.ratio!)}`).join('; ')}.` : '',
+    `Worked out in BioSketch, which gives the results of the survival package of R (survfit, survdiff${told.length ? ', coxph' : ''}).`,
   ]
     .filter(Boolean)
     .join(' ')
@@ -2289,6 +2318,23 @@ function survivalLayout(node: ChartNode): ChartDrawing {
   const tick = Math.max(3, fs * 0.3)
   for (const g of live) {
     nowPart(out, { what: 'group', at: node.groups.findIndex((own) => own.name === g.name && own.values.length > 0) })
+    // The 95 % confidence band of the curve: steps like the curve itself, as far as there is an interval.
+    if (node.band) {
+      const upper: string[] = [`${r1(x(0))} ${r1(y(100))}`]
+      const lower: string[] = [`${r1(x(0))} ${r1(y(100))}`]
+      let [hi, lo] = [100, 100]
+      for (const step of g.km.steps) {
+        if (step.lower === null || step.upper === null) break
+        upper.push(`${r1(x(step.time))} ${r1(y(hi))}`)
+        lower.push(`${r1(x(step.time))} ${r1(y(lo))}`)
+        if (step.events) {
+          ;[hi, lo] = [step.upper * 100, step.lower * 100]
+          upper.push(`${r1(x(step.time))} ${r1(y(hi))}`)
+          lower.push(`${r1(x(step.time))} ${r1(y(lo))}`)
+        }
+      }
+      if (upper.length > 2) out.paths.push({ d: `M${[...upper, ...lower.reverse()].join('L')}Z`, stroke: 'none', width: 0, fill: g.colour, opacity: 0.16 })
+    }
     let d = `M${r1(x(0))} ${r1(y(100))}`
     let share = 100
     const marks: string[] = []
@@ -2364,11 +2410,17 @@ function heatmapLayout(node: ChartNode): ChartDrawing {
   const scaleWidth = showScale ? 10 + bar + 5 + Math.max(...ends.map((t) => textWidth(t, small))) + 4 : 4
 
   // Room around the cells: title on top, row names at the left, column names below, the scale at the right.
-  const top = node.title ? fs * 2 : fs * 0.6
+  // A tree of the rows stands at the left of the cells, and the names of the rows then at their right;
+  // a tree of the columns stands over the cells.
+  const treeW = m.rowTree ? Math.max(20, Math.min(64, node.w * 0.12)) : 0
+  const treeH = m.colTree ? Math.max(18, Math.min(54, node.h * 0.12)) : 0
+  const top = (node.title ? fs * 2 : fs * 0.6) + treeH
   const named = m.rows.some(Boolean)
   const nameRoom = named ? Math.min(node.w * 0.35, Math.max(...m.rows.map((n) => textWidth(n, small)))) : 0
-  const px = (node.yLabel ? fs * 1.7 : 2) + nameRoom + (named ? 7 : 2)
-  const pw = Math.max(10, node.w - px - scaleWidth)
+  const namesRight = !!m.rowTree
+  const px = (node.yLabel ? fs * 1.7 : 2) + (namesRight ? treeW + 3 : nameRoom + (named ? 7 : 2))
+  const rightNames = namesRight && named ? nameRoom + 7 : 0
+  const pw = Math.max(10, node.w - px - scaleWidth - rightNames)
   const cw = pw / nCols
   // A column's name stands under it on one line where it fits, otherwise it is turned upright.
   const widestColumn = Math.max(...m.columns.map((n) => textWidth(n, small)))
@@ -2382,8 +2434,18 @@ function heatmapLayout(node: ChartNode): ChartDrawing {
   // Cells large enough are parted by a white line; small ones touch, with an edge of their own colour so that no gap shows.
   const parted = cw >= 8 && ch >= 8
   const cellsPart: ChartPart = { what: 'cells' }
-  // The place of each column in the chart's table.
-  const columnPlaces = drawnGroups(node).map((c) => c.index)
+  // The place of each column in the chart's table (clustering can have put the columns in another order).
+  const tablePlaces = drawnGroups(node).map((c) => c.index)
+  const columnPlaces = m.colOrder.map((c) => tablePlaces[c] ?? c)
+
+  // The trees: every joining a bracket between the two things it joins, as far from the cells as the distance at which it was made.
+  const treePart: ChartPart = { what: 'cells' }
+  if (m.rowTree) {
+    for (const l of treeLines(m.rowTree)) out.rules.push({ x1: r1(px - 2 - l.from[1] * (treeW - 4)), y1: r1(py + l.from[0] * ch), x2: r1(px - 2 - l.to[1] * (treeW - 4)), y2: r1(py + l.to[0] * ch), width: 0.8, part: treePart })
+  }
+  if (m.colTree) {
+    for (const l of treeLines(m.colTree)) out.rules.push({ x1: r1(px + l.from[0] * cw), y1: r1(py - 2 - l.from[1] * (treeH - 4)), x2: r1(px + l.to[0] * cw), y2: r1(py - 2 - l.to[1] * (treeH - 4)), width: 0.8, part: treePart })
+  }
   const numberWidth = node.heatNumbers ? Math.max(0, ...m.shown.flat().map((v) => (v === null ? 0 : textWidth(cellText(m.unit, v), small)))) : 0
   const numbersFit = node.heatNumbers && numberWidth + 4 <= cw && small * 1.2 <= ch
   if (node.heatNumbers && !numbersFit) out.notes.push('The numbers do not fit in the cells: make the chart larger or its text smaller.')
@@ -2400,7 +2462,8 @@ function heatmapLayout(node: ChartNode): ChartDrawing {
 
   if (named) {
     const size = Math.min(small, r1(ch * 0.9))
-    if (size >= 5) m.rows.forEach((name, r) => name && out.texts.push(words(cutToFit(name, nameRoom, size), px - 5, py + r * ch + ch / 2 - (size * 1.25) / 2, { align: 'right', fontSize: size, part: { what: 'yAxis' } })))
+    if (size >= 5)
+      m.rows.forEach((name, r) => name && out.texts.push(words(cutToFit(name, nameRoom, size), namesRight ? px + pw + 5 : px - 5, py + r * ch + ch / 2 - (size * 1.25) / 2, { align: namesRight ? 'left' : 'right', fontSize: size, part: { what: 'yAxis' } })))
     else out.notes.push('The rows are too thin for their names: make the chart taller, or show fewer rows.')
   }
   const columnSize = upright ? Math.min(small, r1(cw * 0.9)) : small
@@ -2424,7 +2487,7 @@ function heatmapLayout(node: ChartNode): ChartDrawing {
   if (showScale) {
     // The scale: a bar of even steps from the lowest colour at the bottom to the highest at the top, with its ends and its middle written beside it.
     const caption = m.unit === 'z' ? 'z-score' : m.unit === 'r' ? (node.corr === 'spearman' ? '*r*_{s}' : '*r*') : ''
-    const bx = px + pw + 10
+    const bx = px + pw + 10 + rightNames
     const by = py + (caption ? small * 1.5 : 0)
     const bh = Math.max(20, Math.min(ph - (caption ? small * 1.5 : 0), fs * 9))
     const steps = 32

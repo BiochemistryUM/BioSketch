@@ -65,9 +65,64 @@ function lineWidth(line: string, node: TextNode): number {
 }
 
 export function measureText(node: TextNode): { w: number; h: number } {
+  if (node.width || node.bullets) {
+    const { w, h } = textLayout(node)
+    return { w, h }
+  }
   const lines = node.text.split('\n')
   const w = Math.max(node.fontSize * 0.5, ...lines.map((l) => lineWidth(l, node)))
   return { w, h: lines.length * node.fontSize * LINE_HEIGHT }
+}
+
+/** The narrowest and the widest a text box can be. */
+export const TEXT_WIDTH_MIN = 20
+export const TEXT_WIDTH_MAX = 20000
+
+/** How far the lines of a bulleted paragraph stand in from the bullet, for a font size. */
+export const bulletIndent = (fontSize: number): number => round(fontSize * 1.1, 1)
+
+export interface TextLine {
+  text: string
+  /** Where the line begins, across the page: its left end, its middle or its right end, as `anchor` says. */
+  x: number
+  /** Where the bullet of the line stands (its left end); only the first line of a bulleted paragraph has one. */
+  bullet?: number
+}
+
+export interface TextLayout {
+  lines: TextLine[]
+  anchor: 'start' | 'middle' | 'end'
+  /** The box the words stand in: its left edge and its size. */
+  left: number
+  w: number
+  h: number
+}
+
+/**
+ * The lines of a text as they are drawn. A label has the lines that were typed; a text box breaks
+ * them at its width; with bullets every paragraph begins with one and is set in from it (bulleted
+ * text always starts at the left of its box).
+ */
+export function textLayout(node: TextNode): TextLayout {
+  const font = { fontSize: node.fontSize, ...(node.bold ? { bold: true } : {}), ...(node.italic ? { italic: true } : {}), ...(node.fontFamily ? { fontFamily: node.fontFamily } : {}) }
+  const indent = node.bullets ? bulletIndent(node.fontSize) : 0
+  const room = node.width ? Math.max(node.fontSize, node.width - indent) : Infinity
+  const drawn: { text: string; first: boolean }[] = []
+  for (const paragraph of node.text.split('\n')) {
+    const lines = Number.isFinite(room) ? wrapLine(paragraph, font, room) : [paragraph]
+    lines.forEach((text, i) => drawn.push({ text, first: i === 0 && paragraph.trim() !== '' }))
+  }
+  const w = node.width ?? Math.max(node.fontSize * 0.5, ...drawn.map((l) => lineWidth(l.text, node))) + indent
+  const left = node.align === 'center' ? node.x - w / 2 : node.align === 'right' ? node.x - w : node.x
+  const anchor = node.bullets ? 'start' : node.align === 'center' ? 'middle' : node.align === 'right' ? 'end' : 'start'
+  const x = node.bullets ? left + indent : node.x
+  return {
+    lines: drawn.map((l) => ({ text: l.text, x, ...(node.bullets && l.first ? { bullet: left + round(node.fontSize * 0.2, 1) } : {}) })),
+    anchor,
+    left,
+    w,
+    h: drawn.length * node.fontSize * LINE_HEIGHT,
+  }
 }
 
 // ---------- wrapping ----------
@@ -125,6 +180,30 @@ export function wrapText(text: string, font: FontSpec, maxWidth: number): string
     .split('\n')
     .flatMap((line) => wrapLine(line, font, maxWidth))
     .join('\n')
+}
+
+/** The same text aligned another way, standing where it stood: only the edge it is measured from changes. */
+export function realignText(node: TextNode, align: TextNode['align']): TextNode {
+  const { left, w } = textLayout(node)
+  return { ...node, align, x: round(align === 'center' ? left + w / 2 : align === 'right' ? left + w : left, 1) }
+}
+
+/** A label made into a text box as wide as it is now (and no narrower than a few words), or a text box back into a label. */
+export function textBoxed(node: TextNode, on: boolean): TextNode {
+  if (!on) {
+    const { width: _drop, ...label } = node
+    return label
+  }
+  if (node.width) return node
+  const { left, w } = textLayout(node)
+  const width = Math.round(Math.max(w, node.fontSize * 8))
+  return { ...node, width, x: round(node.align === 'center' ? left + width / 2 : node.align === 'right' ? left + width : left, 1) }
+}
+
+/** Bullet points on or off. Bulleted text starts at the left of its box, so the text is then aligned left. */
+export function textBulleted(node: TextNode, on: boolean): TextNode {
+  const { bullets: _drop, ...plain } = node
+  return on ? { ...realignText(plain, 'left'), bullets: true } : plain
 }
 
 // ---------- text inside a shape ----------
@@ -205,7 +284,7 @@ export const findNode = (doc: FigDoc, id: string | undefined): FigNode | undefin
 
 /** Node types a connector end can attach to. */
 export const canAttach = (n: FigNode | undefined): boolean =>
-  !!n && (n.type === 'icon' || n.type === 'shape' || n.type === 'text' || n.type === 'image' || n.type === 'chart')
+  !!n && (n.type === 'icon' || n.type === 'shape' || n.type === 'text' || n.type === 'image' || n.type === 'chart' || n.type === 'table')
 
 // ---------- connectors ----------
 
@@ -382,6 +461,7 @@ export function getBox(node: FigNode, doc: FigDoc): Box {
     case 'shape':
     case 'image':
     case 'chart':
+    case 'table':
       return { x: node.x, y: node.y, w: node.w, h: node.h, rotation: node.rotation }
     case 'text': {
       const m = measureText(node)
@@ -420,6 +500,7 @@ export function translateNode<T extends FigNode>(node: T, dx: number, dy: number
     case 'text':
     case 'image':
     case 'chart':
+    case 'table':
       return { ...node, x: node.x + dx, y: node.y + dy }
     case 'membrane':
       return { ...node, points: node.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
@@ -455,9 +536,20 @@ export function resizeNode(node: FigNode, oldBox: Box, newBox: Box): FigNode {
     case 'shape':
     case 'image':
     case 'chart':
+    case 'table':
       return { ...node, x: newBox.x, y: newBox.y, w: newBox.w, h: newBox.h }
     case 'text': {
       const scale = oldBox.h > 1e-6 ? newBox.h / oldBox.h : 1
+      if (node.width) {
+        // A text box. Pulled at a side it gets wider or narrower and its words are broken anew;
+        // pulled at a corner (or resized as a picture) its lettering grows with it.
+        const sideways = Math.abs(scale - 1) < 1e-6
+        const width = clamp(round(newBox.w, 1), TEXT_WIDTH_MIN, TEXT_WIDTH_MAX)
+        const box: TextNode = { ...node, width, fontSize: sideways ? node.fontSize : clamp(round(node.fontSize * scale, 1), 4, 400) }
+        box.x = round(node.align === 'center' ? newBox.x + width / 2 : node.align === 'right' ? newBox.x + width : newBox.x, 1)
+        box.y = round(newBox.y, 1)
+        return box
+      }
       const next: TextNode = { ...node, fontSize: clamp(round(node.fontSize * scale, 1), 4, 400) }
       const m = measureText(next)
       const c = rectCenter(newBox)
@@ -505,7 +597,8 @@ export function rotateNodeAbout<T extends FigNode>(node: T, delta: number, origi
     case 'shape':
     case 'text':
     case 'image':
-    case 'chart': {
+    case 'chart':
+    case 'table': {
       const c = rectCenter(getBox(node, doc))
       const moved = rotate(c, delta, origin)
       return { ...translateNode(node, moved.x - c.x, moved.y - c.y), rotation: normDeg(node.rotation + delta) }
@@ -544,14 +637,15 @@ export function scaleNode<T extends FigNode>(node: T, s: number, origin: Point, 
     case 'icon':
     case 'shape':
     case 'image':
-    case 'chart': {
+    case 'chart':
+    case 'table': {
       const c = at(rectCenter(getBox(node, doc)))
       const w = node.w * s
       const h = node.h * s
       // The words inside a shape grow and shrink with it, like a label resized in the same group.
       const label = node.type === 'shape' && node.label ? { label: { ...node.label, fontSize: clamp(round(node.label.fontSize * s, 1), 4, 400) } } : {}
       // A chart's lettering grows and shrinks with it in the same way.
-      const lettering = node.type === 'chart' ? { fontSize: clamp(round((node.fontSize ?? 13) * s, 1), 6, 60) } : {}
+      const lettering = node.type === 'chart' ? { fontSize: clamp(round((node.fontSize ?? 13) * s, 1), 6, 60) } : node.type === 'table' ? { fontSize: clamp(round((node.fontSize ?? 14) * s, 1), 4, 200) } : {}
       return { ...node, x: c.x - w / 2, y: c.y - h / 2, w, h, ...label, ...lettering }
     }
     case 'text': {

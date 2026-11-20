@@ -62,7 +62,7 @@ describe('reading Claude’s plan', () => {
   it('takes the choices and the words, and names the analysis BioSketch will run', () => {
     const plan = readAnalysisAnswer(answer(PLAN), chart())
     expect(plan.test).toEqual({ by: 'means', versusFirst: true })
-    expect(plan.name).toBe('One-way analysis of variance (ANOVA), then t tests with the scatter pooled over all groups, each group with the first, Holm’s correction')
+    expect(plan.name).toBe('One-way analysis of variance (ANOVA), then Dunnett’s test, each group with the first')
     expect(plan.why).toEqual(['Each value is one mouse.'])
     expect(plan.cautions).toEqual(['Only four mice per group.'])
     expect(plan.questions).toEqual([])

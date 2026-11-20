@@ -223,7 +223,8 @@ describe('boxes made by BioSketch', () => {
   })
 
   it('carry their names inside in the example figures', () => {
-    for (const template of TEMPLATES) {
+    // The example figures; the templates also hold frames and banners without words.
+    for (const template of TEMPLATES.filter((t) => !t.group)) {
       const shapes = example(template).nodes.filter((n): n is ShapeNode => n.type === 'shape')
       expect(shapes.length, template.id).toBeGreaterThan(0)
       for (const shape of shapes) {

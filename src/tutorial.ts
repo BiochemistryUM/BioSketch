@@ -92,7 +92,7 @@ export function tutorialDoc(icons: IconLookup): FigDoc {
     ...[MACROPHAGE, T_CELL, NEUTROPHIL, MITOCHONDRIA, RED_CELL, NEURON].map((iconId, i) => icon(iconId, 215 + i * 170, 330, 96)),
     ...steps,
     ...steps.slice(1).map((step, i) => link(steps[i], step)),
-    para('Page Down opens the next slide, and “Present” in the top bar shows the tour full screen. The tour is a figure like any other: it is kept under File › My figures until you delete it.', W / 2, 580, 1000, 18, {
+    para('With nothing selected, the right arrow key opens the next slide, and “Present” in the top bar shows the tour full screen. The tour is a figure like any other: it is kept under File › My figures until you delete it.', W / 2, 580, 1000, 18, {
       align: 'center',
       fill: MUTED,
     }),
@@ -345,7 +345,7 @@ export function tutorialDoc(icons: IconLookup): FigDoc {
     stage,
     named('rect', 'Slide 2', 730, 146, 260, 136, { stroke: '#ffffff', strokeWidth: 0 }, 22),
     line(524, 214, 692, 214, 'arrow', { strokeWidth: 3, label: 'Present' }),
-    ...how(1, '“Slides” in the top bar shows the slides of the figure in a row under the page. + adds a slide; the buttons at the right copy, move and delete the open one. Page Down and Page Up open the next and the previous slide.', LEFT, 340, WIDE),
+    ...how(1, '“Slides” in the top bar shows the slides of the figure in a row under the page. + adds a slide; the buttons at the right copy, move and delete the open one. With nothing selected, the arrow keys open the next and the previous slide.', LEFT, 340, WIDE),
     ...how(2, '“Present” shows the slides full screen, starting with the open one. The arrow keys, Space or a press move on, a press at the left goes back, and Escape returns to the editor.', LEFT, 426, WIDE),
     ...how(3, 'Under Export, “All slides” saves one PDF with a page per slide, one PowerPoint file, or every slide as a picture in one ZIP file. The page, its size and its colour, is the same for every slide.', LEFT, 512, WIDE),
   ]

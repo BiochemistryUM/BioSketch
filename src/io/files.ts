@@ -8,10 +8,12 @@ import { uid } from '../model/doc'
 import { DASH_SCALE_MAX, DASH_SCALE_MIN, DASH_STYLES } from '../model/dash'
 import { LEGEND_PLACES, MAX_BRACKETS, MAX_GROUPS, MAX_POINTS, MAX_ROWS, MAX_VALUES, POINT_SHAPES, maxValues, ownPointStyle, pointStyle, usable, usableEnds, usablePointNames, usableRefLines, usableValueLabels } from '../model/chart'
 import { heatScaleDef } from '../model/heatmap'
+import { TEXT_WIDTH_MAX, TEXT_WIDTH_MIN } from '../model/nodes'
 import { paletteId } from '../model/palettes'
 import { SHAPE_KINDS } from '../model/shapes'
-import { MAX_SLIDES, uniqueIds, withSlides } from '../model/slides'
-import type { ChartBracket, ChartGroup, ChartKind, ChartTest, ConnectorKind, DashStyle, ElbowLegs, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign } from '../model/types'
+import { CELL_MAX, TABLE_COLS_MAX, TABLE_ROWS_MAX } from '../model/table'
+import { MAX_NOTES, MAX_SLIDES, MAX_STEPS, openSlide, uniqueIds, withSlides } from '../model/slides'
+import type { ChartBracket, ChartGroup, ChartKind, ChartTest, ConnectorKind, DashStyle, ElbowLegs, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign, Slide } from '../model/types'
 
 const num = (v: unknown, fallback: number, min = -1e6, max = 1e6): number =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
@@ -91,6 +93,7 @@ function node(raw: unknown): FigNode | null {
     ...(bool(o.hidden) ? { hidden: true as const } : {}),
     ...(bool(o.guide) ? { guide: true as const } : {}),
     ...(typeof o.name === 'string' && o.name.trim() ? { name: o.name.trim().slice(0, 60) } : {}),
+    ...(typeof o.appear === 'number' && o.appear >= 1 ? { appear: Math.round(num(o.appear, 1, 1, MAX_STEPS)) } : {}),
   }
   switch (o.type) {
     case 'icon': {
@@ -144,6 +147,8 @@ function node(raw: unknown): FigNode | null {
         ...(bool(o.bold) ? { bold: true } : {}),
         ...(bool(o.italic) ? { italic: true } : {}),
         ...(FONTS.includes(o.fontFamily as FontFamily) && o.fontFamily !== 'sans' ? { fontFamily: o.fontFamily as FontFamily } : {}),
+        ...(typeof o.width === 'number' && o.width > 0 ? { width: num(o.width, 300, TEXT_WIDTH_MIN, TEXT_WIDTH_MAX) } : {}),
+        ...(bool(o.bullets) ? { bullets: true } : {}),
       }
     case 'connector': {
       const from = endpoint(o.from)
@@ -182,6 +187,30 @@ function node(raw: unknown): FigNode | null {
         h: num(o.h, 100, 1),
         rotation: num(o.rotation, 0),
       }
+    case 'table': {
+      // The cells are rebuilt one by one: short texts, in rows that are all as long as the longest.
+      if (!Array.isArray(o.cells)) return null
+      const rows = o.cells.slice(0, TABLE_ROWS_MAX).flatMap((row) => (Array.isArray(row) ? [row.slice(0, TABLE_COLS_MAX).map((cell) => (typeof cell === 'string' ? cell : typeof cell === 'number' && Number.isFinite(cell) ? String(cell) : '').replace(/[\r\n\t]+/g, ' ').slice(0, CELL_MAX))] : []))
+      const width = Math.max(0, ...rows.map((row) => row.length))
+      if (!rows.length || !width) return null
+      const lines = oneOf(o.lines, ['grid', 'rows', 'rules', 'none'] as const, 'grid')
+      return {
+        ...base,
+        type: 'table',
+        x: num(o.x, 0),
+        y: num(o.y, 0),
+        w: num(o.w, 300, 20, 20000),
+        h: num(o.h, 120, 10, 20000),
+        rotation: num(o.rotation, 0),
+        cells: rows.map((row) => [...row, ...Array.from({ length: width - row.length }, () => '')]),
+        ...(o.header === false ? { header: false as const } : {}),
+        ...(typeof o.fontSize === 'number' ? { fontSize: num(o.fontSize, 14, 4, 200) } : {}),
+        ...(lines !== 'grid' ? { lines } : {}),
+        ...(bool(o.striped) ? { striped: true as const } : {}),
+        ...(typeof o.headFill === 'string' ? { headFill: color(o.headFill, '#e8ecf1') } : {}),
+        ...(typeof o.color === 'string' ? { color: color(o.color, '#1f2933') } : {}),
+      }
+    }
     case 'chart': {
       // The numbers are rebuilt one by one: a chart never holds anything but numbers it can draw
       // (finite, and neither absurdly large nor absurdly close to zero) and short names.
@@ -265,6 +294,8 @@ function node(raw: unknown): FigNode | null {
         ...(kind === 'heatmap' && heatScaleDef(o.heatScale) ? { heatScale: heatScaleDef(o.heatScale)!.id } : {}),
         ...(kind === 'heatmap' && bool(o.heatByRow) ? { heatByRow: true } : {}),
         ...(kind === 'heatmap' && bool(o.heatNumbers) ? { heatNumbers: true } : {}),
+        ...(kind === 'heatmap' && (o.heatCluster === 'rows' || o.heatCluster === 'columns' || o.heatCluster === 'both') ? { heatCluster: o.heatCluster } : {}),
+        ...(kind === 'scatter' && bool(o.band) ? { band: true } : {}),
         ...(kind === 'venn' && (o.vennLabels === 'percent' || o.vennLabels === 'none') ? { vennLabels: o.vennLabels } : {}),
         ...pointStyle(o.pointSize, o.pointOpacity),
         ...(paletteId(o.palette) ? { palette: paletteId(o.palette) } : {}),
@@ -365,8 +396,12 @@ export function validateDoc(data: unknown): FigDoc {
     }
     return nodes
   }
-  // The slides that are not open: lists of objects before and after the open one. Anything else is passed over.
-  const others = (list: unknown): FigNode[][] => (Array.isArray(list) ? list.flatMap((raw) => (Array.isArray(obj(raw)?.nodes) ? [slide(obj(raw)!.nodes as unknown[])] : [])) : [])
+  const background = color(o.background, '#ffffff')
+  const notes = (v: unknown): { notes?: string } => (typeof v === 'string' && v.trim() ? { notes: v.slice(0, MAX_NOTES) } : {})
+  // The slides that are not open: before and after the open one, each with its objects, the colour of its
+  // page (the figure's, in a file from before slides had their own) and its notes. Anything else is passed over.
+  const others = (list: unknown): Slide[] =>
+    Array.isArray(list) ? list.flatMap((raw) => (Array.isArray(obj(raw)?.nodes) ? [{ nodes: slide(obj(raw)!.nodes as unknown[]), background: color(obj(raw)!.background, background), ...notes(obj(raw)!.notes) }] : [])) : []
   const before = others(obj(o.slides)?.before).slice(0, MAX_SLIDES - 1)
   const after = others(obj(o.slides)?.after).slice(0, MAX_SLIDES - 1 - before.length)
   const doc: FigDoc = {
@@ -375,13 +410,16 @@ export function validateDoc(data: unknown): FigDoc {
     width: num(o.width, 1200, 50, 20000),
     height: num(o.height, 800, 50, 20000),
     ...(typeof o.widthMm === 'number' && o.widthMm > 0 ? { widthMm: num(o.widthMm, 85, 10, 2000) } : {}),
-    background: color(o.background, '#ffffff'),
+    background,
+    ...notes(o.notes),
     nodes: slide(o.nodes),
     customIcons,
   }
   if (!before.length && !after.length) return doc
   // No id twice in the whole figure: the slides of a PDF are drawn into one document.
-  return withSlides(doc, uniqueIds([...before, doc.nodes, ...after]), before.length)
+  const all: Slide[] = [...before, openSlide(doc), ...after]
+  const named = uniqueIds(all.map((s) => s.nodes))
+  return withSlides(doc, all.map((s, i) => ({ ...s, nodes: named[i] })), before.length)
 }
 
 export function parseDoc(text: string): FigDoc {

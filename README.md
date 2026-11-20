@@ -3,6 +3,9 @@
 An open-source editor for drawing biological processes: signalling pathways, cells, experimental
 schemes. It runs in the browser, works on an iPad with Apple Pencil, and needs no account or server.
 
+**Try it in your browser: <https://biochemistryum.github.io/BioSketch/>** (nothing to install; your
+figures stay on your own computer).
+
 ## What it does
 
 - **Icon library**: 2,499 icons from three publicly available collections, in 26 themed sets.
@@ -62,7 +65,18 @@ schemes. It runs in the browser, works on an iPad with Apple Pencil, and needs n
 - **Your own pictures**: drop in micrographs or plots (PNG, JPEG, WebP, GIF) and add panel letters.
 - **Panels**: divide the page into two to six lettered panels. The frames are guides to line
   things up in and are left out of exports.
-- **Several figures**: every figure is kept in the browser under File › My figures.
+- **Slides and presenting**: a figure can have several slides, each with its own page colour and
+  notes for the speaker. "Present" shows them full screen (arrow keys or a click move on), with a
+  view for the speaker (notes, time, what comes next) and a second window for the projector.
+  Objects can appear one by one. New slides can begin with a layout or with a slide template of
+  your own. All slides are exported as one PDF, one PowerPoint file, or pictures in a ZIP file.
+- **Text boxes and tables**: a text box breaks its lines at the width you give it and can have
+  bullet points; a table takes cells pasted from a spreadsheet.
+- **Templates**: File › Start from a template has a tour of the features, an experimental
+  timeline, a workflow, a graphical abstract and A0 posters.
+- **Several figures**: every figure is kept in the browser under File › My figures, and can be
+  filed under a project. Figures are saved on your own computer only: nobody else sees them.
+- **Light and dark theme**: File › Dark theme.
 - **Export**: SVG (vector, editable in Inkscape or Illustrator), PDF (vector, through the print
   window), PowerPoint (one slide with the figure as a sharp picture) and PNG, with optional
   cropping and transparent background. Set a printed width

@@ -85,6 +85,7 @@ export function Overlay({ marquee, attachHint, guides }: Props) {
   const editing = useEditor((s) => s.editingTextId)
   const reshape = useEditor((s) => s.reshape)
   const chartPart = useEditor((s) => s.chartPart)
+  const slides = useEditor((s) => s.slidesShown || !!s.doc.slides)
 
   const toScreen = (p: Point): Point => ({ x: p.x * view.zoom + view.x, y: p.y * view.zoom + view.y })
   const screenRect = (r: Rect) => ({ x: r.x * view.zoom + view.x, y: r.y * view.zoom + view.y, width: r.w * view.zoom, height: r.h * view.zoom })
@@ -126,7 +127,8 @@ export function Overlay({ marquee, attachHint, guides }: Props) {
       const small = Math.min(box.w, box.h) * view.zoom < 28
       const handles = HANDLES.filter(([hx, hy]) => {
         const corner = hx !== 0 && hy !== 0
-        if (node.type === 'text') return corner
+        // A label is resized by its corners; a text box also has a handle at each side, to set its width.
+        if (node.type === 'text') return corner || (!!node.width && hy === 0)
         return corner || !small
       })
       const rot = local(0, -1, 26)
@@ -175,6 +177,23 @@ export function Overlay({ marquee, attachHint, guides }: Props) {
     const middle = { x: pressed.x + pressed.w / 2, y: pressed.y + pressed.h / 2 }
     const corners = [[b.x - pad, b.y - pad], [b.x + b.w + pad, b.y - pad], [b.x + b.w + pad, b.y + b.h + pad], [b.x - pad, b.y + b.h + pad]].map(([x, y]) => toScreen(add(middle, rotate({ x: x - pressed.w / 2, y: y - pressed.h / 2 }, pressed.rotation))))
     parts.push(<polygon key="chart-part" className="part-outline" points={corners.map((p) => `${p.x},${p.y}`).join(' ')} />)
+  }
+
+  // On which press an object appears while its slide is presented: a small number at its corner.
+  if (slides) {
+    for (const node of doc.nodes) {
+      if (!node.appear || node.hidden) continue
+      const r = getRect(node, doc)
+      const at = toScreen({ x: r.x, y: r.y })
+      parts.push(
+        <g key={`appear-${node.id}`} className="appear-badge" pointerEvents="none">
+          <circle cx={at.x} cy={at.y} r={9} />
+          <text x={at.x} y={at.y + 3.5} textAnchor="middle">
+            {node.appear}
+          </text>
+        </g>,
+      )
+    }
   }
 
   if (guides.x !== null) {

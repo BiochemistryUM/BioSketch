@@ -362,7 +362,7 @@ const SHORTCUTS: [string, string][] = [
   ['Ctrl/⌘ + scroll, or pinch', 'Zoom'],
   ['Ctrl/⌘ 0', 'Fit page to window'],
   ['] and [', 'Bring to front, send to back'],
-  ['Page Down / Page Up', 'Next slide, previous slide'],
+  ['Arrow keys with nothing selected, or Page Down / Page Up', 'Next slide, previous slide'],
 ]
 
 export function HelpDialog() {
@@ -401,9 +401,12 @@ export function HelpDialog() {
             <li>Lock a background so it stays put; “Unlock all” is in the right-hand panel when nothing is selected.</li>
             <li>File › Import a pathway finds a pathway on WikiPathways (or opens a .gpml file) and redraws it as boxes and arrows you can change.</li>
             <li>Drag in or paste your own pictures. File › My figures keeps every figure you have made in this browser.</li>
+            <li>With the text tool, a press places a label and a drag draws a text box, which breaks its lines at its width and can have bullet points. “Table” under “Add to the page” adds a table you can paste from a spreadsheet.</li>
+            <li>File › Start from a template has a timeline, a workflow, a graphical abstract and posters. File › My figures can file your figures under projects. The star on an icon of the library keeps it under “Favourites”.</li>
             <li>
-              “Slides” in the top bar shows the slides of the figure under the page: add, copy, move and delete them there. “Present” shows them full screen: the arrow keys or a
-              press move on, Escape goes back. Export can save all slides as one PDF or one PowerPoint file.
+              “Slides” in the top bar shows the slides of the figure under the page: add, copy, move and delete them there. With nothing selected, the arrow keys open the next and the previous slide. “Present” shows them full screen: the arrow keys or a
+              press move on, Escape goes back. Export can save all slides as one PDF or one PowerPoint file. The button beside “+” has slide layouts and your own saved slide templates; notes for the
+              speaker are typed under “Page”, and an object can be made to appear on a press of its own (under “Arrange”).
             </li>
             <li>With the membrane brush, draw a line. Finish near the start to close it into a cell.</li>
             <li>Sketch with the pen, then use “AI” to turn the sketch into a clean figure, or to change a figure you already have.</li>

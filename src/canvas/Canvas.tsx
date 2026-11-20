@@ -533,7 +533,9 @@ export function Canvas() {
       }
       case 'resize': {
         const lockByDefault = g.node.type === 'icon' || g.node.type === 'text' || g.node.type === 'image'
-        const keep = lockByDefault ? !e.shiftKey : e.shiftKey
+        // The side handles of a text box set its width: its lettering stays as large as it is.
+        const sideOfBox = g.node.type === 'text' && !!g.node.width && g.hy === 0
+        const keep = sideOfBox ? false : lockByDefault ? !e.shiftKey : e.shiftKey
         const box = dragHandle(g.box, g.hx, g.hy, snapPoint(world), keep)
         s.transient((start) => updateNodes(start, [g.id], () => resizeNode(g.node, g.box, box)))
         return
@@ -707,9 +709,13 @@ export function Canvas() {
         if (!s.showSketch) s.set({ showSketch: true })
         return
       }
-      case 'text':
-        addText(world)
+      case 'text': {
+        // A press places a label; a drag across the page draws a text box of that width.
+        const wide = Math.abs(world.x - g.start.x)
+        if (wide * view.zoom > 24) addText({ x: Math.min(g.start.x, world.x), y: Math.min(g.start.y, world.y) }, 'Text', Math.round(wide))
+        else addText(world)
         return
+      }
     }
   }
 

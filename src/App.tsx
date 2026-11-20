@@ -35,11 +35,14 @@ function EmptyState() {
       <h2>Start your figure</h2>
       <p>Tap an icon in the library to place it, sketch with the pen, or begin from an example. The tour shows what BioSketch can do, slide by slide.</p>
       <div className="row wrap center">
-        {TEMPLATES.map((t) => (
+        {TEMPLATES.filter((t) => !t.group).map((t) => (
           <button key={t.id} className="btn" onClick={() => void exampleDoc(t).then((doc) => doc && useEditor.getState().loadDoc(doc))}>
             {t.name}
           </button>
         ))}
+        <button className="btn" onClick={() => useEditor.setState({ dialog: 'templates' })}>
+          Templates and posters
+        </button>
         <button className="btn" onClick={() => void tourDoc().then((doc) => doc && useEditor.getState().loadDoc(doc))}>
           Tour of the features
         </button>

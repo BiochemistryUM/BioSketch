@@ -123,7 +123,7 @@
       "type": "text",
       "x": 80,
       "y": 374,
-      "text": "•  Drag a slide in the row to move it. Page Down and Page Up open the next and the previous one.",
+      "text": "•  Drag a slide in the row to move it. With nothing selected, the arrow keys change the slide.",
       "fontSize": 25,
       "fill": "#1f2933",
       "align": "left",
@@ -228,7 +228,8 @@
       "stroke": "#334155",
       "strokeWidth": 3
      }
-    ]
+    ],
+    "background": "#ffffff"
    },
    {
     "nodes": [
@@ -344,7 +345,8 @@
       "align": "left",
       "rotation": 0
      }
-    ]
+    ],
+    "background": "#ffffff"
    },
    {
     "nodes": [
@@ -428,7 +430,8 @@
       "align": "left",
       "rotation": 0
      }
-    ]
+    ],
+    "background": "#ffffff"
    }
   ]
  }

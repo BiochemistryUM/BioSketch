@@ -10,7 +10,7 @@
 //    (R's `bw.nrd0`, the default of `density`).
 //  - Fitted line: ordinary least squares of y on x, with the coefficient of determination R².
 
-import { fUpper, tTwoSided } from './distributions'
+import { fUpper, tTwoSided, tCritical } from './distributions'
 
 /** The `p` quantile (0 to 1) of values that are already sorted in ascending order. */
 export function quantile(sorted: number[], p: number): number {
@@ -97,6 +97,11 @@ export interface Fit {
   /** Share of the variation in y that the line accounts for, 0 to 1. */
   r2: number
   n: number
+  /** The mean of x and the sum of the squared distances of every x from it. */
+  meanX: number
+  sxx: number
+  /** The scatter of the points about the line (the residual standard error, on n − 2 degrees of freedom); null with fewer than three points. */
+  scatter: number | null
 }
 
 /**
@@ -119,8 +124,19 @@ export function fitLine(points: [number, number][]): Fit | null {
   }
   if (!(sxx > 0)) return null
   const slope = sxy / sxx
+  const left = Math.max(0, syy - slope * sxy)
   // When every y is the same the line fits exactly, although R² is formally undefined.
-  return { slope, intercept: my - slope * mx, r2: syy > 0 ? (sxy * sxy) / (sxx * syy) : 1, n }
+  return { slope, intercept: my - slope * mx, r2: syy > 0 ? (sxy * sxy) / (sxx * syy) : 1, n, meanX: mx, sxx, scatter: n > 2 ? Math.sqrt(left / (n - 2)) : null }
+}
+
+/**
+ * How far above and below a fitted line its 95 % confidence band reaches at `x`: the interval in
+ * which the line itself lies, not single new points (R: `predict(lm, interval = "confidence")`).
+ * It is narrowest at the mean of x and widens away from it. Null with fewer than three points.
+ */
+export function lineBand(fit: Fit, x: number, level = 0.95): number | null {
+  if (fit.scatter === null || fit.n < 3) return null
+  return tCritical(1 - level, fit.n - 2) * fit.scatter * Math.sqrt(1 / fit.n + (x - fit.meanX) ** 2 / fit.sxx)
 }
 
 // ---------- correlation ----------

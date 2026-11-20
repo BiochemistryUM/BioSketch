@@ -98,8 +98,11 @@ describe('several separate groups', () => {
     expect(oneWayAnova([[1], [2]])).toBeNull()
   })
 
-  it('each group with the first: pooled t tests with Holm’s correction (pairwise.t.test, p.adjust)', () => {
-    nearAll(pairPs(groups, 'means', false, true), ref.several.pooledFirstHolm)
+  it('each group with the first: Dunnett’s test (the integral of the reference script; multcomp glht with mcp Dunnett)', () => {
+    nearAll(pairPs(groups, 'means', false, true), ref.several.dunnettFirst, 1e-7)
+    // Dunnett's p values allow for the comparisons sharing the control: none is larger than Holm's t tests give.
+    const holm = ref.several.pooledFirstHolm
+    pairPs(groups, 'means', false, true).forEach((p, i) => expect(p!).toBeLessThanOrEqual(Math.max(holm[i], ref.several.dunnettFirst[i]) + 1e-9))
   })
 
   it('Kruskal–Wallis test (kruskal.test) and Mann–Whitney tests with Holm’s correction (pairwise.wilcox.test)', () => {
@@ -279,7 +282,7 @@ describe('advice on which test fits a table', () => {
   it('explains the design it was told about', () => {
     expect(advise([A, B], true).why.join(' ')).toMatch(/each row is one sample measured in every group/)
     expect(advise([A, B, C, D]).why.join(' ')).toMatch(/Tukey’s test, every pair/)
-    expect(advise([A, B, C, D], false, true).why.join(' ')).toMatch(/each group with the first, Holm’s correction/)
+    expect(advise([A, B, C, D], false, true).why.join(' ')).toMatch(/Dunnett’s test, each group with the first/)
     expect(advise([A, B, C, D, A]).why[0]).toBe('The table has 5 groups with 4 to 6 values each.')
   })
 

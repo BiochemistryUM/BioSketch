@@ -35,7 +35,7 @@ describe('the Kaplan–Meier estimate', () => {
   it('counts subjects that leave at a time as still followed at that time, and ignores times that are not numbers', () => {
     const km = kaplanMeier([{ time: 5, event: true }, { time: 5, event: false }, { time: 8, event: true }, { time: NaN, event: true }, { time: -1, event: true }])
     expect(km.n).toBe(3)
-    expect(km.steps.map(({ survival: _s, ...rest }) => rest)).toEqual([{ time: 5, atRisk: 3, events: 1, censored: 1 }, { time: 8, atRisk: 1, events: 1, censored: 0 }])
+    expect(km.steps.map(({ survival: _s, lower: _lo, upper: _hi, ...rest }) => rest)).toEqual([{ time: 5, atRisk: 3, events: 1, censored: 1 }, { time: 8, atRisk: 1, events: 1, censored: 0 }])
     expect(km.steps[0].survival).toBeCloseTo(2 / 3, 12)
     expect(km.steps[1].survival).toBe(0)
     expect(survivalAt(km, 0)).toBe(1)
@@ -141,7 +141,8 @@ describe('survival curves on a chart', () => {
     expect(text).toContain('Control: n = 10, 6 events, median 25; Drug A: n = 10, 9 events, median 10.5; Drug B: n = 10, 4 events, median not reached.')
     expect(text).toContain('Groups were compared with the log-rank test: χ² = 11.5, df = 2, p = 0.0032.')
     expect(text).toContain('Pairs of groups were compared by log-rank tests with Holm’s correction')
-    expect(text).toContain('survival package of R (survfit, survdiff)')
+    expect(text).toContain('survival package of R (survfit, survdiff, coxph).')
+    expect(text).toMatch(/Hazard ratios against .+ came from a Cox proportional hazards model/)
     const saved = validateDoc(JSON.parse(JSON.stringify({ ...emptyDoc(), nodes: [chart({ logRank: true }) as FigNode] }))).nodes[0] as ChartNode
     expect(saved).toMatchObject({ kind: 'scatter', survival: true, logRank: true })
     expect((validateDoc(JSON.parse(JSON.stringify({ ...emptyDoc(), nodes: [{ ...chart(), survival: undefined, logRank: true } as FigNode] }))).nodes[0] as ChartNode).logRank).toBeUndefined()

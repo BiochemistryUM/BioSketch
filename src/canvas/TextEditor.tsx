@@ -66,7 +66,10 @@ export function TextEditor({ id }: { id: string }) {
   // Inside a shape the box is as wide as the room for the words, and breaks lines the same way
   // the shape will; a free label grows with what is typed.
   const inShape = node.type === 'shape'
-  const width = (inShape ? shapeTextWidth(node, shown.fontSize) : m.w + shown.fontSize * 0.7) * view.zoom
+  // A text box breaks its lines at its width, as a shape does at the room it has.
+  const boxed = node.type === 'text' && !!node.width
+  const wraps = inShape || boxed
+  const width = (inShape ? shapeTextWidth(node, shown.fontSize) : boxed ? m.w : m.w + shown.fontSize * 0.7) * view.zoom
   const sx = (inShape ? node.x + node.w / 2 : shown.x) * view.zoom + view.x
   const left = inShape || shown.align === 'center' ? sx - width / 2 : shown.align === 'right' ? sx - width : sx
   return (
@@ -74,7 +77,7 @@ export function TextEditor({ id }: { id: string }) {
       ref={ref}
       className="text-editor"
       value={value}
-      wrap={inShape ? 'soft' : 'off'}
+      wrap={wraps ? 'soft' : 'off'}
       spellCheck={false}
       onChange={(e) => setValue(e.target.value)}
       onBlur={close}
@@ -97,7 +100,7 @@ export function TextEditor({ id }: { id: string }) {
         fontStyle: shown.italic ? 'italic' : 'normal',
         textAlign: shown.align,
         color: shown.fill,
-        ...(inShape ? { whiteSpace: 'pre-wrap' as const } : {}),
+        ...(wraps ? { whiteSpace: 'pre-wrap' as const } : {}),
       }}
     />
   )

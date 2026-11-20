@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { fitView, patchDoc, present, zoomBy } from '../actions'
-import { exampleDoc, newFigure, tourDoc } from '../figures'
+import { newFigure, tourDoc } from '../figures'
 import { download, fileBase } from '../io/download'
 import { parseDoc, serializeDoc } from '../io/files'
 import { slideCount } from '../model/slides'
 import { toast, useEditor } from '../store'
-import { TEMPLATES } from '../templates'
 import { Icon, type IconName } from './Icon'
+import { applyTheme } from './theme'
 
 function BarButton(props: { icon: IconName; label: string; onClick: () => void; disabled?: boolean; active?: boolean; text?: string; className?: string }) {
   return (
@@ -32,6 +32,7 @@ export function saveFile(): void {
 
 function FileMenu() {
   const [open, setOpen] = useState(false)
+  const theme = useEditor((s) => s.theme)
   const ref = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -87,7 +88,7 @@ function FileMenu() {
           {item('Open figure file…', 'open', () => fileRef.current?.click())}
           {item('Save figure file', 'save', saveFile)}
           {item('Import a pathway…', 'pathway', () => useEditor.setState({ dialog: 'pathway' }))}
-          <div className="menu-label">Start from an example</div>
+          {item('Start from a template…', 'template', () => useEditor.setState({ dialog: 'templates' }))}
           <button
             role="menuitem"
             className="menu-item two-line"
@@ -102,25 +103,13 @@ function FileMenu() {
               <small>Twelve slides with examples to try, from icons to statistics</small>
             </span>
           </button>
-          {TEMPLATES.map((t) => (
-            <button
-              key={t.id}
-              role="menuitem"
-              className="menu-item two-line"
-              onClick={() => {
-                setOpen(false)
-                void exampleDoc(t).then((doc) => doc && newFigure(doc))
-              }}
-            >
-              <Icon name="template" size={16} />
-              <span>
-                {t.name}
-                <small>{t.description}</small>
-              </span>
-            </button>
-          ))}
           <div className="menu-sep" />
           {item('Import SVG icon…', 'import', () => useEditor.setState({ dialog: 'import-icon' }))}
+          {item(theme === 'dark' ? 'Light theme' : 'Dark theme', theme === 'dark' ? 'sun' : 'moon', () => {
+            const next = theme === 'dark' ? 'light' : 'dark'
+            applyTheme(next, true)
+            useEditor.setState({ theme: next })
+          })}
           {item('Help and shortcuts', 'help', () => useEditor.setState({ dialog: 'help' }))}
         </div>
       )}

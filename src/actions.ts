@@ -1,5 +1,6 @@
 // Editor commands. Menus, buttons and keyboard shortcuts all call these.
 
+import { keepFavourites, keepRecent, toggleId, usedId } from './icons/favourites'
 import { getIcon } from './icons/library'
 import { finishReshape } from './icons/reshape'
 import { findPackIcon } from './icons/packs'
@@ -27,8 +28,10 @@ import {
   type OrderMode,
 } from './model/doc'
 import { clamp, rectCenter, unionRects } from './model/geometry'
-import { findNode, getRect, translateNode } from './model/nodes'
+import { TEXT_WIDTH_MIN, findNode, getRect, translateNode } from './model/nodes'
+import { layoutNodes, slideFromTemplate, type SlideLayoutId } from './model/layouts'
 import { panelNodes, type PanelLayout } from './model/panels'
+import { newTable } from './model/table'
 import { MAX_SLIDES, addSlide, duplicateSlide, mapSlides, moveSlide, removeSlide, showSlide, slideCount, slideIndex } from './model/slides'
 import type { ChartNode, FigDoc, FigNode, IconDef, IconNode, Point, Rect, TextNode } from './model/types'
 import { isPickable } from './model/types'
@@ -214,6 +217,25 @@ export function addChart(): void {
   toast('Chart added with example numbers. Paste your own under “Numbers” in the panel.')
 }
 
+/** The cells a new table starts with, so there is something to look at before the scientist pastes their own. */
+export const SAMPLE_TABLE: string[][] = [
+  ['Sample', 'Genotype', 'Cells (×10^{6})', 'Viability (%)'],
+  ['A', 'Wild type', '4.2', '96'],
+  ['B', 'Knockout', '3.1', '88'],
+  ['C', 'Rescue', '3.9', '94'],
+]
+
+/** Add a table with example cells in the middle of the view, selected, so its cells can be replaced in the panel. */
+export function addTable(cells: string[][] = SAMPLE_TABLE): void {
+  const s = S()
+  const centre = viewCenter()
+  const made = newTable(uid(), cells, 0, 0, Math.max(200, s.doc.width * 0.8))
+  const node = { ...made, x: Math.round(centre.x - made.w / 2), y: Math.round(centre.y - made.h / 2) }
+  s.commit((doc) => ({ ...doc, nodes: [...doc.nodes, node] }), { select: [node.id] })
+  s.set({ tool: 'select' })
+  toast('Table added with example cells. Paste your own under “Cells” in the panel.')
+}
+
 /** Add the next panel letter (A, B, C…) as a bold label near the top-left of the view. */
 export function addPanelLetter(): void {
   const s = S()
@@ -340,12 +362,28 @@ export function viewCenter(): Point {
   return { x: (canvasSize.w / 2 - view.x) / view.zoom, y: (canvasSize.h / 2 - view.y) / view.zoom }
 }
 
+/** Mark an icon of the collections as a favourite, or take the mark away. */
+export function toggleFavouriteIcon(iconId: string): void {
+  const favouriteIcons = toggleId(S().favouriteIcons, iconId)
+  S().set({ favouriteIcons })
+  keepFavourites(favouriteIcons)
+}
+
+/** Note that an icon was used, for the list of the icons used last. */
+function iconUsed(iconId: string): void {
+  const recentIcons = usedId(S().recentIcons, iconId)
+  if (recentIcons === S().recentIcons) return
+  S().set({ recentIcons })
+  keepRecent(recentIcons)
+}
+
 export function addIcon(iconId: string, at?: Point): string | null {
   const s = S()
   // An icon from a pack is copied into the figure when first used, so the figure stays self-contained.
   const fromPack = getIcon(s.doc, iconId) ? undefined : findPackIcon(iconId)
   const def = getIcon(s.doc, iconId) ?? fromPack
   if (!def) return null
+  iconUsed(iconId)
   const [w, h] = def.viewBox
   const customIcons = fromPack ? { customIcons: { ...s.doc.customIcons, [fromPack.id]: { ...fromPack, category: 'Imported' } } } : {}
   // With the dashed box of a missing icon selected, the new icon takes its place: as large as fits
@@ -380,19 +418,25 @@ export function addIcon(iconId: string, at?: Point): string | null {
   return node.id
 }
 
-export function addText(at: Point, text = 'Label'): string {
+/**
+ * Add a text and open it for typing: a label with its middle at `at`, or, with a `width`, a text
+ * box whose top left corner is at `at` and whose words are broken at that width.
+ */
+export function addText(at: Point, text = 'Label', width?: number): string {
   const s = S()
-  const node: TextNode = {
-    id: uid(),
-    type: 'text',
-    x: Math.round(at.x),
-    y: Math.round(at.y - 11),
-    text,
-    fontSize: 18,
-    fill: '#1f2933',
-    align: 'center',
-    rotation: 0,
-  }
+  const node: TextNode = width
+    ? { id: uid(), type: 'text', x: Math.round(at.x), y: Math.round(at.y), text, fontSize: 20, fill: '#1f2933', align: 'left', rotation: 0, width: Math.max(TEXT_WIDTH_MIN, Math.round(width)) }
+    : {
+        id: uid(),
+        type: 'text',
+        x: Math.round(at.x),
+        y: Math.round(at.y - 11),
+        text,
+        fontSize: 18,
+        fill: '#1f2933',
+        align: 'center',
+        rotation: 0,
+      }
   s.commit((doc) => ({ ...doc, nodes: [...doc.nodes, node] }), { select: [node.id] })
   s.set({ tool: 'select', editingTextId: node.id })
   return node.id
@@ -456,9 +500,15 @@ function changeSlides(fn: (doc: FigDoc) => FigDoc): boolean {
   return S().doc !== before
 }
 
-/** A new, empty slide after the open one. */
-export function newSlide(): void {
-  if (changeSlides(addSlide)) S().set({ slidesShown: true })
+/**
+ * A new slide after the open one: empty, or beginning as a template (a slide of the scientist's own
+ * design) or as one of the ready-made layouts.
+ */
+export function newSlide(start?: FigDoc | SlideLayoutId): void {
+  const made = changeSlides((doc) =>
+    typeof start === 'string' ? addSlide(doc, layoutNodes(start, doc, uid)) : start ? slideFromTemplate(doc, start) : addSlide(doc),
+  )
+  if (made) S().set({ slidesShown: true })
   else toast(`A figure holds at most ${MAX_SLIDES} slides.`)
 }
 

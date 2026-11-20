@@ -1,10 +1,12 @@
 // Editor state: the figure, the selection, the active tool, the view and the undo history.
 
 import { create } from 'zustand'
+import { storedFavourites, storedRecent } from './icons/favourites'
 import { emptyDoc } from './model/doc'
 import type { ChartPart } from './model/chart'
 import type { PartBox } from './model/chartParts'
 import type { LineStyle } from './model/dash'
+import { startTheme, type Theme } from './ui/theme'
 import type { ConnectorFade, ConnectorKind, FigDoc, FigNode, IconDef, ShapeKind } from './model/types'
 
 export type Tool = 'select' | 'pan' | 'text' | 'shape' | 'connector' | 'membrane' | 'pen' | 'eraser'
@@ -16,7 +18,7 @@ export interface View {
   zoom: number
 }
 
-export type Dialog = null | 'export' | 'ai' | 'import-icon' | 'help' | 'figures' | 'pathway' | 'analysis'
+export type Dialog = null | 'export' | 'ai' | 'import-icon' | 'help' | 'figures' | 'pathway' | 'analysis' | 'templates'
 
 const HISTORY_LIMIT = 100
 const MERGE_WINDOW_MS = 1000
@@ -66,6 +68,11 @@ export interface EditorState {
   slidesShown: boolean
   /** The slides are being shown full screen, one after the other. */
   presenting: boolean
+  /** The light or the dark look of the interface (not of the figure). */
+  theme: Theme
+  /** Ids of the icons of the collections marked as favourites, and of those used last (newest first); kept in the browser. */
+  favouriteIcons: string[]
+  recentIcons: string[]
   /**
    * The part of a chart pressed last: which chart and part, a box round the part in the chart's own
    * box, and the chart as it was then. It is let go of as soon as that chart changes or something
@@ -120,6 +127,9 @@ export const useEditor = create<EditorState>((set, get) => ({
   fitRequest: 0,
   slidesShown: false,
   presenting: false,
+  theme: startTheme(),
+  favouriteIcons: storedFavourites(),
+  recentIcons: storedRecent(),
   chartPart: null,
 
   commit: (fn, opts) => {

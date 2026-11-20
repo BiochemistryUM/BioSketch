@@ -16,6 +16,7 @@ const loaders: Record<Name, () => Promise<{ default: ComponentType }>> = {
   figures: () => import('./FiguresDialog').then((m) => ({ default: m.FiguresDialog })),
   pathway: () => import('./PathwayDialog').then((m) => ({ default: m.PathwayDialog })),
   analysis: () => import('./AnalysisDialog').then((m) => ({ default: m.AnalysisDialog })),
+  templates: () => import('./TemplatesDialog').then((m) => ({ default: m.TemplatesDialog })),
 }
 
 const views = Object.fromEntries(Object.entries(loaders).map(([name, load]) => [name, lazy(load)])) as unknown as Record<Name, ComponentType>

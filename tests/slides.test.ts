@@ -8,12 +8,17 @@ import { missingIconsNote } from '../src/icons/library'
 import { dropUnusedParts } from '../src/icons/reshape'
 import { forSlides, printPage, printPages, renderSvg, slideFileName } from '../src/io/export'
 import { parseDoc, serializeDoc, validateDoc } from '../src/io/files'
+import { installKeyboard } from '../src/keys'
 import { buildDeck, deckParts, pptxParts, SLIDE, slideLike } from '../src/io/pptx'
 import { listFigures, saveFigure } from '../src/io/storage'
 import { addNodes, emptyDoc, scaleFigure } from '../src/model/doc'
 import {
   MAX_SLIDES,
   addSlide,
+  colourSlides,
+  nodesAtStep,
+  slideList,
+  slideSteps,
   dropPlace,
   duplicateSlide,
   everyNode,
@@ -31,7 +36,7 @@ import {
 } from '../src/model/slides'
 import type { ConnectorNode, FigDoc, FigNode, IconNode, ShapeNode, TextNode } from '../src/model/types'
 import { useEditor } from '../src/store'
-import { presentKey, presentPress } from '../src/ui/Presenter'
+import { clock, presentKey, presentMove, presentPress, type Place } from '../src/ui/Presenter'
 import { keepThumbs, thumbNow, thumbStamp } from '../src/ui/slideThumbs'
 import { stubIcon } from './helpers'
 
@@ -90,11 +95,13 @@ describe('a figure with several slides', () => {
   })
 
   it('shows one slide as a figure of its own, with the page and icons of the whole', () => {
+    // The colour set here is that of the open slide, the first; the others keep their own.
     const doc = { ...deck(), width: 1280, height: 720, background: '#101010', customIcons: { cell: stubIcon('cell') } }
     const third = slideDoc(doc, 2)
     expect(third.nodes.map((n) => n.id)).toEqual(['w'])
     expect(third.slides).toBeUndefined()
-    expect([third.width, third.height, third.background]).toEqual([1280, 720, '#101010'])
+    expect([third.width, third.height, third.background]).toEqual([1280, 720, '#ffffff'])
+    expect(slideDoc(doc, 0).background).toBe('#101010')
     expect(third.customIcons).toBe(doc.customIcons)
     expect(slideDocs(doc).map((d) => d.nodes.length)).toEqual([1, 3, 1])
     expect(slideDocs(doc).every((d) => d.slides === undefined)).toBe(true)
@@ -172,6 +179,61 @@ describe('a figure with several slides', () => {
     const doc = mapSlides(showSlide(deck(), 1), (nodes) => nodes.filter((n) => n.type !== 'connector'))
     expect(ids(doc)).toEqual([['a'], ['b', 'c'], ['w']])
     expect(slideIndex(doc)).toBe(1)
+  })
+})
+
+describe('what a slide has of its own', () => {
+  const coloured = (): FigDoc => withSlides(emptyDoc('Deck'), [{ nodes: [box('a')], background: '#101010', notes: 'Welcome everyone' }, [box('b')], { nodes: [word('w', 'End')], background: '#ffeecc' }], 0)
+
+  it('keeps the colour of its page and its notes with the slide', () => {
+    const doc = coloured()
+    expect(doc.background).toBe('#101010')
+    expect(doc.notes).toBe('Welcome everyone')
+    const second = showSlide(doc, 1)
+    // A slide given as a bare list of objects has the colour the figure had, and no notes.
+    expect(second.background).toBe('#ffffff')
+    expect(second.notes).toBeUndefined()
+    expect(second.slides!.before[0]).toEqual({ nodes: doc.nodes, background: '#101010', notes: 'Welcome everyone' })
+    expect(showSlide(second, 2).background).toBe('#ffeecc')
+    expect(showSlide(showSlide(doc, 2), 0)).toEqual(doc)
+    expect(slideList(doc).map((s) => s.background)).toEqual(['#101010', '#ffffff', '#ffeecc'])
+    expect(slideDocs(doc).map((d) => [d.background, d.notes])).toEqual([['#101010', 'Welcome everyone'], ['#ffffff', undefined], ['#ffeecc', undefined]])
+  })
+
+  it('gives a new slide the colour of the open one, and a copy its colour and notes', () => {
+    const doc = coloured()
+    const added = addSlide(doc)
+    expect(added.background).toBe('#101010')
+    expect(added.notes).toBeUndefined()
+    const copy = duplicateSlide(doc)
+    expect([copy.background, copy.notes]).toEqual(['#101010', 'Welcome everyone'])
+    // Moving and deleting take the colour and the notes along.
+    expect(slideList(moveSlide(doc, 0, 2)).map((s) => s.background)).toEqual(['#ffffff', '#ffeecc', '#101010'])
+    expect(removeSlide(doc).background).toBe('#ffffff')
+    expect(slideList(mapSlides(doc, (nodes) => nodes)).map((s) => s.notes)).toEqual(['Welcome everyone', undefined, undefined])
+  })
+
+  it('can take one colour for every slide', () => {
+    const doc = colourSlides(showSlide(coloured(), 2), '#ffeecc')
+    expect(slideList(doc).map((s) => s.background)).toEqual(['#ffeecc', '#ffeecc', '#ffeecc'])
+    expect(slideIndex(doc)).toBe(2)
+    const one = emptyDoc()
+    expect(colourSlides(one, '#ffffff')).toBe(one)
+    expect(colourSlides(one, '#000000').background).toBe('#000000')
+  })
+
+  it('survives a figure file, and a file from before takes the colour of the figure for every slide', () => {
+    for (const open of [0, 1, 2]) {
+      const doc = showSlide(coloured(), open)
+      expect(parseDoc(serializeDoc(doc))).toEqual(doc)
+    }
+    const old = validateDoc({ ...emptyDoc(), background: '#223344', nodes: [box('a')], slides: { before: [], after: [{ nodes: [box('b')] }, { nodes: [box('c')], background: 'red; }', notes: 12 }] } })
+    expect(slideList(old).map((s) => s.background)).toEqual(['#223344', '#223344', '#223344'])
+    expect(slideList(old).every((s) => s.notes === undefined)).toBe(true)
+    // Notes are kept as typed, up to their length; the press on which an object appears is a whole number of a sensible size.
+    const read = validateDoc({ ...emptyDoc(), notes: 'x'.repeat(9000), nodes: [{ ...box('a'), appear: 2.4 }, { ...box('b'), appear: 0 }, { ...box('c'), appear: 900 }, { ...box('d'), appear: 'soon' }] })
+    expect(read.notes).toHaveLength(5000)
+    expect(read.nodes.map((n) => n.appear)).toEqual([2, undefined, 50, undefined])
   })
 })
 
@@ -325,6 +387,41 @@ describe('slides in the editor', () => {
     expect(E().doc).toEqual(deck())
   })
 
+  it('opens the next and the previous slide with the arrow keys when nothing is selected', () => {
+    const off = installKeyboard()
+    const press = (key: string, shiftKey = false) => window.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true, cancelable: true }))
+    try {
+      press('ArrowRight')
+      expect(slideIndex(E().doc)).toBe(1)
+      press('ArrowDown')
+      expect(slideIndex(E().doc)).toBe(2)
+      // At the last slide there is none to go to.
+      press('ArrowRight')
+      expect(slideIndex(E().doc)).toBe(2)
+      press('ArrowLeft')
+      press('ArrowUp', true)
+      expect(slideIndex(E().doc)).toBe(0)
+      expect(E().past).toHaveLength(0)
+      // With something selected the arrow keys move it, and the slide stays.
+      E().set({ selection: ['a'] })
+      press('ArrowRight')
+      press('ArrowDown', true)
+      expect(slideIndex(E().doc)).toBe(0)
+      expect(E().doc.nodes[0]).toMatchObject({ id: 'a', x: 1, y: 10 })
+      // Page Down opens the next slide whatever is selected.
+      press('PageDown')
+      expect(slideIndex(E().doc)).toBe(1)
+      // A figure of one slide: the arrow keys change nothing.
+      E().loadDoc(addNodes(emptyDoc(), [box('a')]))
+      press('ArrowRight')
+      expect(E().doc.slides).toBeUndefined()
+      expect(E().doc.nodes[0]).toMatchObject({ id: 'a', x: 0 })
+      expect(E().past).toHaveLength(0)
+    } finally {
+      off()
+    }
+  })
+
   it('does not delete the only slide', () => {
     E().loadDoc(addNodes(emptyDoc(), [box('a')]))
     deleteSlide()
@@ -372,19 +469,59 @@ describe('presenting', () => {
   })
 
   it('knows when the picture of a slide must be made again', () => {
-    const doc = { ...deck(), customIcons: { cell: stubIcon('cell'), other: stubIcon('other') } }
-    const nodes: FigNode[] = [placed('i', 'cell')]
-    const stamp = thumbStamp(doc, nodes, true)
+    const slide: FigDoc = { ...emptyDoc(), nodes: [placed('i', 'cell')], customIcons: { cell: stubIcon('cell'), other: stubIcon('other') } }
+    const stamp = thumbStamp(slide, true)
     const same = (other: unknown[]) => other.length === stamp.length && other.every((v, k) => v === stamp[k])
-    expect(same(thumbStamp({ ...doc, name: 'Another name' }, nodes, true))).toBe(true)
+    expect(same(thumbStamp({ ...slide, name: 'Another name', notes: 'Say hello' }, true))).toBe(true)
     // An icon the slide does not place is none of its business.
-    expect(same(thumbStamp({ ...doc, customIcons: { ...doc.customIcons, other: stubIcon('other') } }, nodes, true))).toBe(true)
-    expect(same(thumbStamp({ ...doc, customIcons: { ...doc.customIcons, cell: stubIcon('cell') } }, nodes, true))).toBe(false)
-    expect(same(thumbStamp({ ...doc, background: '#000000' }, nodes, true))).toBe(false)
-    expect(same(thumbStamp({ ...doc, width: 1280 }, nodes, true))).toBe(false)
-    expect(same(thumbStamp(doc, nodes, false))).toBe(false)
-    expect(thumbNow(doc, nodes, true)).toBeNull()
+    expect(same(thumbStamp({ ...slide, customIcons: { ...slide.customIcons, other: stubIcon('other') } }, true))).toBe(true)
+    expect(same(thumbStamp({ ...slide, customIcons: { ...slide.customIcons, cell: stubIcon('cell') } }, true))).toBe(false)
+    expect(same(thumbStamp({ ...slide, background: '#000000' }, true))).toBe(false)
+    expect(same(thumbStamp({ ...slide, width: 1280 }, true))).toBe(false)
+    expect(same(thumbStamp(slide, false))).toBe(false)
+    expect(thumbNow(slide, true)).toBeNull()
     keepThumbs([])
+  })
+
+  it('brings objects on one by one, then the next slide, and goes back the same way', () => {
+    // Three slides; on the second, objects appear on two presses.
+    const steps = [0, 2, 0]
+    const walk: Place[] = [{ slide: 0, step: 0 }]
+    for (let i = 0; i < 6; i++) walk.push(presentMove(walk[walk.length - 1], 1, steps))
+    expect(walk.map((p) => `${p.slide}.${p.step}`)).toEqual(['0.0', '1.0', '1.1', '1.2', '2.0', '2.0', '2.0'])
+    // Back from the third slide: the second with everything on it, then one object fewer at a time.
+    const back: Place[] = [{ slide: 2, step: 0 }]
+    for (let i = 0; i < 5; i++) back.push(presentMove(back[back.length - 1], -1, steps))
+    expect(back.map((p) => `${p.slide}.${p.step}`)).toEqual(['2.0', '1.2', '1.1', '1.0', '0.0', '0.0'])
+    expect(presentMove({ slide: 1, step: 1 }, 'first', steps)).toEqual({ slide: 0, step: 0 })
+    expect(presentMove({ slide: 0, step: 0 }, 'last', [0, 2])).toEqual({ slide: 1, step: 2 })
+    expect(presentMove({ slide: 0, step: 0 }, 1, [])).toEqual({ slide: 0, step: 0 })
+  })
+
+  it('shows a slide as it stands after some presses, with what appears later not drawn yet', () => {
+    const late = { ...box('late', 200), appear: 2 }
+    const soon = { ...box('soon', 100), appear: 1 }
+    const nodes: FigNode[] = [box('a'), soon, late, arrow('line', 'a', 'late')]
+    expect(slideSteps(nodes)).toBe(2)
+    expect(slideSteps([box('a')])).toBe(0)
+    // A hidden object does not ask for a press of its own.
+    expect(slideSteps([{ ...late, hidden: true }])).toBe(0)
+    const start = nodesAtStep(nodes, 0)
+    expect(start.map((n) => !!n.hidden)).toEqual([false, true, true, false])
+    // What waits is still among the objects, so the arrow attached to it keeps its place.
+    expect(start.map((n) => n.id)).toEqual(['a', 'soon', 'late', 'line'])
+    expect(nodesAtStep(nodes, 1).map((n) => !!n.hidden)).toEqual([false, false, true, false])
+    // With every press made the slide is the slide, and the same list comes back for the same step.
+    expect(nodesAtStep(nodes, 2)).toBe(nodes)
+    expect(nodesAtStep(nodes, 7)).toBe(nodes)
+    expect(nodesAtStep(nodes, 1)).toBe(nodesAtStep(nodes, 1))
+  })
+
+  it('tells the time a presentation has taken', () => {
+    expect(clock(0)).toBe('00:00')
+    expect(clock(65_400)).toBe('01:05')
+    expect(clock(3_725_000)).toBe('1:02:05')
+    expect(clock(-5)).toBe('00:00')
   })
 })
 

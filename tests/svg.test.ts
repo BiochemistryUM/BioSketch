@@ -346,8 +346,8 @@ describe('example figures', () => {
       for (const n of doc.nodes) {
         if (n.type === 'icon') expect(getIcon(doc, n.iconId), `${t.id}: ${n.iconId}`).toBeDefined()
         if (n.type === 'connector') {
-          expect(nodeIds.has(n.from.nodeId!), t.id).toBe(true)
-          expect(nodeIds.has(n.to.nodeId!), t.id).toBe(true)
+          // The example figures attach every arrow; in a template a line can stand free (the axis of a timeline).
+          for (const end of [n.from, n.to]) if (!t.group || end.nodeId) expect(nodeIds.has(end.nodeId!), t.id).toBe(true)
         }
       }
     }

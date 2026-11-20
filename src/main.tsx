@@ -6,6 +6,7 @@ import { startAutosave } from './io/autosave'
 import { loadStartup } from './io/storage'
 import { toast, useEditor } from './store'
 import { preloadDialogs } from './ui/lazyDialogs'
+import { applyTheme } from './ui/theme'
 import './styles.css'
 
 async function start() {
@@ -19,6 +20,8 @@ async function start() {
 
   // In development, expose the editor state for debugging from the browser console.
   if (import.meta.env.DEV) (window as unknown as { __editor: typeof useEditor }).__editor = useEditor
+
+  applyTheme(useEditor.getState().theme)
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
@@ -44,7 +47,7 @@ async function start() {
           .getEntriesByType('resource')
           .map((entry) => entry.name)
           .filter((url) => url.startsWith(location.origin) && /\.(js|css|svg|png|webmanifest)$/.test(new URL(url).pathname))
-        const cache = await caches.open('biosketch-v5')
+        const cache = await caches.open('biosketch-v6')
         await Promise.all(own.map((url) => cache.add(url).catch(() => undefined)))
       })
       .catch(() => undefined)

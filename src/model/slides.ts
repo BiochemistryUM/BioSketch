@@ -1,81 +1,93 @@
 // A figure can have several slides, shown one after the other as a presentation. The slide that is
-// open is the figure as the rest of BioSketch knows it (`doc.nodes`): drawing, selecting, exporting
-// and undoing need to know nothing about slides. The other slides wait in `doc.slides`, those
-// before the open one and those after it. Opening another slide swaps the objects over. The page
-// (its size and colour) and the icons belong to the whole figure.
+// open is the figure as the rest of BioSketch knows it (`doc.nodes`, and with them the colour of
+// its page and its notes): drawing, selecting, exporting and undoing need to know nothing about
+// slides. The other slides wait in `doc.slides`, those before the open one and those after it.
+// Opening another slide swaps the three over. The size of the page and the icons belong to the
+// whole figure.
 //
 // Everything here is pure: it returns a new figure.
 
 import { cloneNodes } from './doc'
-import type { Endpoint, FigDoc, FigNode } from './types'
+import type { Endpoint, FigDoc, FigNode, Slide } from './types'
 
 /** The most slides a figure holds. */
 export const MAX_SLIDES = 200
+/** The longest notes a slide holds, in characters. */
+export const MAX_NOTES = 5000
+/** The most presses on which objects of one slide can appear. */
+export const MAX_STEPS = 50
 
 export const slideCount = (doc: FigDoc): number => 1 + (doc.slides ? doc.slides.before.length + doc.slides.after.length : 0)
 
 /** The place of the open slide among the slides, counted from 0. */
 export const slideIndex = (doc: FigDoc): number => doc.slides?.before.length ?? 0
 
-/** The objects of every slide, in the order of the slides. */
-export function slideNodes(doc: FigDoc): FigNode[][] {
-  if (!doc.slides) return [doc.nodes]
-  return [...doc.slides.before.map((s) => s.nodes), doc.nodes, ...doc.slides.after.map((s) => s.nodes)]
+/** The open slide as the other slides are kept: its objects, the colour of its page, its notes. */
+export const openSlide = (doc: FigDoc): Slide => ({ nodes: doc.nodes, background: doc.background, ...(doc.notes ? { notes: doc.notes } : {}) })
+
+/** Every slide of the figure, in order. */
+export function slideList(doc: FigDoc): Slide[] {
+  if (!doc.slides) return [openSlide(doc)]
+  return [...doc.slides.before, openSlide(doc), ...doc.slides.after]
 }
+
+/** The objects of every slide, in the order of the slides. */
+export const slideNodes = (doc: FigDoc): FigNode[][] => slideList(doc).map((s) => s.nodes)
 
 /** Every object of the figure, on whichever slide it is. */
 export const everyNode = (doc: FigDoc): FigNode[] => (doc.slides ? slideNodes(doc).flat() : doc.nodes)
 
-/** The same figure made of these slides, with the slide at `open` as the open one. */
-export function withSlides(doc: FigDoc, slides: FigNode[][], open = 0): FigDoc {
-  const { slides: _others, ...rest } = doc
-  if (slides.length <= 1) return { ...rest, nodes: slides[0] ?? [] }
-  const at = Math.min(slides.length - 1, Math.max(0, Math.round(open) || 0))
-  return {
-    ...rest,
-    nodes: slides[at],
-    slides: { before: slides.slice(0, at).map((nodes) => ({ nodes })), after: slides.slice(at + 1).map((nodes) => ({ nodes })) },
-  }
+/**
+ * The same figure made of these slides, with the slide at `open` as the open one. A slide given as
+ * a bare list of objects has the colour of the figure's page and no notes.
+ */
+export function withSlides(doc: FigDoc, slides: (Slide | FigNode[])[], open = 0): FigDoc {
+  const { slides: _others, notes: _notes, ...rest } = doc
+  const all: Slide[] = slides.map((s) => (Array.isArray(s) ? { nodes: s, background: doc.background } : { nodes: s.nodes, background: s.background, ...(s.notes ? { notes: s.notes } : {}) }))
+  const at = Math.min(Math.max(all.length - 1, 0), Math.max(0, Math.round(open) || 0))
+  const shown = all[at] ?? { nodes: [], background: doc.background }
+  const figure: FigDoc = { ...rest, background: shown.background, ...(shown.notes ? { notes: shown.notes } : {}), nodes: shown.nodes }
+  return all.length <= 1 ? figure : { ...figure, slides: { before: all.slice(0, at), after: all.slice(at + 1) } }
 }
 
-/** One slide as a figure of its own, to draw or export it: the page and the icons of the figure, the objects of that slide. */
+/** One slide as a figure of its own, to draw or export it: the size and the icons of the figure, the objects and the page colour of that slide. */
 export function slideDoc(doc: FigDoc, index: number): FigDoc {
-  const all = slideNodes(doc)
+  const all = slideList(doc)
   return withSlides(doc, [all[Math.min(all.length - 1, Math.max(0, index))]])
 }
 
 /** Every slide as a figure of its own, in order. */
-export const slideDocs = (doc: FigDoc): FigDoc[] => slideNodes(doc).map((nodes) => withSlides(doc, [nodes]))
+export const slideDocs = (doc: FigDoc): FigDoc[] => slideList(doc).map((slide) => withSlides(doc, [slide]))
 
 /** The figure with another slide open. */
 export function showSlide(doc: FigDoc, index: number): FigDoc {
   const count = slideCount(doc)
   const at = Math.min(count - 1, Math.max(0, Math.round(index) || 0))
-  return at === slideIndex(doc) ? doc : withSlides(doc, slideNodes(doc), at)
+  return at === slideIndex(doc) ? doc : withSlides(doc, slideList(doc), at)
 }
 
-/** A new, empty slide after the open one, opened. */
-export function addSlide(doc: FigDoc): FigDoc {
+/** A new slide after the open one, opened: empty unless `nodes` says what it holds, with the page colour of the open slide unless `background` gives another. */
+export function addSlide(doc: FigDoc, nodes: FigNode[] = [], background: string = doc.background): FigDoc {
   if (slideCount(doc) >= MAX_SLIDES) return doc
-  const all = slideNodes(doc)
+  const all = slideList(doc)
   const at = slideIndex(doc) + 1
-  all.splice(at, 0, [])
+  all.splice(at, 0, { nodes, background })
   return withSlides(doc, all, at)
 }
 
 /** A copy of the open slide after it, opened. The copies have ids of their own; groups and attached arrows stay together. */
 export function duplicateSlide(doc: FigDoc): FigDoc {
   if (slideCount(doc) >= MAX_SLIDES) return doc
-  const all = slideNodes(doc)
+  const all = slideList(doc)
   const at = slideIndex(doc) + 1
-  all.splice(at, 0, cloneNodes(doc.nodes, doc, 0, 0))
+  all.splice(at, 0, { ...openSlide(doc), nodes: cloneNodes(doc.nodes, doc, 0, 0) })
   return withSlides(doc, all, at)
 }
 
 /** The figure without its open slide: the one after it is opened, or the one before when it was the last. A figure keeps one slide. */
 export function removeSlide(doc: FigDoc): FigDoc {
   if (slideCount(doc) < 2) return doc
-  const all = slideNodes(doc)
+  const all = slideList(doc)
   const at = slideIndex(doc)
   all.splice(at, 1)
   return withSlides(doc, all, Math.min(at, all.length - 1))
@@ -87,7 +99,7 @@ export function moveSlide(doc: FigDoc, from: number, to: number): FigDoc {
   if (!(from >= 0 && from < count)) return doc
   const target = Math.min(count - 1, Math.max(0, Math.round(to) || 0))
   if (target === from) return doc
-  const all = slideNodes(doc)
+  const all = slideList(doc)
   const [moved] = all.splice(from, 1)
   all.splice(target, 0, moved)
   let open = slideIndex(doc)
@@ -105,10 +117,37 @@ export function moveSlide(doc: FigDoc, from: number, to: number): FigDoc {
  */
 export const dropPlace = (from: number, gap: number): number => (gap > from ? gap - 1 : gap)
 
-/** Every slide of the figure passed through `fn` (the open one too). */
+/** The objects of every slide of the figure passed through `fn` (those of the open one too). */
 export function mapSlides(doc: FigDoc, fn: (nodes: FigNode[]) => FigNode[]): FigDoc {
   if (!doc.slides) return { ...doc, nodes: fn(doc.nodes) }
-  return withSlides(doc, slideNodes(doc).map(fn), slideIndex(doc))
+  return withSlides(doc, slideList(doc).map((slide) => ({ ...slide, nodes: fn(slide.nodes) })), slideIndex(doc))
+}
+
+/** The figure with the page of every slide in one colour. */
+export function colourSlides(doc: FigDoc, background: string): FigDoc {
+  if (!doc.slides) return doc.background === background ? doc : { ...doc, background }
+  return withSlides(doc, slideList(doc).map((slide) => ({ ...slide, background })), slideIndex(doc))
+}
+
+// ---------- objects that appear one by one ----------
+
+/** On how many presses objects of this slide appear while it is presented: 0 when everything is there from the start. */
+export const slideSteps = (nodes: FigNode[]): number => nodes.reduce((most, n) => Math.max(most, n.hidden ? 0 : (n.appear ?? 0)), 0)
+
+const atStep = new WeakMap<FigNode[], Map<number, FigNode[]>>()
+
+/**
+ * The objects of a slide as they are shown after `step` presses: what appears later is not drawn
+ * yet. It stays among the objects (hidden), so that an arrow attached to it keeps its place when
+ * it is the arrow that is shown first. The same list comes back for the same slide and step.
+ */
+export function nodesAtStep(nodes: FigNode[], step: number): FigNode[] {
+  if (step >= slideSteps(nodes)) return nodes
+  let known = atStep.get(nodes)
+  if (!known) atStep.set(nodes, (known = new Map()))
+  let shown = known.get(step)
+  if (!shown) known.set(step, (shown = nodes.map((n) => ((n.appear ?? 0) > step ? { ...n, hidden: true } : n))))
+  return shown
 }
 
 /**

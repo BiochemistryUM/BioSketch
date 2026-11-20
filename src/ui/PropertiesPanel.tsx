@@ -3,6 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
   addChart,
+  addTable,
   addPanelLetter,
   alignSelection,
   deleteSelection,
@@ -25,12 +26,14 @@ import { finishReshape, startReshape } from '../icons/reshape'
 import { splitIcon } from '../icons/split'
 import { placeImageFile } from '../io/images'
 import { removeNodes } from '../model/doc'
+import { MAX_NOTES, MAX_STEPS, colourSlides, slideList, slideSteps } from '../model/slides'
+import { TABLE_FONT, TABLE_HEAD_FILL, cellsText, fitTable, readCells, type TableLines } from '../model/table'
 import { SYMBOL_GROUPS, insertText, wrapSelection } from '../model/richtext'
 import { SHAPE_KINDS, shapePath } from '../model/shapes'
 import {
   MAX_BRACKETS, MAX_REF_LINES, NAME_MAX, POINT_NAMES_TOP, POINT_OPACITY_MIN, POINT_SIZE_MAX, POINT_SIZE_MIN,
   VALUE_DECIMALS_MAX,
-  bracketLabel, carryOver, chartAdvice, chartCategories, chartFamily, renameCategory, renameSeries, renameVenn, valueText, chartAnalysis, chartLayout, isSurvival, logRankText, survivalOf, survivalText, compareCurves, comparisonText, corrText, curveMethodsText, doseText, heldPlateaus, methodsText, chartSamples, chartSeries, crossTable, hasPoints, headRows, isGrouped, pointNamesIn, pointStyle, readTable, scatterFits, shownValues, splitNameList, stats, tableText, usablePointNames, usableValueLabels, usualValueLabel, withTestBrackets,
+  bracketLabel, carryOver, chartAdvice, chartCategories, chartFamily, renameCategory, renameSeries, renameVenn, valueText, chartAnalysis, chartLayout, isSurvival, hazardText, logRankText, survivalOf, survivalText, compareCurves, comparisonText, corrText, curveMethodsText, doseText, heldPlateaus, methodsText, chartSamples, chartSeries, crossTable, hasPoints, headRows, isGrouped, pointNamesIn, pointStyle, readTable, scatterFits, shownValues, splitNameList, stats, tableText, usablePointNames, usableValueLabels, usualValueLabel, withTestBrackets,
   type Renamed,
   type TableReport,
 } from '../model/chart'
@@ -43,8 +46,8 @@ import { boxStats } from '../model/chartStats'
 import { STARS_KEY, TEST_DOES, TEST_NAMES, TEST_SHORT, pText, stars, testFor } from '../model/chartTests'
 import { reversed } from '../model/connector'
 import { DASH_SCALE_MAX, DASH_SCALE_MIN, dashArray, hasDots, lineStyleOf, lineStylePatch, type Dashable, type LineStyle } from '../model/dash'
-import { growToFitLabel, SHAPE_LABEL_DEFAULT } from '../model/nodes'
-import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartPointNames, ChartRefLine, ChartTest, ChartValueLabels, ConnectorFade, ConnectorKind, ConnectorNode, FigNode, FontFamily, HeatScale, IconNode, ImageNode, LegendPlace, MembraneNode, PointShape, ShapeKind, ShapeNode, StrokeNode, TextAlign, TextNode } from '../model/types'
+import { growToFitLabel, realignText, SHAPE_LABEL_DEFAULT, TEXT_WIDTH_MAX, TEXT_WIDTH_MIN, textBoxed, textBulleted } from '../model/nodes'
+import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartPointNames, ChartRefLine, ChartTest, ChartValueLabels, ConnectorFade, ConnectorKind, ConnectorNode, FigNode, FontFamily, HeatScale, IconNode, ImageNode, LegendPlace, MembraneNode, PointShape, ShapeKind, ShapeNode, StrokeNode, TextAlign, TextNode, TableNode } from '../model/types'
 import { toast, useEditor } from '../store'
 import { CHART_TABS, chartTabs, lastChartTab, openTab, rememberChartTab, settingFor, stepTab, type ChartTab } from './chartTabs'
 import { copyText } from './copy'
@@ -415,8 +418,9 @@ function insertSymbol(el: HTMLTextAreaElement | null, current: string, symbol: s
   })
 }
 
-function patch<T extends FigNode>(type: T['type'], change: Partial<T>, merge?: string): void {
-  patchSelection((n) => (n.type === type ? ({ ...n, ...change } as FigNode) : n), merge)
+/** Change every selected object of one type: by the fields given, or by what a function makes of each. */
+function patch<T extends FigNode>(type: T['type'], change: Partial<T> | ((node: T) => T), merge?: string): void {
+  patchSelection((n) => (n.type !== type ? n : typeof change === 'function' ? change(n as T) : ({ ...n, ...change } as FigNode)), merge)
 }
 
 // ---------- per-type sections ----------
@@ -716,7 +720,137 @@ function TextProps({ node, single }: { node: TextNode; single: boolean }) {
           onChange={(fontFamily) => patch<TextNode>('text', { fontFamily: fontFamily === 'sans' ? undefined : fontFamily })}
         />
       </Field>
-      <Segmented label="Text alignment" value={node.align} options={aligns} onChange={(align) => patch<TextNode>('text', { align })} />
+      <Segmented label="Text alignment" value={node.align} options={aligns} onChange={(align) => patch<TextNode>('text', (n) => realignText(n, align))} />
+      <Field
+        label="Text box"
+        info={
+          <>
+            <p>A label is as wide as its words and breaks only where you press Enter. A text box breaks its lines at the width you give it: drag the handle at its left or right side, or type the width.</p>
+            <p>With the text tool, a press places a label and a drag across the page draws a text box.</p>
+            <p>With bullet points every paragraph begins with a bullet, and its further lines are set in under its first.</p>
+          </>
+        }
+      >
+        <label className="check">
+          <input type="checkbox" checked={!!node.width} onChange={(e) => patch<TextNode>('text', (n) => textBoxed(n, e.target.checked))} />
+          <span>Break the lines at a width</span>
+        </label>
+        {!!node.width && <NumberInput label="Width of the text box" value={Math.round(node.width)} min={TEXT_WIDTH_MIN} max={TEXT_WIDTH_MAX} step={10} onChange={(width) => patch<TextNode>('text', (n) => (n.width ? { ...n, width } : n), 'text-width')} />}
+        <label className="check">
+          <input type="checkbox" checked={!!node.bullets} onChange={(e) => patch<TextNode>('text', (n) => textBulleted(n, e.target.checked))} />
+          <span>Bullet points</span>
+        </label>
+      </Field>
+    </Section>
+  )
+}
+
+const TABLE_LINES: { value: TableLines; label: string }[] = [
+  { value: 'grid', label: 'A grid' },
+  { value: 'rows', label: 'Between the rows' },
+  { value: 'rules', label: 'Three lines, as in a journal' },
+  { value: 'none', label: 'None' },
+]
+
+/** A table: its cells as text to paste or type, and how it looks. */
+function TableProps({ node }: { node: TableNode }) {
+  // What is in the box while it is being typed in: turned back from the cells it would lose a half-typed row.
+  const [draft, setDraft] = useState<string | null>(null)
+  const file = useRef<HTMLInputElement>(null)
+  const set = (change: Partial<TableNode>, merge?: string) => patch<TableNode>('table', change, merge)
+  /** A change to what the table holds or how large its lettering is: the table is then as high as its rows need. */
+  const refit = (change: Partial<TableNode>, merge?: string) => patch<TableNode>('table', (n) => fitTable({ ...n, ...change }), merge)
+  const cols = Math.max(0, ...node.cells.map((r) => r.length))
+  const onFile = async (picked: File | undefined) => {
+    if (!picked) return
+    try {
+      const cells = readCells((await tableFromFile(picked)).text)
+      if (!cells.length) throw new Error('This file holds no table.')
+      setDraft(null)
+      refit({ cells })
+      toast(`Read ${cells.length} ${cells.length === 1 ? 'row' : 'rows'} from “${picked.name}”.`)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'This file could not be read.')
+    }
+  }
+  return (
+    <Section title="Table">
+      <Field
+        label="Cells"
+        info={
+          <>
+            <p>Copy the cells in your spreadsheet and paste them here, or read a CSV or Excel file. Typed by hand: a new line for each row, and a | between the cells of a row.</p>
+            <p>The usual marks work in a cell: {MARKS}.</p>
+            <p>A column that holds only numbers stands at the right, as in a printed table.</p>
+          </>
+        }
+      >
+        <textarea
+          className="text-input table-cells"
+          aria-label="Cells of the table"
+          rows={Math.min(10, node.cells.length + 1)}
+          wrap="off"
+          spellCheck={false}
+          value={draft ?? cellsText(node.cells)}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            const cells = readCells(e.target.value)
+            if (cells.length) refit({ cells }, 'table-cells')
+          }}
+          onBlur={() => setDraft(null)}
+        />
+        <div className="row wrap">
+          <button className="btn small" onClick={() => file.current?.click()}>
+            <Icon name="open" size={14} /> Read a file…
+          </button>
+          <span className="hint">
+            {node.cells.length} {node.cells.length === 1 ? 'row' : 'rows'}, {cols} {cols === 1 ? 'column' : 'columns'}
+          </span>
+        </div>
+        <input
+          ref={file}
+          type="file"
+          accept={TABLE_ACCEPT}
+          hidden
+          onChange={(e) => {
+            void onFile(e.target.files?.[0])
+            e.target.value = ''
+          }}
+        />
+      </Field>
+      <label className="check">
+        <input type="checkbox" checked={node.header !== false} onChange={(e) => refit({ header: e.target.checked ? undefined : false })} />
+        <span>The first row holds the names of the columns</span>
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={!!node.striped} onChange={(e) => set({ striped: e.target.checked || undefined })} />
+        <span>Tint every second row</span>
+      </label>
+      <Field label="Lines">
+        <select aria-label="Lines of the table" value={node.lines ?? 'grid'} onChange={(e) => set({ lines: e.target.value === 'grid' ? undefined : (e.target.value as TableNode['lines']) })}>
+          {TABLE_LINES.map((l) => (
+            <option key={l.value} value={l.value}>
+              {l.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <div className="row">
+        <Field label="Text size">
+          <NumberInput label="Size of the lettering of the table" value={node.fontSize ?? TABLE_FONT} min={4} max={200} onChange={(fontSize) => refit({ fontSize }, 'table-size')} />
+        </Field>
+        <Field label="Text">
+          <ColorInput label="Colour of the lettering" value={node.color ?? '#1f2933'} onChange={(color) => set({ color }, 'table-color')} />
+        </Field>
+        {node.header !== false && (
+          <Field label="Names">
+            <ColorInput label="Ground of the row of names" value={node.headFill ?? TABLE_HEAD_FILL} onChange={(headFill) => set({ headFill }, 'table-head')} />
+          </Field>
+        )}
+      </div>
+      <button className="btn small" title="Make the table exactly as high as its rows need" onClick={() => patch<TableNode>('table', fitTable)}>
+        Fit the height to the rows
+      </button>
     </Section>
   )
 }
@@ -1434,6 +1568,26 @@ function ChartProps({ node }: { node: ChartNode }) {
                 </Info>
               </div>
             )}
+            {heat && (
+              <Field
+                label="Put what is alike next to each other"
+                setting="heat-cluster"
+                info={
+                  <>
+                    <p>Rows (or columns) that look alike are put next to each other, and a tree beside the cells shows which were joined, and how far apart they were when they were.</p>
+                    <p>Two rows are as far apart as the straight-line (Euclidean) distance between what their cells show; two clusters as far apart as their two most distant rows (complete linkage). These are the defaults of R’s dist and hclust, and of pheatmap.</p>
+                    <p>What is clustered is what the colours show: scale the rows first to group genes by their pattern rather than by their size.</p>
+                  </>
+                }
+              >
+                <select aria-label="Clustering of the heat map" value={node.heatCluster ?? ''} onChange={(e) => set({ heatCluster: (e.target.value || undefined) as ChartNode['heatCluster'] })}>
+                  <option value="">Keep the order of the table</option>
+                  <option value="rows">Rows</option>
+                  <option value="columns">Columns</option>
+                  <option value="both">Rows and columns</option>
+                </select>
+              </Field>
+            )}
             {(node.kind === 'bar' || node.kind === 'dot' || node.kind === 'line') && (
               <Field
                 label="Error bars"
@@ -1482,6 +1636,17 @@ function ChartProps({ node }: { node: ChartNode }) {
                   onChange={(v) => set({ fit: v === 'none' ? undefined : true, curve: v === 'dose' ? 'dose' : undefined, ...(v === 'dose' ? {} : { doseBottom: undefined, doseTop: undefined }) })}
                   wrap
                 />
+                {node.fit && node.curve !== 'dose' && (
+                  <div className="with-info">
+                    <Check checked={!!node.band} onChange={(v) => set({ band: v || undefined })}>
+                      Shade the 95 % confidence band
+                    </Check>
+                    <Info about="The confidence band of a fitted line">
+                      <p>The band is where the line itself lies with 95 % confidence, given the scatter of the points about it. It is narrowest in the middle of the x values and widens towards the ends.</p>
+                      <p>It is not where single new points would fall (that would be wider). It is what R gives with predict(fit, interval = "confidence"). A line through two points has no band.</p>
+                    </Info>
+                  </div>
+                )}
                 {node.fit && perSeries(node.curve === 'dose' ? 'The curve of each series' : 'The line of each series', fitOf)}
                 {node.fit && node.curve === 'dose' && (
                   <>
@@ -1564,6 +1729,15 @@ function ChartProps({ node }: { node: ChartNode }) {
                   </>
                 }
               >
+                <div className="with-info">
+                  <Check checked={!!node.band} onChange={(v) => set({ band: v || undefined })}>
+                    Shade the 95 % confidence band of every curve
+                  </Check>
+                  <Info about="The confidence band of a survival curve">
+                    <p>The band is where the true share without the event lies with 95 % confidence at each time. It widens as fewer subjects are still followed.</p>
+                    <p>It is the interval R’s survfit gives by default (worked out on the logarithm of the share, with Greenwood’s variance), and it ends where the curve reaches zero.</p>
+                  </Info>
+                </div>
                 {lives.test ? (
                   <div className="test-result" aria-label="Result of the log-rank test">
                     <p>
@@ -1586,6 +1760,27 @@ function ChartProps({ node }: { node: ChartNode }) {
                     <Check checked={!!node.logRank} onChange={(v) => set({ logRank: v || undefined })}>
                       Write the p value on the chart
                     </Check>
+                    {lives.hazards.length > 0 && (
+                      <>
+                        <div className="with-info">
+                          <p className="hint">Hazard ratio, against {lives.hazards[0].against}:</p>
+                          <Info about="The hazard ratio">
+                            <p>How fast the event comes in a group compared with the first group of the table: 0.5 means half as fast at any time, 2 twice as fast. The interval and the p value say how sure that is.</p>
+                            <p>It comes from Cox’s proportional hazards model with the group as its only factor, tied times handled by Efron’s method: coxph(Surv(time, status) ~ group) in R’s survival package. It assumes that the ratio stays the same over time; curves that cross say it does not.</p>
+                            <p>To compare with another group, put that group first in the table.</p>
+                          </Info>
+                        </div>
+                        <ul className="chart-summary">
+                          {lives.hazards.map((h, i) => (
+                            <li key={i}>
+                              <span>
+                                {h.name}: {h.ratio ? hazardText(h.ratio) : 'cannot be worked out (every event of one group comes before or after all of the other’s)'}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
                   </div>
                 ) : (
                   <p className="hint">The test needs at least two groups, and an event while more than one group was still followed.</p>
@@ -2508,7 +2703,7 @@ function ResizeTogether({ whole }: { whole: boolean }) {
 function Arrange({ nodes }: { nodes: FigNode[] }) {
   const first = nodes[0]
   const grouped = nodes.some((n) => n.groupId)
-  const rotatable = nodes.length === 1 && (first.type === 'icon' || first.type === 'shape' || first.type === 'text' || first.type === 'image' || first.type === 'chart')
+  const rotatable = nodes.length === 1 && (first.type === 'icon' || first.type === 'shape' || first.type === 'text' || first.type === 'image' || first.type === 'chart' || first.type === 'table')
   const units = new Set(nodes.map((n) => n.groupId ?? n.id)).size
   return (
     <Section title="Arrange">
@@ -2567,7 +2762,50 @@ function Arrange({ nodes }: { nodes: FigNode[] }) {
           />
         </Field>
       )}
+      <Appears nodes={nodes} />
     </Section>
+  )
+}
+
+/** When an object comes on screen while its slide is presented: with the slide, or on a press of its own. */
+function Appears({ nodes }: { nodes: FigNode[] }) {
+  const slides = useEditor((s) => s.slidesShown || !!s.doc.slides)
+  const most = useEditor((s) => slideSteps(s.doc.nodes))
+  const now = nodes[0].appear ?? 0
+  if (!slides && !nodes.some((n) => n.appear)) return null
+  const mixed = nodes.some((n) => (n.appear ?? 0) !== now)
+  const last = Math.min(MAX_STEPS, Math.max(most, now) + 1)
+  return (
+    <Field
+      label="When presenting, it appears"
+      info={
+        <>
+          <p>An object can wait for a press of its own while its slide is presented: the slide comes up without it, and it appears on the first press, the second, and so on. Several objects can appear on the same press.</p>
+          <p>On the page and in exported files everything is always drawn.</p>
+        </>
+      }
+    >
+      <select
+        aria-label="When the object appears while presenting"
+        value={mixed ? -1 : now}
+        onChange={(e) => {
+          const step = Number(e.target.value)
+          if (step < 0) return
+          patchSelection((n) => {
+            const { appear: _drop, ...rest } = n
+            return (step ? { ...rest, appear: step } : rest) as FigNode
+          })
+        }}
+      >
+        {mixed && <option value={-1}>At different times</option>}
+        <option value={0}>With the slide</option>
+        {Array.from({ length: last }, (_, i) => (
+          <option key={i + 1} value={i + 1}>
+            On press {i + 1}
+          </option>
+        ))}
+      </select>
+    </Field>
   )
 }
 
@@ -2599,15 +2837,22 @@ const PRINT_WIDTHS: { label: string; mm: number }[] = [
   { label: 'Double column', mm: 174 },
 ]
 
-const PAGE_SIZES: { label: string; w: number; h: number }[] = [
+/** Page sizes to choose from. A poster is sized in quarter millimetres with its printed width set, so its PDF comes out at the size of the paper. */
+const PAGE_SIZES: { label: string; w: number; h: number; mm?: number }[] = [
   { label: 'Landscape 3:2', w: 1200, h: 800 },
   { label: 'Wide 16:9', w: 1280, h: 720 },
   { label: 'Square', w: 900, h: 900 },
   { label: 'Portrait 2:3', w: 800, h: 1200 },
+  { label: 'Poster A0 upright, 841 × 1189 mm', w: 3364, h: 4756, mm: 841 },
+  { label: 'Poster A0 on its side, 1189 × 841 mm', w: 4756, h: 3364, mm: 1189 },
+  { label: 'Poster A1 upright, 594 × 841 mm', w: 2376, h: 3364, mm: 594 },
+  { label: 'Poster 48 × 36 inches', w: 4877, h: 3658, mm: 1219 },
 ]
 
 function PageProps() {
   const doc = useEditor((s) => s.doc)
+  const slidesShown = useEditor((s) => s.slidesShown)
+  const several = !!doc.slides
   const current = PAGE_SIZES.findIndex((p) => p.w === doc.width && p.h === doc.height)
   return (
     <Section title="Page">
@@ -2617,7 +2862,7 @@ function PageProps() {
           onChange={(e) => {
             const p = PAGE_SIZES[Number(e.target.value)]
             if (p) {
-              patchDoc({ width: p.w, height: p.h })
+              patchDoc({ width: p.w, height: p.h, ...(p.mm ? { widthMm: p.mm } : {}) })
               useEditor.setState((s) => ({ fitRequest: s.fitRequest + 1 }))
             }
           }}
@@ -2625,7 +2870,7 @@ function PageProps() {
           {current < 0 && <option value={-1}>Custom</option>}
           {PAGE_SIZES.map((p, i) => (
             <option key={p.label} value={i}>
-              {p.label} ({p.w} × {p.h})
+              {p.mm ? p.label : `${p.label} (${p.w} × ${p.h})`}
             </option>
           ))}
         </select>
@@ -2641,6 +2886,14 @@ function PageProps() {
           <ColorInput label="Page colour" value={doc.background} onChange={(background) => patchDoc({ background }, 'page-bg')} />
         </Field>
       </div>
+      {several && (
+        <div className="row wrap">
+          <p className="hint">The colour is that of this slide.</p>
+          <button className="btn small" disabled={slideList(doc).every((s) => s.background === doc.background)} onClick={() => useEditor.getState().commit((d) => colourSlides(d, d.background))}>
+            Use it on every slide
+          </button>
+        </div>
+      )}
       <ResizeTogether whole />
       <Field label="Printed width (for journals)">
         <select
@@ -2668,6 +2921,30 @@ function PageProps() {
           </Field>
           <p className="hint">Height {Math.round(((doc.widthMm * doc.height) / doc.width) * 10) / 10} mm</p>
         </div>
+      )}
+      {(several || slidesShown || !!doc.notes) && (
+        <Field
+          label="Notes for the speaker, for this slide"
+          info={<p>What you want to say at this slide. The notes are shown beside the slide while you present (the button with the “T”, or the N key); they are never drawn on the slide or exported.</p>}
+        >
+          <textarea
+            rows={4}
+            aria-label="Notes for the speaker, for this slide"
+            placeholder="What you want to say at this slide"
+            value={doc.notes ?? ''}
+            maxLength={MAX_NOTES}
+            onChange={(e) => {
+              const notes = e.target.value
+              useEditor.getState().commit(
+                (d) => {
+                  const { notes: _drop, ...rest } = d
+                  return notes ? { ...rest, notes } : rest
+                },
+                { merge: 'slide-notes' },
+              )
+            }}
+          />
+        </Field>
       )}
     </Section>
   )
@@ -2698,6 +2975,9 @@ function AddToPage() {
         </button>
         <button className="btn small" title="Add a chart drawn from your own numbers" onClick={addChart}>
           <Icon name="chart" size={14} /> Chart
+        </button>
+        <button className="btn small" title="Add a table of words and numbers, pasted from a spreadsheet or typed" onClick={() => addTable()}>
+          <Icon name="grid" size={14} /> Table
         </button>
       </div>
       <Field label="Panels">
@@ -2853,6 +3133,7 @@ export function PropertiesPanel() {
           {sameType && first.type === 'icon' && <IconProps node={first} single={nodes.length === 1} />}
           {sameType && first.type === 'image' && <ImageProps node={first} />}
           {sameType && first.type === 'chart' && nodes.length === 1 && <ChartProps key={first.id} node={first} />}
+          {sameType && first.type === 'table' && nodes.length === 1 && <TableProps key={first.id} node={first} />}
           {sameType && first.type === 'shape' && <ShapeProps node={first} single={nodes.length === 1} />}
           {sameType && first.type === 'text' && <TextProps node={first} single={nodes.length === 1} />}
           {sameType && first.type === 'connector' && <ConnectorProps node={first} />}

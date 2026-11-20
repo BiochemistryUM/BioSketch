@@ -14,7 +14,15 @@ export interface FigureMeta {
   objects: number
   /** Number of slides; absent for a figure saved before slides existed, which has one. */
   slides?: number
+  /** The project the figure is filed under in the list of figures; absent = none. It is a heading in that list, not part of the figure. */
+  project?: string
 }
+
+/** The longest name a project has. */
+export const PROJECT_NAME_MAX = 60
+
+/** A project name as it is kept: one line, without spaces at its ends; '' when nothing is left. */
+export const tidyProject = (name: unknown): string => (typeof name === 'string' ? name.replace(/\s+/g, ' ').trim().slice(0, PROJECT_NAME_MAX) : '')
 
 const DB_NAME = 'biosketch'
 const STORE = 'kv'
@@ -49,7 +57,7 @@ async function idb<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => 
   }
 }
 
-async function kvGet(key: string): Promise<string | null> {
+export async function kvGet(key: string): Promise<string | null> {
   try {
     const value = await idb('readonly', (s) => s.get(key))
     if (typeof value === 'string') return value
@@ -63,7 +71,7 @@ async function kvGet(key: string): Promise<string | null> {
   }
 }
 
-async function kvSet(key: string, value: string): Promise<boolean> {
+export async function kvSet(key: string, value: string): Promise<boolean> {
   try {
     await idb('readwrite', (s) => s.put(value, key))
     return true
@@ -98,6 +106,11 @@ export async function listFigures(): Promise<FigureMeta[]> {
     if (!Array.isArray(list)) return []
     return list
       .filter((m): m is FigureMeta => !!m && typeof m.id === 'string' && typeof m.name === 'string' && typeof m.updated === 'number')
+      .map((m) => {
+        const { project: _raw, ...rest } = m
+        const project = tidyProject(m.project)
+        return project ? { ...rest, project } : rest
+      })
       .sort((a, b) => b.updated - a.updated)
   } catch {
     return []
@@ -107,9 +120,43 @@ export async function listFigures(): Promise<FigureMeta[]> {
 /** Save a figure under its id. Returns false when the browser refuses to store it. */
 export async function saveFigure(id: string, doc: FigDoc): Promise<boolean> {
   if (!(await kvSet(figKey(id), serializeDoc(doc)))) return false
-  const meta: FigureMeta = { id, name: doc.name, updated: Date.now(), objects: everyNode(doc).length, slides: slideCount(doc) }
-  const others = (await listFigures()).filter((m) => m.id !== id)
-  return kvSet(INDEX, JSON.stringify([meta, ...others]))
+  const all = await listFigures()
+  // A figure stays in the project it was filed under.
+  const project = all.find((m) => m.id === id)?.project
+  const meta: FigureMeta = { id, name: doc.name, updated: Date.now(), objects: everyNode(doc).length, slides: slideCount(doc), ...(project ? { project } : {}) }
+  return kvSet(INDEX, JSON.stringify([meta, ...all.filter((m) => m.id !== id)]))
+}
+
+/** File a figure under a project, or under none (`project` empty). Its place in time is kept. */
+export async function setFigureProject(id: string, project: string): Promise<boolean> {
+  const name = tidyProject(project)
+  const all = await listFigures()
+  return kvSet(
+    INDEX,
+    JSON.stringify(
+      all.map((m) => {
+        if (m.id !== id) return m
+        const { project: _old, ...rest } = m
+        return name ? { ...rest, project: name } : rest
+      }),
+    ),
+  )
+}
+
+/** Give a project another name: every figure filed under it follows. */
+export async function renameProject(from: string, to: string): Promise<boolean> {
+  const name = tidyProject(to)
+  if (!name) return false
+  const all = await listFigures()
+  return kvSet(INDEX, JSON.stringify(all.map((m) => (m.project === from ? { ...m, project: name } : m))))
+}
+
+/** The projects that hold figures, in the order of the alphabet, and how the list of figures is laid out under them (figures without a project last). */
+export function byProject(figures: FigureMeta[]): { project: string; figures: FigureMeta[] }[] {
+  const names = [...new Set(figures.flatMap((m) => (m.project ? [m.project] : [])))].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  const groups = names.map((project) => ({ project, figures: figures.filter((m) => m.project === project) }))
+  const loose = figures.filter((m) => !m.project)
+  return loose.length || !groups.length ? [...groups, { project: '', figures: loose }] : groups
 }
 
 export async function loadFigure(id: string): Promise<FigDoc | null> {

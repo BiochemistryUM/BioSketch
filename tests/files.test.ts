@@ -121,7 +121,8 @@ describe('export', () => {
       expect(svg).not.toContain('data-id')
       expect(svg).not.toContain('transparent')
       expect(xml.getElementsByTagName('title')[0].textContent).toBe(doc.name)
-      expect(xml.getElementsByTagName('path').length).toBeGreaterThan(5)
+      // The two example figures are full of arrows and membranes; a template can be mostly words.
+      if (!t.group) expect(xml.getElementsByTagName('path').length).toBeGreaterThan(5)
     }
   })
 

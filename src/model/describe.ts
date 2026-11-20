@@ -46,6 +46,8 @@ export function nodeKind(node: FigNode, iconName?: string): string {
       return 'Picture'
     case 'chart':
       return CHARTS[node.kind]
+    case 'table':
+      return 'Table'
   }
 }
 

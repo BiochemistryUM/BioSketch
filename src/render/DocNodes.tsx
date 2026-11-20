@@ -10,12 +10,14 @@ import { BAR_WIDTH, connectorShape, fadeStops } from '../model/connector'
 import { dashArray, hasDots } from '../model/dash'
 import { round } from '../model/geometry'
 import { membraneShape } from '../model/membrane'
-import { connectorLabelNode, fontStack, measureText, resolveConnector, shapeLabelNode, type ResolvedConnector } from '../model/nodes'
+import { connectorLabelNode, fontStack, resolveConnector, shapeLabelNode, textLayout, type ResolvedConnector } from '../model/nodes'
 import { SCRIPT_SCALE, SCRIPT_SHIFT, parseRich } from '../model/richtext'
 import { isOpenShape, shapePath } from '../model/shapes'
+import { TABLE_LINE, tableLayout } from '../model/table'
 import {
   FONT_FAMILY,
   LINE_HEIGHT,
+  type TableNode,
   type ConnectorNode,
   type FigDoc,
   type FigNode,
@@ -87,6 +89,30 @@ function IconView({ node, icon, interactive }: { node: IconNode; icon: IconDef |
   )
 }
 
+/** A table: tinted grounds, lines and the words of its cells, as `tableLayout` places them. */
+const TableView = memo(function TableView({ node, interactive }: { node: TableNode; interactive: boolean }) {
+  const { x: _x, y: _y, rotation: _rotation, opacity: _opacity, id: _id, ...inside } = node
+  const key = JSON.stringify(inside)
+  // Laid out again only when something inside its box changes, not when it is moved or turned.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const table = useMemo(() => tableLayout(node), [key])
+  return (
+    <g data-id={node.id} transform={boxTransform(node)} opacity={node.opacity}>
+      {/* The whole table can be pressed, also between its words. */}
+      <rect width={round(node.w)} height={round(node.h)} fill={interactive ? HIT : 'none'} />
+      {table.fills.map((f, i) => (
+        <rect key={`f${i}`} x={f.x} y={f.y} width={f.w} height={f.h} fill={f.fill} />
+      ))}
+      {table.lines.map((l, i) => (
+        <line key={`l${i}`} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={TABLE_LINE} strokeWidth={l.width} />
+      ))}
+      {table.texts.map((t, i) => (
+        <TextView key={`t${i}`} node={t} interactive={false} />
+      ))}
+    </g>
+  )
+})
+
 function ImageView({ node }: { node: ImageNode }) {
   return (
     <g data-id={node.id} transform={boxTransform(node)} opacity={node.opacity}>
@@ -154,7 +180,7 @@ const ChartMarks = memo(function ChartMarks({ chart, clipId }: { chart: ChartDra
           <rect key={`r${i}`} x={r.x} y={r.y} width={r.w} height={r.h} fill={r.fill} stroke={r.edge ?? INK} strokeWidth={r.edge ? 0.6 : 1} />
         ))}
         {chart.paths.map((p, i) => (
-          <path key={`p${i}`} d={p.d} fill={p.fill ?? 'none'} stroke={p.stroke} strokeWidth={p.width} strokeLinejoin="round" strokeLinecap="round" />
+          <path key={`p${i}`} d={p.d} fill={p.fill ?? 'none'} fillOpacity={p.opacity} stroke={p.stroke} strokeWidth={p.width} strokeLinejoin="round" strokeLinecap="round" />
         ))}
         {chart.circles.map((c, i) =>
           c.ring ? (
@@ -241,10 +267,12 @@ function ShapeView({ node, interactive, hideLabel }: { node: ShapeNode; interact
 
 /** `halo` lays a white edge behind the words, so they stay readable on top of a line. */
 function TextView({ node, interactive, halo = false }: { node: TextNode; interactive: boolean; halo?: boolean }) {
-  const m = measureText(node)
-  const left = node.align === 'center' ? node.x - m.w / 2 : node.align === 'right' ? node.x - m.w : node.x
-  const anchor = node.align === 'center' ? 'middle' : node.align === 'right' ? 'end' : 'start'
-  const lines = node.text.split('\n')
+  // A label has the lines that were typed; a text box breaks them at its width and may set bullets before them.
+  const laid = textLayout(node)
+  const m = { w: laid.w, h: laid.h }
+  const left = laid.left
+  const anchor = laid.anchor
+  const lines = laid.lines
   // The words are drawn once, or twice when they have a halo: the halo is a second copy behind
   // them, drawn as a thick white outline, which survives in every SVG reader.
   const words = (paint: { fill: string; stroke?: string; strokeWidth?: number; strokeLinejoin?: 'round' }) => (
@@ -259,7 +287,7 @@ function TextView({ node, interactive, halo = false }: { node: TextNode; interac
     >
       {lines.map((line, i) => {
         const baseline = node.y + node.fontSize * (0.92 + i * LINE_HEIGHT)
-        const runs = parseRich(line)
+        const runs = parseRich(line.text)
         // Superscripts and subscripts are smaller text shifted off the baseline; each run states
         // how far to move from where the previous run left off.
         let shift = 0
@@ -270,7 +298,7 @@ function TextView({ node, interactive, halo = false }: { node: TextNode; interac
           return (
             <tspan
               key={`${i}-${j}`}
-              x={j === 0 ? round(node.x) : undefined}
+              x={j === 0 ? round(line.x) : undefined}
               y={j === 0 ? round(baseline + target) : undefined}
               dy={j > 0 && dy ? round(dy) : undefined}
               fontSize={run.script ? round(node.fontSize * SCRIPT_SCALE, 1) : undefined}
@@ -282,6 +310,13 @@ function TextView({ node, interactive, halo = false }: { node: TextNode; interac
           )
         })
       })}
+      {lines.map((line, i) =>
+        line.bullet === undefined ? null : (
+          <tspan key={`b${i}`} x={round(line.bullet)} y={round(node.y + node.fontSize * (0.92 + i * LINE_HEIGHT))} textAnchor="start">
+            •
+          </tspan>
+        ),
+      )}
     </text>
   )
   return (
@@ -377,6 +412,8 @@ function draw({ node, icon, resolved, interactive, hideLabel }: NodeViewProps) {
       return <ImageView node={node} />
     case 'chart':
       return <ChartView node={node} interactive={interactive} />
+    case 'table':
+      return <TableView node={node} interactive={interactive} />
     case 'shape':
       return <ShapeView node={node} interactive={interactive} hideLabel={!!hideLabel} />
     case 'text':

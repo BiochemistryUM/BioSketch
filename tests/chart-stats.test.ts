@@ -75,7 +75,7 @@ describe('fitted line', () => {
   })
 
   it('is exact for points on a line and undefined when it cannot be drawn', () => {
-    expect(fitLine([[0, 1], [1, 3], [2, 5]])).toEqual({ slope: 2, intercept: 1, r2: 1, n: 3 })
+    expect(fitLine([[0, 1], [1, 3], [2, 5]])).toMatchObject({ slope: 2, intercept: 1, r2: 1, n: 3, meanX: 1, sxx: 2, scatter: 0 })
     expect(fitLine([[1, 4], [3, 4]])).toMatchObject({ slope: 0, intercept: 4, r2: 1 })
     expect(fitLine([[1, 2]])).toBeNull()
     expect(fitLine([[2, 1], [2, 5]])).toBeNull()

@@ -62,9 +62,11 @@ describe('example figures', () => {
   it('use icons the collections really have', () => {
     const known = new Set(PACKS.flatMap((p) => p.names.map((n) => `${p.id}--${n[0]}`)))
     for (const t of TEMPLATES) {
-      expect(t.icons.length, t.id).toBeGreaterThan(0)
+      // The example figures and the templates with pictures name their icons; a graphical abstract and a poster start without any.
+      if (!t.group) expect(t.icons.length, t.id).toBeGreaterThan(0)
       for (const id of t.icons) expect(known.has(id), `${t.id}: ${id}`).toBe(true)
     }
+    expect(TEMPLATES.filter((t) => t.group === 'Posters').every((t) => t.icons.length === 0)).toBe(true)
   })
 
   it('are built once their icons are fetched, and carry the drawings with them', async () => {

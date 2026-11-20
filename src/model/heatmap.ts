@@ -45,6 +45,110 @@ export function heatColour(scale: HeatScaleDef, t: number): string {
 /** The most rows a heat map draws. */
 export const HEAT_ROWS = 400
 
+// ---------- putting rows and columns that are alike next to each other ----------
+
+/**
+ * The tree of a hierarchical clustering, as R's `hclust` gives it. `merge` has one entry per
+ * joining, in the order they were made: a number below zero is a single row (-1 the first), one
+ * above zero an earlier joining (1 the first). `height` is the distance at which each was made,
+ * `order` the rows from one end of the tree to the other (1 the first row of the table).
+ */
+export interface Dendrogram {
+  merge: [number, number][]
+  height: number[]
+  order: number[]
+}
+
+/**
+ * Hierarchical clustering of the rows of a matrix by the defaults of R: Euclidean distance
+ * (`dist`; a column in which one of two rows has no value is left out for that pair, and the
+ * distance scaled up for it) and complete linkage (`hclust`: two clusters are as far apart as
+ * their two most distant rows). Null when there is nothing to join, or two rows have no column
+ * in which both hold a value.
+ */
+export function cluster(rows: (number | null)[][]): Dendrogram | null {
+  const n = rows.length
+  const p = Math.max(0, ...rows.map((r) => r.length))
+  if (n < 2 || !p) return null
+  const d: number[][] = Array.from({ length: n }, () => new Array<number>(n).fill(0))
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      let sum = 0
+      let both = 0
+      for (let c = 0; c < p; c++) {
+        const [a, b] = [rows[i][c], rows[j][c]]
+        if (a === null || b === null || a === undefined || b === undefined) continue
+        sum += (a - b) ** 2
+        both++
+      }
+      if (!both) return null
+      d[i][j] = d[j][i] = Math.sqrt((sum * p) / both)
+    }
+  }
+  // Join the two nearest clusters until one is left. A cluster goes by the first of its rows.
+  const active = new Array<boolean>(n).fill(true)
+  const first: number[] = []
+  const second: number[] = []
+  const height: number[] = []
+  for (let step = 0; step < n - 1; step++) {
+    let best = Infinity
+    let [bi, bj] = [-1, -1]
+    for (let i = 0; i < n; i++) {
+      if (!active[i]) continue
+      for (let j = i + 1; j < n; j++) if (active[j] && d[i][j] < best) [best, bi, bj] = [d[i][j], i, j]
+    }
+    first.push(bi + 1)
+    second.push(bj + 1)
+    height.push(best)
+    for (let k = 0; k < n; k++) if (active[k] && k !== bi && k !== bj) d[bi][k] = d[k][bi] = Math.max(d[bi][k], d[bj][k])
+    active[bj] = false
+  }
+  // The joinings in R's own writing (single rows below zero and first, the earlier of two clusters first).
+  const a = first.slice()
+  const b = second.slice()
+  for (let i = 0; i < n - 2; i++) {
+    const k = Math.min(first[i], second[i])
+    for (let j = i + 1; j < n - 1; j++) {
+      if (first[j] === k) a[j] = -(i + 1)
+      if (second[j] === k) b[j] = -(i + 1)
+    }
+  }
+  const merge: [number, number][] = a.map((v, i) => {
+    const [x, y] = [-v, -b[i]]
+    if (x > 0 && y < 0) return [y, x]
+    if (x > 0 && y > 0) return [Math.min(x, y), Math.max(x, y)]
+    return [x, y]
+  })
+  // The order of the leaves: the last joining, with every cluster opened into its two parts in place.
+  let order: number[] = [...merge[n - 2]]
+  for (let i = n - 2; i >= 1; i--) {
+    const at = order.indexOf(i)
+    if (at >= 0) order = [...order.slice(0, at), ...merge[i - 1], ...order.slice(at + 1)]
+  }
+  return { merge, height, order: order.map((v) => -v) }
+}
+
+/**
+ * The lines of a tree, for drawing it beside the cells: each from one place to another, a place
+ * being how far along the leaves it is (the first leaf at 0.5, the next at 1.5) and how high (0 at
+ * the leaves, 1 at the last joining).
+ */
+export function treeLines(tree: Dendrogram): { from: [number, number]; to: [number, number] }[] {
+  const top = Math.max(...tree.height, 0) || 1
+  const leafAt = new Map(tree.order.map((leaf, i) => [leaf, i + 0.5]))
+  // Where each joining sits: halfway between the two things it joins, at its height.
+  const joined: { along: number; high: number }[] = []
+  const place = (v: number): { along: number; high: number } => (v < 0 ? { along: leafAt.get(-v) ?? 0, high: 0 } : joined[v - 1])
+  const lines: { from: [number, number]; to: [number, number] }[] = []
+  tree.merge.forEach(([x, y], i) => {
+    const [l, r] = [place(x), place(y)]
+    const high = tree.height[i] / top
+    lines.push({ from: [l.along, l.high], to: [l.along, high] }, { from: [r.along, r.high], to: [r.along, high] }, { from: [l.along, high], to: [r.along, high] })
+    joined.push({ along: (l.along + r.along) / 2, high })
+  })
+  return lines
+}
+
 export interface HeatMatrix {
   /** The name over each column, and beside each row ('' where the table gives none). */
   columns: string[]
@@ -60,13 +164,32 @@ export interface HeatMatrix {
   hi: number
   scale: HeatScaleDef
   notes: string[]
+  /**
+   * The trees of the rows and of the columns when they are clustered, and where each row and
+   * column that is drawn stands in the table (the same order as the table when they are not).
+   */
+  rowTree?: Dendrogram
+  colTree?: Dendrogram
+  rowOrder: number[]
+  colOrder: number[]
 }
 
 const rowOf = (g: ChartGroup, k: number): number => g.rows?.[k] ?? k
 const columnName = (g: ChartGroup): string => (g.category ? `${g.category} · ${g.name}` : g.name)
 
-/** What a heat map of this chart shows. */
+const worked = new WeakMap<ChartGroup[], Map<string, HeatMatrix>>()
+
+/** What a heat map of this chart shows. Worked out once for a table and the settings that matter to it. */
 export function heatMatrix(node: ChartNode): HeatMatrix {
+  const key = [node.corr ?? '', !!node.yLog, !!node.heatByRow, node.heatCluster ?? '', node.heatScale ?? '', node.yMin ?? '', node.yMax ?? ''].join('|')
+  let known = worked.get(node.groups)
+  if (!known) worked.set(node.groups, (known = new Map()))
+  let matrix = known.get(key)
+  if (!matrix) known.set(key, (matrix = work(node)))
+  return matrix
+}
+
+function work(node: ChartNode): HeatMatrix {
   const cols = node.groups.filter((g) => g.values.length)
   const notes: string[] = []
   const all = Math.max(0, ...cols.map((g) => rowOf(g, g.values.length - 1) + 1))
@@ -158,7 +281,33 @@ export function heatMatrix(node: ChartNode): HeatMatrix {
       ;[lo, hi] = [mid - 0.5, mid + 0.5]
     }
   }
-  return { columns, rows, cells, shown, unit, lo, hi, scale, notes }
+  // Clustering: rows (or columns) that are alike are put next to each other, by what the cells show.
+  let rowOrder = cells.map((_, i) => i)
+  let colOrder = columns.map((_, i) => i)
+  let rowTree: Dendrogram | undefined
+  let colTree: Dendrogram | undefined
+  const want = node.heatCluster
+  // A table of correlations is the same read across and down: it is ordered both ways or not at all.
+  const byRows = want === 'rows' || want === 'both' || (unit === 'r' && !!want)
+  const byCols = want === 'columns' || want === 'both' || (unit === 'r' && !!want)
+  if (byRows) {
+    rowTree = cluster(cells) ?? undefined
+    if (rowTree) rowOrder = rowTree.order.map((v) => v - 1)
+    else if (cells.length > 1) notes.push('The rows cannot be put in order by likeness: two of them have no column in which both hold a number. They stand in the order of the table.')
+  }
+  if (byCols) {
+    colTree = (unit === 'r' ? rowTree : cluster(columns.map((_, c) => cells.map((row) => row[c])))) ?? undefined
+    if (colTree) colOrder = colTree.order.map((v) => v - 1)
+    else if (columns.length > 1 && unit !== 'r') notes.push('The columns cannot be put in order by likeness: two of them have no row in which both hold a number. They stand in the order of the table.')
+  }
+  if (rowTree || colTree) {
+    const pick = (grid: (number | null)[][]): (number | null)[][] => rowOrder.map((r) => colOrder.map((c) => grid[r][c]))
+    ;[cells, shown] = [pick(cells), shown === cells ? [] : pick(shown)]
+    if (!shown.length) shown = cells
+    rows = rowOrder.map((r) => rows[r])
+    columns = colOrder.map((c) => columns[c])
+  }
+  return { columns, rows, cells, shown, unit, lo, hi, scale, notes, rowOrder, colOrder, ...(rowTree ? { rowTree } : {}), ...(colTree ? { colTree } : {}) }
 }
 
 /** A heat map in a line of words: how large it is and what its colours run between. */
@@ -166,7 +315,9 @@ export function heatSummary(m: HeatMatrix): string {
   const end = (v: number): string => String(Number((m.unit === 'log' ? 10 ** v : v).toPrecision(3)))
   const what = m.unit === 'r' ? 'correlations' : m.unit === 'z' ? 'z-scores within each row' : m.unit === 'log' ? 'values, on a logarithmic scale' : 'values'
   const size = m.unit === 'r' ? `${m.columns.length} columns, each with every other` : `${m.cells.length} ${m.cells.length === 1 ? 'row' : 'rows'} and ${m.columns.length} ${m.columns.length === 1 ? 'column' : 'columns'}`
-  return `${size}. The colours show ${what} from ${end(m.lo)} to ${end(m.hi)}.`
+  const ordered = m.rowTree && m.colTree ? 'Rows and columns' : m.rowTree ? 'Rows' : m.colTree ? 'Columns' : ''
+  const tree = ordered ? ` ${ordered} that are alike stand next to each other (hierarchical clustering: Euclidean distance, complete linkage).` : ''
+  return `${size}. The colours show ${what} from ${end(m.lo)} to ${end(m.hi)}.${tree}`
 }
 
 /** The colour of a cell that holds `v`. */

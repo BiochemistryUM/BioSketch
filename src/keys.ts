@@ -20,6 +20,7 @@ import {
 import { input } from './canvas/input'
 import { finishReshape } from './icons/reshape'
 import { placeImageFile } from './io/images'
+import { slideCount } from './model/slides'
 import { useEditor, type Tool } from './store'
 import { saveFile } from './ui/TopBar'
 
@@ -114,6 +115,13 @@ export function installKeyboard(): () => void {
 
     if (e.altKey) return
     const step = e.shiftKey ? 10 : 1
+    // The arrow keys move what is selected. With nothing selected they have nothing to move, and in
+    // a figure of several slides they open the next and the previous slide instead, as in every
+    // presentation program (a laptop has no Page Down key).
+    const arrow = (dir: 1 | -1, dx: number, dy: number): void => {
+      if (!s.selection.length && slideCount(s.doc) > 1) stepSlide(dir)
+      else nudge(dx, dy)
+    }
     switch (e.key) {
       case 'Delete':
       case 'Backspace':
@@ -130,16 +138,16 @@ export function installKeyboard(): () => void {
         else setTool('select')
         return
       case 'ArrowLeft':
-        nudge(-step, 0)
+        arrow(-1, -step, 0)
         break
       case 'ArrowRight':
-        nudge(step, 0)
+        arrow(1, step, 0)
         break
       case 'ArrowUp':
-        nudge(0, -step)
+        arrow(-1, 0, -step)
         break
       case 'ArrowDown':
-        nudge(0, step)
+        arrow(1, 0, step)
         break
       case 'PageDown':
         // The next and the previous slide, as in every presentation program.

@@ -17,7 +17,7 @@
 // TukeyHSD, kruskal.test, friedman.test, pairwise.t.test, pairwise.wilcox.test, p.adjust,
 // shapiro.test), all p values are two-sided, and tests/chart-tests.test.ts pins each to R's result.
 
-import { chiSquaredUpper, fUpper, normalBelow, normalQuantile, rankSumTwoSided, signedRankTwoSided, studentizedRangeUpper, tTwoSided } from './distributions'
+import { chiSquaredUpper, dunnettUpper, fUpper, normalBelow, normalQuantile, rankSumTwoSided, signedRankTwoSided, studentizedRangeUpper, tTwoSided } from './distributions'
 
 const TINY = 1e-300
 const sum = (values: number[]): number => values.reduce((a, b) => a + b, 0)
@@ -167,6 +167,21 @@ export function tukeyPair(x: number[], y: number[], anova: FResult, k: number): 
   const q = Math.abs(mean(x) - mean(y)) / Math.sqrt((anova.error / 2) * (1 / x.length + 1 / y.length))
   const p = studentizedRangeUpper(q, k, anova.df2)
   return Number.isFinite(p) ? p : null
+}
+
+/**
+ * Dunnett's test after `oneWayAnova`: every group compared with the first (the control), with p
+ * values that allow for the number of comparisons and for all of them sharing the control.
+ */
+export function dunnettPairs(groups: number[][], anova: FResult): (number | null)[] {
+  const control = groups[0]
+  const others = groups.slice(1)
+  const lambdas = others.map((g) => Math.sqrt(g.length / (g.length + control.length)))
+  return others.map((g) => {
+    const t = (mean(g) - mean(control)) / Math.sqrt(anova.error * (1 / g.length + 1 / control.length))
+    const p = dunnettUpper(t, lambdas, anova.df2)
+    return Number.isFinite(p) ? p : null
+  })
 }
 
 /** t test of two of the groups with the spread pooled over all groups of `oneWayAnova`, uncorrected. */
@@ -354,7 +369,7 @@ export const TEST_DOES: Record<TestId, string> = {
 /** How pairs of groups are compared after the overall test. */
 export function pairMethod(test: TestId, versusFirst: boolean): string {
   const which = versusFirst ? 'each group with the first' : 'every pair'
-  if (test === 'anova') return versusFirst ? 't tests with the scatter pooled over all groups, each group with the first, Holm’s correction' : 'Tukey’s test, every pair'
+  if (test === 'anova') return versusFirst ? 'Dunnett’s test, each group with the first' : 'Tukey’s test, every pair'
   if (test === 'kruskal') return `Mann–Whitney tests, ${which}, Holm’s correction`
   if (test === 'repeatedAnova') return `paired t tests, ${which}, Holm’s correction`
   if (test === 'friedman') return `Wilcoxon signed-rank tests, ${which}, Holm’s correction`
@@ -438,8 +453,11 @@ export function analyse(samples: number[][], design: Design): Outcome {
     if (!r) return fail(constant)
     statistic = `F(${r.df1}, ${r.df2}) = ${three(r.f)}`
     p = r.p
-    if (design.versusFirst) raw = wanted.map(([a, b]) => pooledPair(samples[a], samples[b], r))
-    else {
+    if (design.versusFirst) {
+      // Each group with the first: Dunnett's test, which is made for exactly this.
+      raw = dunnettPairs(samples, r)
+      corrected = true
+    } else {
       raw = wanted.map(([a, b]) => tukeyPair(samples[a], samples[b], r, k))
       corrected = true
       if (raw.some((v) => v === null)) notes.push('Tukey’s test needs at least two more values than there are groups.')

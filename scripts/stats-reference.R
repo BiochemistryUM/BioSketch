@@ -76,6 +76,19 @@ pooled <- pairwise.t.test(y, g, p.adjust.method = "none")$p.value
 kw <- kruskal.test(y, g)
 pw <- suppressWarnings(pairwise.wilcox.test(y, g))$p.value
 pwRaw <- suppressWarnings(pairwise.wilcox.test(y, g, p.adjust.method = "none"))$p.value
+# Dunnett's test, each group with the first: the chance that the largest of the t statistics
+# (which share the control and the pooled spread) is at least the one seen. It is worked out here
+# as the integral Dunnett wrote down, to many digits; multcomp's glht gives the same p values with
+# the error of its simulation (compare: summary(glht(fit, linfct = mcp(g = "Dunnett")))).
+dunnett_p <- function(groups) {
+  yy <- unlist(groups); gg <- factor(rep(seq_along(groups), sapply(groups, length)))
+  a <- aov(yy ~ gg); df <- a$df.residual; ms <- sum(resid(a)^2) / df
+  n <- sapply(groups, length); m <- sapply(groups, mean)
+  tt <- abs((m[-1] - m[1]) / sqrt(ms * (1 / n[-1] + 1 / n[1])))
+  lam <- sqrt(n[-1] / (n[-1] + n[1]))
+  within <- function(t, u) sapply(u, function(uu) integrate(function(z) sapply(z, function(zz) prod(pnorm((lam * zz + t * uu) / sqrt(1 - lam^2)) - pnorm((lam * zz - t * uu) / sqrt(1 - lam^2)))) * dnorm(z), -Inf, Inf, rel.tol = 1e-11)$value)
+  sapply(tt, function(t) 1 - integrate(function(u) within(t, u) * 2 * df * u * dchisq(df * u^2, df), 0, Inf, rel.tol = 1e-10)$value)
+}
 # Pairs in the order A-B, A-C, A-D, B-C, B-D, C-D.
 lower <- function(m) c(m["B", "A"], m["C", "A"], m["D", "A"], m["C", "B"], m["D", "B"], m["D", "C"])
 several <- obj(
@@ -84,6 +97,8 @@ several <- obj(
   pooledRaw = num(lower(pooled)),
   # Each group against the first, corrected for three comparisons.
   pooledFirstHolm = num(p.adjust(lower(pooled)[1:3], "holm")),
+  # Each group against the first by Dunnett's test (A-B, A-C, A-D).
+  dunnettFirst = num(dunnett_p(list(A, B, C, D))),
   kruskal = htest(kw),
   wilcoxHolm = num(lower(pw)),
   wilcoxFirstHolm = num(p.adjust(lower(pwRaw)[1:3], "holm")),

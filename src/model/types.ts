@@ -43,6 +43,11 @@ interface NodeBase {
   name?: string
   /** Guides (panel frames) show on the page while working and are left out of every export. */
   guide?: boolean
+  /**
+   * Presenting: the object is not there when its slide comes up and appears on this press (1 on the
+   * first, 2 on the second). Absent = there from the start. On the page and in exports it is always drawn.
+   */
+  appear?: number
 }
 
 /** True when the object can be picked up on the page: neither locked nor hidden. */
@@ -111,6 +116,14 @@ export interface TextNode extends NodeBase {
   fontFamily?: FontFamily
   align: TextAlign
   rotation: number
+  /**
+   * A text box: the words are broken into lines no wider than this. Absent = a label, which is as
+   * wide as its words and breaks only where Enter was pressed. `x` is then the left edge, the
+   * middle or the right edge of the box, as `align` says.
+   */
+  width?: number
+  /** Every paragraph (what stands between two presses of Enter) begins with a bullet, and its further lines are set in under its first. */
+  bullets?: boolean
 }
 
 /** A connector end. When `nodeId` is set the end follows that node; x/y is then only a fallback. */
@@ -320,6 +333,10 @@ export interface ChartNode extends NodeBase {
   heatByRow?: boolean
   /** Heat maps: the number of each cell is written in it. */
   heatNumbers?: boolean
+  /** Heat maps: rows, columns or both are put in the order of a hierarchical clustering, with its tree drawn beside them. */
+  heatCluster?: 'rows' | 'columns' | 'both'
+  /** Scatter charts and survival curves: a shaded band shows the 95 % confidence interval of the fitted straight line or of the survival curve. */
+  band?: boolean
   /** Venn diagrams: what is written in the regions: the share of all members in per cent, or nothing. Absent = the count. */
   vennLabels?: 'percent' | 'none'
   /** How large the points are, as a multiple of their usual size (0.25 to 4). Absent = 1. */
@@ -373,7 +390,31 @@ export interface ChartNode extends NodeBase {
   test?: ChartTest
 }
 
-export type FigNode = IconNode | ShapeNode | TextNode | ConnectorNode | MembraneNode | StrokeNode | ImageNode | ChartNode
+/** A table: rows and columns of words and numbers, pasted from a spreadsheet or typed. See `src/model/table.ts`. */
+export interface TableNode extends NodeBase {
+  type: 'table'
+  x: number
+  y: number
+  w: number
+  h: number
+  rotation: number
+  /** The cells, row by row; every row has as many cells as the others. */
+  cells: string[][]
+  /** The first row holds the names of the columns: bold, on a tinted ground. Absent = it does. */
+  header?: boolean
+  /** Size of the lettering. Absent = 14. */
+  fontSize?: number
+  /** Which lines are drawn: between the rows only, the three lines of a table in a journal, or none. Absent = a full grid. */
+  lines?: 'rows' | 'rules' | 'none'
+  /** Every second row stands on a light tint. */
+  striped?: boolean
+  /** The ground of the row of names. Absent = a light grey. */
+  headFill?: string
+  /** The colour of the lettering. Absent = dark. */
+  color?: string
+}
+
+export type FigNode = IconNode | ShapeNode | TextNode | ConnectorNode | MembraneNode | StrokeNode | ImageNode | ChartNode | TableNode
 export type NodeType = FigNode['type']
 
 export interface IconDef {
@@ -390,9 +431,14 @@ export interface IconDef {
   source: string
 }
 
-/** A slide of a figure while another slide is the open one: the objects it holds, first at the back. */
+/**
+ * A slide of a figure while another slide is the open one: the objects it holds (first at the
+ * back), the colour of its page and the notes of the speaker.
+ */
 export interface Slide {
   nodes: FigNode[]
+  background: string
+  notes?: string
 }
 
 export interface FigDoc {
@@ -402,15 +448,18 @@ export interface FigDoc {
   height: number
   /** Printed width of the page in millimetres (journal column width). Absent = not set. */
   widthMm?: number
+  /** The colour of the page. In a figure with several slides: of the open slide, every slide has its own. */
   background: string
+  /** What the speaker wants to say at the open slide; shown while presenting, never drawn or exported. */
+  notes?: string
   /** Drawing order: first is at the back. In a figure with several slides these are the objects of the open slide. */
   nodes: FigNode[]
   /** Icons imported by the user, stored with the figure so the file is self-contained. */
   customIcons: Record<string, IconDef>
   /**
    * The other slides of a figure that has several: those before the open one and those after it,
-   * each list in the order of the slides. Absent in a figure of one slide. The page (its size and
-   * colour) and the icons are those of the whole figure. See `src/model/slides.ts`.
+   * each list in the order of the slides. Absent in a figure of one slide. The size of the page
+   * and the icons are those of the whole figure. See `src/model/slides.ts`.
    */
   slides?: { before: Slide[]; after: Slide[] }
 }
