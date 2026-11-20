@@ -38,6 +38,11 @@ export function LibraryPanel() {
   const favourites = useEditor((s) => s.favouriteIcons)
   const recent = useEditor((s) => s.recentIcons)
   const [query, setQuery] = useState('')
+  // Words sent from the Search box.
+  const request = useEditor((s) => s.libraryRequest)
+  useEffect(() => {
+    if (request) setQuery(request.query)
+  }, [request])
   const [packs, setPacks] = useState<PackInfo[] | null>(null)
   const [choice, setChoice] = useState(DEFAULT_PACK)
   // Bumped when a pack has been fetched, so the list is drawn again with its icons.

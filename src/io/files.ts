@@ -6,14 +6,16 @@
 import { isHexColor, normalizeHex, sanitizeBody } from '../icons/svg'
 import { uid } from '../model/doc'
 import { DASH_SCALE_MAX, DASH_SCALE_MIN, DASH_STYLES } from '../model/dash'
-import { LEGEND_PLACES, MAX_BRACKETS, MAX_GROUPS, MAX_POINTS, MAX_ROWS, MAX_VALUES, POINT_SHAPES, maxValues, ownPointStyle, pointStyle, usable, usableEnds, usablePointNames, usableRefLines, usableValueLabels } from '../model/chart'
+import { LEGEND_PLACES, MAX_BRACKETS, canFacet, MAX_GROUPS, MAX_POINTS, MAX_ROWS, MAX_VALUES, POINT_SHAPES, maxValues, ownPointStyle, pointStyle, usable, usableEnds, usablePointNames, usableRefLines, usableValueLabels } from '../model/chart'
 import { heatScaleDef } from '../model/heatmap'
 import { TEXT_WIDTH_MAX, TEXT_WIDTH_MIN } from '../model/nodes'
 import { paletteId } from '../model/palettes'
 import { SHAPE_KINDS } from '../model/shapes'
 import { CELL_MAX, TABLE_COLS_MAX, TABLE_ROWS_MAX } from '../model/table'
+import { wellName } from '../model/tableRoles'
+import { STRUCTURE_CHAINS_MAX, STRUCTURE_MARKS_MAX, STRUCTURE_RESIDUES_MAX } from '../model/structure'
 import { MAX_NOTES, MAX_SLIDES, MAX_STEPS, openSlide, uniqueIds, withSlides } from '../model/slides'
-import type { ChartBracket, ChartGroup, ChartKind, ChartTest, ConnectorKind, DashStyle, ElbowLegs, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign, Slide } from '../model/types'
+import type { StandardModel, StandardSettings, KineticsSettings, BindingSettings, MeltSettings, FacetSettings, ChartNode, QpcrSettings, StructureChain, StructureMark, ChartBracket, ChartGroup, ChartKind, ChartTest, ConnectorKind, DashStyle, ElbowLegs, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign, Slide } from '../model/types'
 
 const num = (v: unknown, fallback: number, min = -1e6, max = 1e6): number =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
@@ -24,7 +26,8 @@ const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === '
 const color = (v: unknown, fallback: string): string => (typeof v === 'string' && /^[#\w(),.%\s-]{1,40}$/.test(v) ? v : fallback)
 
 const SHAPES: ShapeKind[] = SHAPE_KINDS
-const CHART_KINDS: ChartKind[] = ['bar', 'dot', 'line', 'box', 'violin', 'scatter', 'pie', 'heatmap', 'venn']
+const CHART_KINDS: ChartKind[] = ['bar', 'dot', 'line', 'box', 'violin', 'scatter', 'pie', 'heatmap', 'venn', 'standard', 'qpcr']
+const STANDARD_MODELS: StandardModel[] = ['linear', 'quadratic', '4pl', '5pl']
 const KINDS: ConnectorKind[] = ['arrow', 'inhibit', 'dot', 'line', 'double']
 const LEGS: ElbowLegs[] = ['hh', 'vv', 'hv', 'vh']
 const ALIGNS: TextAlign[] = ['left', 'center', 'right']
@@ -187,6 +190,57 @@ function node(raw: unknown): FigNode | null {
         h: num(o.h, 100, 1),
         rotation: num(o.rotation, 0),
       }
+    case 'structure': {
+      // Every number is rebuilt: chains of residues with three coordinates each, within the limits.
+      if (!Array.isArray(o.chains)) return null
+      let left = STRUCTURE_RESIDUES_MAX
+      const chains: StructureChain[] = []
+      for (const raw of o.chains.slice(0, STRUCTURE_CHAINS_MAX)) {
+        const c = raw as Record<string, unknown> | null
+        if (!c || !Array.isArray(c.nums) || !Array.isArray(c.ca) || !Array.isArray(c.b) || typeof c.seq !== 'string') continue
+        const count = Math.min(c.nums.length, Math.floor(c.ca.length / 3), c.b.length, c.seq.length, left)
+        if (count < 1) continue
+        const finite = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
+        if (!c.nums.slice(0, count).every(finite) || !c.ca.slice(0, 3 * count).every(finite) || !c.b.slice(0, count).every(finite)) continue
+        left -= count
+        chains.push({
+          id: typeof c.id === 'string' && /^[A-Za-z0-9]{1,8}$/.test(c.id) ? c.id : 'A',
+          nums: (c.nums as number[]).slice(0, count).map((v) => Math.round(num(v, 0, -1e5, 1e6))),
+          ca: (c.ca as number[]).slice(0, 3 * count).map((v) => num(v, 0, -1e5, 1e5)),
+          b: (c.b as number[]).slice(0, count).map((v) => num(v, 0, -1e4, 1e4)),
+          seq: c.seq.slice(0, count).replace(/[^A-Z]/g, 'X'),
+        })
+      }
+      if (!chains.length) return null
+      const view = Array.isArray(o.view) ? o.view : []
+      const src = (o.source ?? {}) as Record<string, unknown>
+      const kind = oneOf(src.kind, ['alphafold', 'pdb', 'file'] as const, 'file')
+      const marks: StructureMark[] = Array.isArray(o.marks)
+        ? o.marks.slice(0, STRUCTURE_MARKS_MAX).flatMap((m) => {
+            const r = m as Record<string, unknown> | null
+            return r && typeof r.chain === 'string' && typeof r.n === 'number' && Number.isFinite(r.n) && typeof r.label === 'string' ? [{ chain: r.chain.slice(0, 8), n: Math.round(r.n), label: r.label.replace(/[\r\n\t]+/g, ' ').slice(0, 40) }] : []
+          })
+        : []
+      const colour = oneOf(o.colour, ['chain', 'rainbow', 'plddt', 'single'] as const, 'chain')
+      return {
+        ...base,
+        type: 'structure',
+        x: num(o.x, 0),
+        y: num(o.y, 0),
+        w: num(o.w, 300, 10, 20000),
+        h: num(o.h, 300, 10, 20000),
+        rotation: num(o.rotation, 0),
+        chains,
+        view: [num(view[0], 0, -360, 360), num(view[1], 0, -360, 360)],
+        ...(colour !== 'chain' ? { colour } : {}),
+        ...(typeof o.color === 'string' ? { color: color(o.color, '#4a4fb5') } : {}),
+        ...(typeof o.tube === 'number' ? { tube: num(o.tube, 1.6, 0.2, 10) } : {}),
+        ...(marks.length ? { marks } : {}),
+        ...(bool(o.spin) ? { spin: true as const } : {}),
+        source: { kind, id: typeof src.id === 'string' ? src.id.replace(/[^\w .,:()-]/g, '').slice(0, 80) : '' },
+        ...(typeof o.title === 'string' && o.title.trim() ? { title: o.title.replace(/[\r\n\t]+/g, ' ').slice(0, 200) } : {}),
+      }
+    }
     case 'table': {
       // The cells are rebuilt one by one: short texts, in rows that are all as long as the longest.
       if (!Array.isArray(o.cells)) return null
@@ -217,14 +271,29 @@ function node(raw: unknown): FigNode | null {
       const finite = usable
       const kind = oneOf(o.kind, CHART_KINDS, 'bar')
       const groups: ChartGroup[] = []
-      for (const raw of Array.isArray(o.groups) ? o.groups.slice(0, MAX_GROUPS) : []) {
+      for (const raw of Array.isArray(o.groups) ? o.groups.slice(0, kind === 'standard' ? 2 : MAX_GROUPS) : []) {
         if (!raw || typeof raw !== 'object') continue
         const g = raw as Record<string, unknown>
         const name = typeof g.name === 'string' ? g.name.slice(0, 60) : ''
         const shape = POINT_SHAPES.find((s) => s === g.shape)
         const shared = { name: name || `Group ${groups.length + 1}`, ...(isHexColor(g.color) ? { color: normalizeHex(g.color) } : {}), ...(shape && shape !== 'circle' ? { shape } : {}), ...ownPointStyle(g.pointSize, g.pointOpacity) }
         const list = (Array.isArray(g.values) ? g.values : []).slice(0, maxValues(kind))
-        if (kind === 'scatter') {
+        if (kind === 'standard') {
+          // The standards (first group) keep a concentration with every signal; the samples (second group) have none.
+          const xs = Array.isArray(g.xs) ? g.xs : []
+          const names = Array.isArray(g.labels) ? g.labels : []
+          const standards = groups.length === 0
+          const kept = list.map((v, k) => ({ x: xs[k], v, name: typeof names[k] === 'string' ? (names[k] as string).slice(0, 40) : '' })).filter((p) => finite(p.v) && (!standards || (finite(p.x) && (p.x as number) >= 0)))
+          groups.push({ ...shared, values: kept.map((p) => p.v as number), ...(standards ? { xs: kept.map((p) => p.x as number) } : {}), ...(kept.some((p) => p.name) ? { labels: kept.map((p) => p.name) } : {}) })
+        } else if (kind === 'qpcr') {
+          // A target: the Cq of every well, each with the name of its sample; a well without either is left out.
+          const names = Array.isArray(g.labels) ? g.labels : []
+          const places = Array.isArray(g.wells) ? g.wells : []
+          const kept = list
+            .map((v, k) => ({ v, name: typeof names[k] === 'string' ? (names[k] as string).replace(/\s+/g, ' ').trim().slice(0, 40) : '', well: typeof places[k] === 'string' ? (wellName(places[k] as string) ?? '') : '' }))
+            .filter((w): w is { v: number; name: string; well: string } => finite(w.v) && (w.v as number) > 0 && (w.v as number) < 60 && !!w.name)
+          groups.push({ ...shared, values: kept.map((w) => w.v), labels: kept.map((w) => w.name), ...(kept.some((w) => w.well) ? { wells: kept.map((w) => w.well) } : {}) })
+        } else if (kind === 'scatter') {
           // A point is kept only when both of its numbers are good, so x and y can never drift apart.
           const xs = Array.isArray(g.xs) ? g.xs : []
           // The name of a point stays with its numbers.
@@ -254,7 +323,8 @@ function node(raw: unknown): FigNode | null {
       }
       // The ends of an axis are kept by the same rule the chart is drawn by, so reopening changes nothing.
       const { min: yMin, max: yMax } = usableEnds(o.yMin, o.yMax, o.yLog === true)
-      const { min: xMin, max: xMax } = kind === 'scatter' ? usableEnds(o.xMin, o.xMax, o.xLog === true) : { min: undefined, max: undefined }
+      const xAxis = kind === 'scatter' || kind === 'standard'
+      const { min: xMin, max: xMax } = xAxis ? usableEnds(o.xMin, o.xMax, o.xLog === true) : { min: undefined, max: undefined }
       const brackets: ChartBracket[] = []
       for (const raw of kind !== 'scatter' && Array.isArray(o.brackets) ? o.brackets.slice(0, MAX_BRACKETS) : []) {
         if (!raw || typeof raw !== 'object') continue
@@ -276,7 +346,7 @@ function node(raw: unknown): FigNode | null {
       const legend = LEGEND_PLACES.find((p) => p === o.legend)
       const valueLabels = usableValueLabels(o.valueLabels)
       const pointNames = kind === 'scatter' ? usablePointNames(o.pointNames) : undefined
-      return {
+      const chart: ChartNode = {
         ...base,
         type: 'chart',
         x: num(o.x, 0),
@@ -312,9 +382,14 @@ function node(raw: unknown): FigNode | null {
         ...(bool(o.yLog) ? { yLog: true } : {}),
         ...(xMin !== undefined ? { xMin } : {}),
         ...(xMax !== undefined ? { xMax } : {}),
-        ...(kind === 'scatter' && bool(o.xLog) ? { xLog: true } : {}),
+        ...(xAxis && bool(o.xLog) ? { xLog: true } : {}),
+        ...(kind === 'standard' && Object.keys(standardSettings(o.standard)).length ? { standard: standardSettings(o.standard) } : {}),
+        ...(kind === 'qpcr' && Object.keys(qpcrSettings(o.qpcr)).length ? { qpcr: qpcrSettings(o.qpcr) } : {}),
         ...(kind === 'scatter' && bool(o.survival) ? { survival: true } : {}),
+        ...(kind === 'scatter' && !bool(o.survival) && o.kinetics && typeof o.kinetics === 'object' ? { kinetics: kineticsSettings(o.kinetics) } : {}),
         ...(kind === 'scatter' && bool(o.survival) && bool(o.logRank) ? { logRank: true } : {}),
+        ...(kind === 'scatter' && !bool(o.survival) && !(o.kinetics && typeof o.kinetics === 'object') && o.binding && typeof o.binding === 'object' ? { binding: bindingSettings(o.binding) } : {}),
+        ...(kind === 'scatter' && !bool(o.survival) && !(o.kinetics && typeof o.kinetics === 'object') && !(o.binding && typeof o.binding === 'object') && o.melt && typeof o.melt === 'object' ? { melt: meltSettings(o.melt) } : {}),
         ...(kind === 'scatter' && bool(o.fit) ? { fit: true } : {}),
         ...((kind === 'scatter' || kind === 'heatmap') && (o.corr === 'pearson' || o.corr === 'spearman') ? { corr: o.corr } : {}),
         ...(kind === 'scatter' && bool(o.fit) && o.curve === 'dose' ? { curve: 'dose' as const } : {}),
@@ -323,6 +398,8 @@ function node(raw: unknown): FigNode | null {
         ...(brackets.length ? { brackets } : {}),
         ...(Object.keys(test).length ? { test } : {}),
       }
+      // Small panels are kept only where the chart can be split, by the rule it is drawn by.
+      return o.facet && typeof o.facet === 'object' && canFacet(chart) ? { ...chart, facet: facetSettings(o.facet) } : chart
     }
     case 'membrane': {
       const points = (Array.isArray(o.points) ? o.points : []).map(point).filter((p): p is Point => !!p)
@@ -353,6 +430,96 @@ function node(raw: unknown): FigNode | null {
   }
 }
 
+/** The choices of a standard curve, rebuilt: a known curve, the blank, and dilutions above 0 for at most 500 samples. */
+function standardSettings(raw: unknown): StandardSettings {
+  const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const model = STANDARD_MODELS.find((m) => m === o.model)
+  const dilution: Record<string, number> = {}
+  if (o.dilution && typeof o.dilution === 'object') {
+    for (const [name, v] of Object.entries(o.dilution as Record<string, unknown>).slice(0, 500)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0 && v < 1e9 && v !== 1 && name.length <= 40) dilution[name] = v
+    }
+  }
+  return { ...(model && model !== 'linear' ? { model } : {}), ...(o.blank === true ? { blank: true } : {}), ...(Object.keys(dilution).length ? { dilution } : {}) }
+}
+
+/** A short name of a sample, a condition or a target, as the table reader writes it. */
+const shortName = (v: unknown): string | null => (typeof v === 'string' && v.trim() && v.length <= 60 ? v.replace(/\s+/g, ' ').trim().slice(0, 40) : null)
+
+/** The choices of a qPCR analysis, rebuilt: names of at most 40 characters, efficiencies from 50 to 150 %. */
+function qpcrSettings(raw: unknown): QpcrSettings {
+  const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const reference = Array.isArray(o.reference) ? [...new Set(o.reference.slice(0, 10).map(shortName).filter((n): n is string => !!n))] : []
+  const control = shortName(o.control)
+  const conditions: Record<string, string> = {}
+  if (o.conditions && typeof o.conditions === 'object') {
+    for (const [sample, c] of Object.entries(o.conditions as Record<string, unknown>).slice(0, 2000)) {
+      const a = shortName(sample)
+      const b = shortName(c)
+      if (a && b && a === sample) conditions[a] = b
+    }
+  }
+  const efficiency: Record<string, number> = {}
+  if (o.efficiency && typeof o.efficiency === 'object') {
+    for (const [target, v] of Object.entries(o.efficiency as Record<string, unknown>).slice(0, MAX_GROUPS)) {
+      if (shortName(target) === target && typeof v === 'number' && Number.isFinite(v) && v >= 50 && v <= 150 && v !== 100) efficiency[target] = v
+    }
+  }
+  return {
+    ...(reference.length ? { reference } : {}),
+    ...(control ? { control } : {}),
+    ...(Object.keys(conditions).length ? { conditions } : {}),
+    ...(o.ownSamples === true ? { ownSamples: true } : {}),
+    ...(Object.keys(efficiency).length ? { efficiency } : {}),
+    ...(o.log2 === true ? { log2: true } : {}),
+    ...(o.paired === true ? { paired: true } : {}),
+    ...(o.marks === 'stars' || o.marks === 'p' ? { marks: o.marks } : {}),
+  }
+}
+
+const KINETICS_MODELS = ['competitive', 'uncompetitive', 'noncompetitive', 'mixed'] as const
+
+/** The choices of enzyme kinetics, rebuilt: a known inhibition model, an enzyme concentration above 0, the Lineweaver–Burk view. Kept even when empty: it marks the chart as kinetics. */
+function kineticsSettings(raw: unknown): KineticsSettings {
+  const o = raw as Record<string, unknown>
+  const model = KINETICS_MODELS.find((m) => m === o.model)
+  const enzyme = typeof o.enzyme === 'number' && Number.isFinite(o.enzyme) && o.enzyme > 0 && o.enzyme < 1e12 ? o.enzyme : undefined
+  return { ...(model ? { model } : {}), ...(enzyme !== undefined ? { enzyme } : {}), ...(o.lineweaver === true ? { lineweaver: true } : {}) }
+}
+
+/** The choices of saturation binding, rebuilt; kept even when empty: it marks the chart as binding. */
+function bindingSettings(raw: unknown): BindingSettings {
+  const o = raw as Record<string, unknown>
+  const model = o.model === 'hill' || o.model === 'total' ? o.model : undefined
+  return { ...(model ? { model } : {}), ...(o.scatchard === true ? { scatchard: true } : {}) }
+}
+
+/** How a chart is split into small panels, rebuilt; kept even when empty: it marks the chart as split. */
+function facetSettings(raw: unknown): FacetSettings {
+  const o = raw as Record<string, unknown>
+  return {
+    ...(o.by === 'series' ? { by: 'series' as const } : {}),
+    ...(Number.isInteger(o.cols) && (o.cols as number) >= 1 && (o.cols as number) <= 6 ? { cols: o.cols as number } : {}),
+    ...(o.free === true ? { free: true } : {}),
+  }
+}
+
+/** The choices of melting curves, rebuilt; kept even when empty: it marks the chart as melting curves. */
+function meltSettings(raw: unknown): MeltSettings {
+  const o = raw as Record<string, unknown>
+  const temp = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) < 1e4 ? v : undefined)
+  const from = temp(o.from)
+  const to = temp(o.to)
+  const both = from !== undefined && to !== undefined
+  return {
+    ...(o.method === 'derivative' ? { method: 'derivative' as const } : {}),
+    ...(from !== undefined && (!both || from < to!) ? { from } : {}),
+    ...(to !== undefined && (!both || from! < to) ? { to } : {}),
+    ...(o.view === 'derivative' ? { view: 'derivative' as const } : {}),
+    ...(o.normalise === true ? { normalise: true } : {}),
+  }
+}
+
 function customIcon(id: string, raw: unknown): IconDef | null {
   const o = obj(raw)
   if (!o || typeof o.body !== 'string') return null
@@ -370,8 +537,18 @@ function customIcon(id: string, raw: unknown): IconDef | null {
     license: str(o.license, ''),
     author: str(o.author, ''),
     source: str(o.source, '', 500),
+    ...(typeof o.molfile === 'string' && o.molfile.length <= MAX_MOLFILE && readableMolfile(o.molfile) ? { molfile: o.molfile } : {}),
   }
 }
+
+/** A structure of 500 atoms takes about 50 kB as a molfile. */
+const MAX_MOLFILE = 120_000
+/**
+ * A molfile kept beside a structure is never drawn (the icon's drawing is) and is read with every
+ * check when the structure editor opens it; here it only has to look like one: plain characters
+ * and its last line.
+ */
+const readableMolfile = (text: string): boolean => /^[\x20-\x7e\r\n\t]*$/.test(text) && /\nM {2}END\s*$/.test(text)
 
 /** Build a clean document from untrusted data. Throws when it is not a BioSketch figure at all. */
 export function validateDoc(data: unknown): FigDoc {

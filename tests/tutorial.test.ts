@@ -1,4 +1,4 @@
-// The tour of the features: a figure of twelve slides built from real objects.
+// The tour of the features: a figure of thirteen slides built from real objects.
 
 import { describe, expect, it } from 'vitest'
 import { serializeDoc, validateDoc } from '../src/io/files'
@@ -8,15 +8,15 @@ import { getRect } from '../src/model/nodes'
 import { everyNode, slideCount, slideDocs, slideIndex } from '../src/model/slides'
 import type { FigNode, Rect } from '../src/model/types'
 import { buildTemplate } from '../src/templates'
-import { TUTORIAL, tutorialDoc } from '../src/tutorial'
+import { TOUR_MOLECULE, TUTORIAL, tutorialDoc } from '../src/tutorial'
 import { PACKS, example, loadStub, packIcons } from './helpers'
 
 const tour = example(TUTORIAL)
 const slides = slideDocs(tour)
 
 describe('the tour of the features', () => {
-  it('is a figure of twelve wide slides, open on the first', () => {
-    expect(slideCount(tour)).toBe(12)
+  it('is a figure of thirteen wide slides, open on the first', () => {
+    expect(slideCount(tour)).toBe(13)
     expect(slideIndex(tour)).toBe(0)
     expect([tour.width, tour.height]).toEqual([1280, 720])
     expect(tour.name).toBe('Tour of the features')
@@ -37,12 +37,14 @@ describe('the tour of the features', () => {
   it('uses icons the collections really have, and is given their drawings', async () => {
     expect(TUTORIAL.icons.every((id) => packIcons(id))).toBe(true)
     const placed = new Set(everyNode(tour).flatMap((n) => (n.type === 'icon' ? [n.iconId] : [])))
-    expect([...placed].sort()).toEqual([...TUTORIAL.icons].sort())
+    // Besides the icons of the collections, one chemical structure drawn by the tour itself, with its molfile.
+    expect([...placed].sort()).toEqual([...TUTORIAL.icons, TOUR_MOLECULE].sort())
+    expect(tour.customIcons[TOUR_MOLECULE].molfile).toMatch(/\nM {2}END\n?$/)
     const built = await buildTemplate(TUTORIAL, PACKS, loadStub)
-    expect(Object.keys(built.customIcons).sort()).toEqual([...TUTORIAL.icons].sort())
+    expect(Object.keys(built.customIcons).sort()).toEqual([...TUTORIAL.icons, TOUR_MOLECULE].sort())
     // The icons of every slide, not only of the first.
     expect(Object.keys(built.customIcons).length).toBeGreaterThan(slides[0].nodes.filter((n) => n.type === 'icon').length - 1)
-    expect(slideCount(built)).toBe(12)
+    expect(slideCount(built)).toBe(13)
   })
 
   it('keeps everything on the page', () => {

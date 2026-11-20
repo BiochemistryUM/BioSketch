@@ -16,6 +16,13 @@ import { kaplanMeier, logRank, type KaplanMeier, type Subject, hazardRatios, typ
 import { analyseTwoWay, suggestTwoWay, type Factors } from './twoWay'
 import { STARS_KEY, analyse, holm, pText, stars, suggest, type Advice, type Outcome, type TestId } from './chartTests'
 import { measureText, wrapText } from './nodes'
+import { standardCurve, type StandardResult } from './standardCurve'
+import { standardTableOf } from './standardTable'
+import { analyseQpcr, qpcrWells, type QpcrResult } from './qpcr'
+import { apparent, isFit, kinetics, type KineticsFit, type KineticsResult } from './kinetics'
+import { kineticsColumns } from './kineticsTable'
+import { binding, bindingColumns, bindingModel, isBindingFit, type BindingFit, type BindingResult } from './binding'
+import { isMeltFit, melt, meltColumns, profile, type MeltFit, type MeltResult } from './melt'
 import { PALETTES, paletteColours } from './palettes'
 import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartPointNames, ChartRefLine, ChartTest, ChartValueLabels, LegendPlace, PointShape, Rect, TextNode } from './types'
 
@@ -438,6 +445,7 @@ function compare(node: ChartNode): Comparison {
   const design = { paired: !!test.paired, versusFirst: !!test.versusFirst }
   const compared: Compared = { indexes: [], names: [], samples: [], leftOut: 0 }
   if (node.kind === 'scatter') compared.problem = 'Tests compare groups; a scatter chart has series of points instead.'
+  else if (node.kind === 'standard') compared.problem = 'A standard curve reads samples off a curve; it compares no groups.'
   else if (node.kind === 'pie') compared.problem = 'A pie chart shows shares of a whole. To test the groups, choose another kind of chart.'
   else if (isGrouped(node)) {
     // Two factors: every column of the table is one combination of a category and a series.
@@ -754,7 +762,7 @@ export function axisFor(lo: number, hi: number, opts: { min?: number; max?: numb
  * the bracket or line in its list.
  */
 export interface ChartPart {
-  what: 'group' | 'category' | 'cells' | 'error' | 'fit' | 'bracket' | 'refLine' | 'yAxis' | 'xAxis' | 'title' | 'yTitle' | 'xTitle' | 'legend' | 'number' | 'pointName' | 'result' | 'scale'
+  what: 'group' | 'category' | 'cells' | 'error' | 'fit' | 'bracket' | 'refLine' | 'yAxis' | 'xAxis' | 'title' | 'yTitle' | 'xTitle' | 'legend' | 'number' | 'pointName' | 'result' | 'scale' | 'facet'
   at?: number
 }
 
@@ -790,6 +798,16 @@ export interface ChartDrawing {
   clipped: boolean
   /** Things the scientist should know about how the numbers are shown, in plain words. */
   notes: string[]
+  /** A chart drawn as small panels: each is a drawing of its own, placed at x, y in the chart's box. */
+  panels?: ChartPanel[]
+}
+
+export interface ChartPanel {
+  x: number
+  y: number
+  w: number
+  h: number
+  drawing: ChartDrawing
 }
 
 const r1 = (v: number): number => Math.round(v * 10) / 10
@@ -1145,6 +1163,8 @@ function sharedNotes(node: ChartNode, axes: { axis: Axis; name: string }[]): str
 // The part of every mark, kept beside the marks so that what is drawn (and compared in tests,
 // and written to files) is the marks alone.
 const PARTS = new WeakMap<object, ChartPart>()
+/** The ranges of the axes a drawing was laid out with, so that small panels can be given one range. */
+const AXES = new WeakMap<ChartDrawing, { x?: [number, number]; y?: [number, number] }>()
 const CURRENT = new WeakMap<ChartDrawing, { part: ChartPart | null }>()
 const MARK_LISTS = ['rects', 'lines', 'paths', 'circles', 'dashes', 'rules', 'swatches', 'texts'] as const
 
@@ -1241,6 +1261,7 @@ function frame(node: ChartNode, out: ChartDrawing, yAxis: Axis, legend: { name: 
   const below = fs * (0.65 + 1.25 * Math.max(1, rows(pw, fs)))
   const ph = Math.max(10, node.h - top - below - (node.xLabel ? fs * 1.5 : 0) - (place === 'bottom' ? legendHeight : 0))
   out.clip = { x: r1(px), y: r1(py), w: r1(pw), h: r1(ph) }
+  AXES.set(out, { ...AXES.get(out), y: [yAxis.min, yAxis.max] })
   const xEnds = usableEnds(node.xMin, node.xMax, !!node.xLog)
   const yEnds = usableEnds(node.yMin, node.yMax, !!node.yLog)
   out.clipped = [yEnds.min, yEnds.max, ...(node.kind === 'scatter' ? [xEnds.min, xEnds.max] : [])].some((v) => v !== undefined)
@@ -1319,7 +1340,13 @@ interface Column {
   top?: number
   /** Bars scaled to 100 %: its share of the category's total, in per cent. */
   share?: number
+  /** The ends of its error bar (equal to the mean when there is none). */
+  eLo: number
+  eHi: number
 }
+
+/** What a column shows when it is not the mean of its values with a symmetric error bar (the fold change of a qPCR analysis). */
+type ColumnSummary = (index: number) => { mean: number; low: number | null; high: number | null } | null
 
 /**
  * True when the chart's bars stand on top of each other: asked for, a bar chart with categories
@@ -1396,7 +1423,7 @@ function violinOf(values: number[], log: boolean): Violin | null {
 }
 
 /** Bars, dots, boxes, violins and lines: one column per group, side by side or grouped by category. */
-function columnLayout(node: ChartNode): ChartDrawing {
+function columnLayout(node: ChartNode, summary?: ColumnSummary): ChartDrawing {
   const drawn = drawnGroups(node)
   const grouped = isGrouped(node)
   const cats = grouped ? unique(drawn.map((c) => c.group.category ?? '')) : []
@@ -1409,17 +1436,20 @@ function columnLayout(node: ChartNode): ChartDrawing {
   const cols: Column[] = drawn.map(({ group, index }) => {
     const values = shownValues(node, group)
     hidden += group.values.length - values.length
-    const s = stats(values)
-    const err = stacked ? 0 : errorOf(node, s)
+    const own0 = summary?.(index) ?? null
+    const s = own0 ? { ...stats(values), mean: own0.mean } : stats(values)
+    const err = stacked ? 0 : own0 ? Math.max(own0.high === null ? 0 : own0.high - own0.mean, own0.low === null ? 0 : own0.mean - own0.low) : errorOf(node, s)
+    const eLo = own0 ? (own0.low ?? s.mean) : s.mean - err
+    const eHi = own0 ? (own0.high ?? s.mean) : s.mean + err
     // What the column reaches: a bar or line point with its error bar (and its dots, when shown);
     // a dot chart every value and its error bar; a box or violin simply every value.
-    const reach = node.kind === 'bar' || node.kind === 'line' ? [s.mean, s.mean - err, s.mean + err, ...(showPoints ? values : [])] : node.kind === 'dot' ? [...values, s.mean - err, s.mean + err] : values
+    const reach = node.kind === 'bar' || node.kind === 'line' ? [s.mean, eLo, eHi, ...(showPoints ? values : [])] : node.kind === 'dot' ? [...values, eLo, eHi] : values
     const shown = values.length ? (log ? reach.filter((v) => v > 0) : reach) : []
     const own = series.find((x) => x.groups.includes(index))!
     const { colour, shape } = own
     // A logarithmic axis has no zero to stand a bar on: it starts below the smallest value of the
     // group, so that a bar or a mean always has a visible height above the bottom of the axis.
-    return { group, index, colour, ...(shape ? { shape } : {}), ...pointsOf(node, own), values, s, box: boxStats(values), err, lo: Math.min(...shown, ...(log ? values : [])), hi: Math.max(...shown), cx: 0, width: 0 }
+    return { group, index, colour, ...(shape ? { shape } : {}), ...pointsOf(node, own), values, s, box: boxStats(values), err, eLo, eHi, lo: Math.min(...shown, ...(log ? values : [])), hi: Math.max(...shown), cx: 0, width: 0 }
   })
   const live = cols.filter((c) => c.values.length)
 
@@ -1550,10 +1580,10 @@ function columnLayout(node: ChartNode): ChartDrawing {
       if (node.kind === 'dot' && (!log || s.mean > 0)) line(cx - c.width * 0.25, y(s.mean), cx + c.width * 0.25, y(s.mean), 2)
       if (c.err > 0 && (node.kind === 'bar' || node.kind === 'dot' || node.kind === 'line') && (!log || s.mean > 0)) {
         // On a logarithmic axis an error bar that would reach zero or below stops at the bottom of the axis.
-        const low = log && s.mean - c.err <= 0 ? null : s.mean - c.err
+        const low = log && c.eLo <= 0 ? null : c.eLo
         nowPart(out, { what: 'error', at: c.index })
-        line(cx, low === null ? py + ph : y(low), cx, y(s.mean + c.err))
-        line(cx - cap, y(s.mean + c.err), cx + cap, y(s.mean + c.err))
+        line(cx, low === null ? py + ph : y(low), cx, y(c.eHi))
+        line(cx - cap, y(c.eHi), cx + cap, y(c.eHi))
         if (low !== null) line(cx - cap, y(low), cx + cap, y(low))
       }
     }
@@ -1606,7 +1636,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
         if (bar && !valueLabels.above) {
           const end = Math.max(top, Math.min(py + ph, y(c.s.mean)))
           const through = c.err > 0 || showPoints
-          const inside = through ? [c.s.mean - c.err, c.s.mean + c.err, ...(showPoints ? c.values : [])] : []
+          const inside = through ? [c.eLo, c.eHi, ...(showPoints ? c.values : [])] : []
           if (end <= base) {
             // A bar that stands on the base line.
             const lowest = Math.min(...inside)
@@ -1868,10 +1898,10 @@ export function curveMethodsText(node: ChartNode): string | null {
 }
 
 /** An axis for scattered values: it starts at zero when the smallest value is near zero, otherwise near the data. */
-function scatterAxis(values: number[], opts: { min?: number; max?: number; log?: boolean }): Axis {
+function scatterAxis(values: number[], opts: { min?: number; max?: number; log?: boolean; fromData?: boolean }): Axis {
   const lo = values.length ? Math.min(...values) : 0
   const hi = values.length ? Math.max(...values) : 1
-  return axisFor(opts.log || lo < 0 || lo > hi * 0.5 ? lo : 0, hi, opts)
+  return axisFor(opts.log || opts.fromData || lo < 0 || lo > hi * 0.5 ? lo : 0, hi, opts)
 }
 
 interface NameToPlace {
@@ -1974,14 +2004,43 @@ export function placeNames(names: NameToPlace[], marks: { cx: number; cy: number
 }
 
 /** A scatter chart: points on two numeric axes, with an optional straight line fitted to each series. */
-function scatterLayout(node: ChartNode): ChartDrawing {
+/**
+ * What another kind of chart drawn as a scatter chart adds (a standard curve): a curve through one
+ * series, given as a function of x, and notes of its own. `hidden` words the note about points a
+ * logarithmic axis cannot show.
+ */
+interface ScatterCurve {
+  series: number
+  at: (x: number) => number
+  /** Where the curve starts and ends along x. Absent = the smallest and largest x of its series. */
+  from?: number
+  to?: number
+}
+interface ScatterExtra {
+  /** A curve given by the kind of chart, through one series or through several. */
+  curve?: ScatterCurve
+  curves?: ScatterCurve[]
+  /** Values the x axis must reach besides the points (where a curve starts). */
+  xReach?: number[]
+  notes?: string[]
+  hidden?: (n: number) => string
+  /** Draw the curves only, not a point for every value (melting curves: a reading every half degree). */
+  noPoints?: boolean
+  /** The x axis runs over the data without reaching back to zero (temperatures). */
+  xFromData?: boolean
+  /** Points marked on the curves (a melting temperature), drawn larger and ringed. */
+  marks?: { series: number; x: number; y: number }[]
+}
+
+function scatterLayout(node: ChartNode, extra: ScatterExtra = {}): ChartDrawing {
   const out = empty()
   const { series, hidden } = scatterSeries(node)
   const all = series.flatMap((s) => s.points)
   // Reference lines are part of what the chart shows, so the axes reach them.
   const refs = all.length ? usableRefLines(node.refLines, 'scatter', !!node.xLog, !!node.yLog) : []
   const refAt = (axis: 'x' | 'y'): number[] => refs.filter((l) => l.axis === axis).map((l) => l.value)
-  const xAxis = scatterAxis([...all.map((p) => p[0]), ...refAt('x')], { min: node.xMin, max: node.xMax, log: node.xLog })
+  const xAxis = scatterAxis([...all.map((p) => p[0]), ...refAt('x'), ...(extra.xReach ?? []).filter((v) => usable(v) && (!node.xLog || v > 0))], { min: node.xMin, max: node.xMax, log: node.xLog, fromData: extra.xFromData })
+  const given = [...(extra.curve ? [extra.curve] : []), ...(extra.curves ?? [])]
 
   // The two ends of every fitted line, as values: the line runs across the x values of its own
   // series only (it says nothing beyond them), and the value axis is made to hold it.
@@ -1996,7 +2055,19 @@ function scatterLayout(node: ChartNode): ChartDrawing {
   const dosed = fitsDose(node)
   const lineEnds = dosed ? series.map(() => []) : series.map(fitEnds).map((ends) => (ends.every(([, v]) => usable(v) && (!node.yLog || v > 0)) ? ends : []))
   // A dose-response curve as a run of points across the doses of its own series, evenly spaced on the logarithm of the dose.
-  const curves: [number, number][][] = series.map((s) => {
+  const curves: [number, number][][] = series.map((s, i) => {
+    const mine = given.find((c) => c.series === i)
+    if (mine && s.points.length) {
+      // A curve given by the kind of chart: across the x values of its series (or where it says), evenly spaced as the axis is.
+      const xs = s.points.map((p) => p[0]).filter((v) => !node.xLog || v > 0)
+      if (!xs.length) return []
+      const lo = mine.from !== undefined && usable(mine.from) && (!node.xLog || mine.from > 0) ? mine.from : Math.min(...xs)
+      const hi = mine.to !== undefined && usable(mine.to) && mine.to > lo ? mine.to : Math.max(...xs)
+      const steps = 120
+      return Array.from({ length: steps + 1 }, (_, k) => (node.xLog ? 10 ** (Math.log10(lo) + ((Math.log10(hi) - Math.log10(lo)) * k) / steps) : lo + ((hi - lo) * k) / steps))
+        .map((vx) => [vx, mine.at(vx)] as [number, number])
+        .filter(([, v]) => usable(v) && (!node.yLog || v > 0))
+    }
     if (!dosed || !s.dose) return []
     const doses = s.points.map((p) => p[0]).filter((v) => v > 0)
     const [from, to] = [Math.log10(Math.min(...doses)), Math.log10(Math.max(...doses))]
@@ -2021,12 +2092,14 @@ function scatterLayout(node: ChartNode): ChartDrawing {
     if (beyond.length) out.notes.push(`The ${beyond.some((s) => s.dose!.hill < 0) ? 'IC50' : 'EC50'} of ${listed(beyond.map((s) => s.name || 'the curve'))} lies outside the doses that were tested: it is an estimate beyond the data.`)
     if (!node.xLog && series.some((s) => s.dose)) out.notes.push('A dose-response curve is usually shown on a logarithmic x axis: write “log x axis” in the box above, or tick it under the x axis.')
   }
-  if (hidden) out.notes.push(`${hidden} ${hidden === 1 ? 'point is' : 'points are'} zero or negative on a logarithmic axis: ${hidden === 1 ? 'it' : 'they'} cannot be shown, and the fitted line is worked out without ${hidden === 1 ? 'it' : 'them'}.`)
+  out.notes.push(...(extra.notes ?? []))
+  if (hidden) out.notes.push(extra.hidden ? extra.hidden(hidden) : `${hidden} ${hidden === 1 ? 'point is' : 'points are'} zero or negative on a logarithmic axis: ${hidden === 1 ? 'it' : 'they'} cannot be shown, and the fitted line is worked out without ${hidden === 1 ? 'it' : 'them'}.`)
 
   // The last number along the bottom is centred under the end of the axis: keep room for half of it.
   const fs = node.fontSize ?? CHART_FONT
   const widest = Math.max(...xAxis.ticks.map((t) => textWidth(t.label, fs)))
   const f = frame(node, out, yAxis, series.length > 1 ? series.map((s) => ({ name: s.name, colour: s.colour, shape: s.shape ?? ('circle' as const) })) : [], Math.max(fs, widest / 2 + 2), () => 1)
+  AXES.set(out, { ...AXES.get(out), x: [xAxis.min, xAxis.max] })
   const { words, rule, px, py, pw, ph } = f
   const x = (v: number): number => px + xAxis.at(v) * pw
   const y = (v: number): number => py + (1 - yAxis.at(v)) * ph
@@ -2073,7 +2146,12 @@ function scatterLayout(node: ChartNode): ChartDrawing {
     const curve = curves[i].map(([vx, vy]) => [x(vx), y(vy)]).filter((p) => p.every((v) => Number.isFinite(v)))
     if (curve.length > 1) out.paths.push({ d: `M${curve.map((p) => `${r1(p[0])} ${r1(p[1])}`).join('L')}`, stroke: s.colour, width: 2 })
     nowPart(out, { what: 'group', at: places[i] ?? i })
-    for (const [vx, vy] of s.points) out.circles.push({ cx: r1(x(vx)), cy: r1(y(vy)), r: r1(dot * s.scale), fill: s.colour, ...(s.shape ? { shape: s.shape } : {}), ...s.solid })
+    for (const m of extra.marks ?? []) {
+      if (m.series !== i) continue
+      const [cx, cy] = [x(m.x), y(m.y)]
+      if (Number.isFinite(cx) && Number.isFinite(cy)) out.circles.push({ cx: r1(cx), cy: r1(cy), r: r1(dot * 1.6), fill: s.colour, ring: true })
+    }
+    if (!extra.noPoints) for (const [vx, vy] of s.points) out.circles.push({ cx: r1(x(vx)), cy: r1(y(vy)), r: r1(dot * s.scale), fill: s.colour, ...(s.shape ? { shape: s.shape } : {}), ...s.solid })
   })
 
   // The correlation of each series, written in an upper corner of the plot: the left one, unless the legend stands there.
@@ -2591,8 +2669,581 @@ function vennLayout(node: ChartNode): ChartDrawing {
 }
 
 export function chartLayout(node: ChartNode): ChartDrawing {
+  if (node.facet) {
+    const panels = facetLayout(node)
+    if (panels) return panels
+  }
+  if (node.kind === 'standard') return standardLayout(node)
+  if (node.kind === 'qpcr') return qpcrLayout(node)
+  if (isKinetics(node)) return kineticsLayout(node)
+  if (isBinding(node)) return bindingLayout(node)
+  if (isMelt(node)) return meltLayout(node)
   if (isSurvival(node)) return survivalLayout(node)
   if (node.kind === 'heatmap') return heatmapLayout(node)
   if (node.kind === 'venn') return vennLayout(node)
   return node.kind === 'scatter' ? scatterLayout(node) : node.kind === 'pie' ? pieLayout(node) : columnLayout(node)
+}
+
+/** At most this many small panels are drawn. */
+export const MAX_FACETS = 24
+const FACET_KINDS: ChartKind[] = ['bar', 'dot', 'box', 'violin', 'line', 'scatter']
+
+/**
+ * The panels a chart split into small panels holds, each with its name and the places of its
+ * groups in the table: one per category of a grouped chart (or per series), one per series of a
+ * scatter chart. Null when the chart cannot be split: a chart of one factor, an analysis whose
+ * fit takes every series together (kinetics, binding, melting curves, survival), or another kind.
+ */
+export function facetsOf(node: ChartNode): { name: string; groups: number[] }[] | null {
+  if (!FACET_KINDS.includes(node.kind)) return null
+  const drawn = drawnGroups(node)
+  if (node.kind === 'scatter') {
+    if (node.survival || node.kinetics || node.binding || node.melt) return null
+    return drawn.length >= 2 ? drawn.map((c) => ({ name: c.group.name, groups: [c.index] })) : null
+  }
+  if (!isGrouped(node)) return null
+  if (node.facet?.by === 'series') return chartSeries(node).map((s) => ({ name: s.name, groups: s.groups }))
+  return unique(drawn.map((c) => c.group.category ?? '')).map((cat) => ({ name: cat, groups: drawn.filter((c) => (c.group.category ?? '') === cat).map((c) => c.index) }))
+}
+
+/** Whether a chart can be drawn as small panels. */
+export const canFacet = (node: ChartNode): boolean => (facetsOf({ ...node, facet: node.facet ?? {} })?.length ?? 0) >= 2
+
+/** One small panel: the chart with only the groups of the panel, its name as the title, no legend and no axis titles (the whole chart writes those once). */
+function facetNode(node: ChartNode, groups: number[], name: string, w: number, h: number, range: { x?: [number, number]; y?: [number, number] }): { sub: ChartNode; brackets: number[] } {
+  const series = chartSeries(node)
+  const bySeries = node.kind !== 'scatter' && node.facet?.by === 'series'
+  const place = new Map(groups.map((g, i) => [g, i]))
+  const own = groups.map((i) => {
+    const { category, color: _c, shape: _s, pointSize: _ps, pointOpacity: _po, ...g } = node.groups[i]
+    // Colours, marks and sizes are those of the series in the whole chart, so they agree across panels.
+    const s = series.find((x) => x.groups.includes(i))
+    return { ...g, ...(bySeries ? { name: category ?? '' } : {}), color: s?.colour ?? groupColour(node.groups[i], i, node.palette), ...(s?.shape ? { shape: s.shape } : {}), ...(s?.pointSize !== undefined ? { pointSize: s.pointSize } : {}), ...(s?.pointOpacity !== undefined ? { pointOpacity: s.pointOpacity } : {}) }
+  })
+  // A bracket stays when both its groups are in the panel, with the label the whole chart gives it.
+  const kept: number[] = []
+  const brackets: ChartBracket[] = []
+  ;(node.brackets ?? []).forEach((b, k) => {
+    const from = place.get(b.from)
+    const to = place.get(b.to)
+    if (from === undefined || to === undefined) return
+    kept.push(k)
+    brackets.push({ from, to, label: bracketLabel(node, b) })
+  })
+  const { facet: _f, test: _t, brackets: _b, xLabel: _x, yLabel: _y, title: _ti, legend: _l, ...rest } = node
+  const sub: ChartNode = {
+    ...rest,
+    groups: own,
+    ...(brackets.length ? { brackets } : {}),
+    title: name || '(no name)',
+    legend: 'none',
+    w,
+    h,
+    ...(range.y ? { yMin: range.y[0], yMax: range.y[1] } : {}),
+    ...(range.x ? { xMin: range.x[0], xMax: range.x[1] } : {}),
+  }
+  return { sub, brackets: kept }
+}
+
+/** Give the marks of a panel the parts of the whole chart: its groups and brackets by their places in the whole, its title as the panel. */
+function facetParts(drawing: ChartDrawing, groups: number[], brackets: number[], panel: number): void {
+  for (const key of MARK_LISTS) {
+    for (const mark of drawing[key] as object[]) {
+      const part = PARTS.get(mark)
+      if (!part) continue
+      const at = part.at
+      const mapped: ChartPart | null =
+        part.what === 'group' || part.what === 'error' || part.what === 'fit'
+          ? at === undefined || groups[at] === undefined ? null : { what: part.what, at: groups[at] }
+          : part.what === 'bracket'
+            ? at === undefined || brackets[at] === undefined ? null : { what: 'bracket', at: brackets[at] }
+            : part.what === 'title'
+              ? { what: 'facet', at: panel }
+              : part.what === 'legend' || part.what === 'category'
+                ? null
+                : part
+      if (mapped) PARTS.set(mark, mapped)
+      else PARTS.delete(mark)
+    }
+  }
+}
+
+/** A chart drawn as small panels in a grid, with one title, one legend and the axis titles once. */
+function facetLayout(node: ChartNode): ChartDrawing | null {
+  const all = facetsOf(node)
+  if (!all || all.length < 2) return null
+  const facets = all.slice(0, MAX_FACETS)
+  const fs = node.fontSize ?? CHART_FONT
+  const out = empty()
+  const words = (text: string, x: number, top: number, extra: Partial<TextNode> = {}): TextNode => ({ id: node.id, type: 'text', x: r1(x), y: r1(top), text, fontSize: fs, fill: INK, align: 'center', rotation: 0, ...extra })
+  const widthOf = (text: string): number => measureText(words(text, 0, 0)).w
+
+  // The legend names the series when panels hold several; a panel of one series is named by its title.
+  const series = chartSeries(node)
+  const legend = node.kind !== 'scatter' && node.facet?.by !== 'series' && series.length > 1 ? series : []
+  const place = legend.length ? (node.legend === 'top' || node.legend === 'bottom' || node.legend === 'none' ? node.legend : 'right') : 'none'
+  const mark = fs * 0.8 + 5
+  const widest = legend.length ? Math.max(...legend.map((l) => widthOf(l.name))) : 0
+  const legendW = place === 'right' ? widest + mark + 12 : 0
+  const legendH = place === 'top' || place === 'bottom' ? fs * 1.6 : 0
+  const left = node.yLabel ? fs * 1.7 : 0
+  const top = (node.title ? fs * 2 : 0) + (place === 'top' ? legendH : 0)
+  const bottom = (node.xLabel ? fs * 1.6 : 0) + (place === 'bottom' ? legendH : 0)
+  const gridW = Math.max(20, node.w - left - legendW)
+  const gridH = Math.max(20, node.h - top - bottom)
+  const n = facets.length
+  const cols = Math.min(n, Math.max(1, Math.round(node.facet?.cols ?? (n <= 3 ? n : Math.ceil(Math.sqrt(n))))))
+  const rows = Math.ceil(n / cols)
+  const gap = fs * 0.6
+  const pw = Math.max(10, (gridW - gap * (cols - 1)) / cols)
+  const ph = Math.max(10, (gridH - gap * (rows - 1)) / rows)
+
+  // One range for every panel unless each is to have its own: the panels are laid out once on
+  // their own and then again over the widest range any of them needed. A scatter chart's x axis is
+  // always shared.
+  const span = (key: 'x' | 'y', drawings: ChartDrawing[]): [number, number] | undefined => {
+    const r = drawings.map((d) => AXES.get(d)?.[key]).filter((v): v is [number, number] => !!v)
+    return r.length ? [Math.min(...r.map((v) => v[0])), Math.max(...r.map((v) => v[1]))] : undefined
+  }
+  const free = !!node.facet?.free
+  const yEnds = usableEnds(node.yMin, node.yMax, !!node.yLog)
+  const xEnds = usableEnds(node.xMin, node.xMax, !!node.xLog)
+  const ownRange = [yEnds.min, yEnds.max, ...(node.kind === 'scatter' ? [xEnds.min, xEnds.max] : [])].some((v) => v !== undefined)
+  // With an axis of its own for every panel there is nothing to share, except a scatter chart's x axis.
+  const first = free && node.kind !== 'scatter' ? [] : facets.map((f) => chartLayout(facetNode(node, f.groups, f.name, pw, ph, {}).sub))
+  const range = { ...(free ? {} : { y: span('y', first) }), ...(node.kind === 'scatter' ? { x: span('x', first) } : {}) }
+
+  out.panels = facets.map((f, k) => {
+    const { sub, brackets } = facetNode(node, f.groups, f.name, pw, ph, range)
+    const drawing = chartLayout(sub)
+    // A range shared by the panels holds the data of every one: only a range the scientist set cuts marks off.
+    if (!ownRange) drawing.clipped = false
+    facetParts(drawing, f.groups, brackets, k)
+    return { x: r1(left + (k % cols) * (pw + gap)), y: r1(top + Math.floor(k / cols) * (ph + gap)), w: r1(pw), h: r1(ph), drawing }
+  })
+  out.clip = { x: 0, y: 0, w: node.w, h: node.h }
+
+  // Notes once, not once per panel.
+  out.notes = unique(out.panels.flatMap((p) => p.drawing.notes))
+  if (all.length > MAX_FACETS) out.notes.push(`At most ${MAX_FACETS} panels are drawn: the other ${all.length - MAX_FACETS} are left out.`)
+  const across = (node.brackets ?? []).filter((b) => !facets.some((f) => f.groups.includes(b.from) && f.groups.includes(b.to))).length
+  if (across) out.notes.push(`${across} ${across === 1 ? 'bracket joins groups' : 'brackets join groups'} in different panels and ${across === 1 ? 'is' : 'are'} not drawn.`)
+
+  if (node.title) out.texts.push({ ...words(node.title, left + gridW / 2, 2, { bold: true }), part: { what: 'title' } })
+  if (node.yLabel) {
+    const label = words(node.yLabel, fs * 0.9, 0, { rotation: -90 })
+    out.texts.push({ ...label, y: r1(top + gridH / 2 - measureText(label).h / 2), part: { what: 'yTitle' } })
+  }
+  if (node.xLabel) out.texts.push({ ...words(node.xLabel, left + gridW / 2, top + gridH + fs * 0.3), part: { what: 'xTitle' } })
+  // The legend: a column at the right, or one row centred above or below the panels.
+  const rowWidth = legend.reduce((a, l, i) => a + mark + widthOf(l.name) + (i ? fs * 1.2 : 0), 0)
+  let x = place === 'right' ? left + gridW + 8 : left + Math.max(0, (gridW - rowWidth) / 2)
+  legend.forEach((entry, i) => {
+    const y = place === 'right' ? top + i * fs * 1.5 : place === 'top' ? (node.title ? fs * 2 : fs * 0.2) : top + gridH + (node.xLabel ? fs * 1.6 : 0) + fs * 0.3
+    nowPart(out, { what: 'legend', at: i })
+    const point = node.kind === 'dot' || node.kind === 'line'
+    out.swatches.push({ x: r1(x), y: r1(y + fs * 0.2), size: r1(fs * 0.8), fill: entry.colour, ...(point ? { shape: entry.shape ?? 'circle' } : {}) })
+    out.texts.push(words(entry.name, x + mark, y, { align: 'left' }))
+    if (place !== 'right') x += mark + widthOf(entry.name) + fs * 1.2
+  })
+  nowPart(out, null)
+  return out
+}
+
+/**
+ * An axis that starts at zero when the values dip only a hair below it (a blank subtracted, a rate
+ * of −0.01 with no substrate): reaching down to the next step below zero for that hides the foot of
+ * the curve. Not when the scientist set a range, or a value lies clearly below zero (2 % of the top).
+ */
+function zeroFloor(node: ChartNode, groups: ChartGroup[]): { yMin?: number } {
+  const ys = groups.flatMap((g) => g.values).filter((v) => usable(v))
+  const top = Math.max(0, ...ys)
+  return !node.yLog && node.yMin === undefined && ys.length && Math.min(...ys) < 0 && Math.min(...ys) >= -0.02 * top ? { yMin: 0 } : {}
+}
+
+/** Enzyme kinetics: a scatter chart whose series are rates against substrate concentrations. */
+export const isKinetics = (node: ChartNode): boolean => node.kind === 'scatter' && !!node.kinetics && !node.survival
+
+const kineticsResults = new WeakMap<ChartGroup[], Map<string, KineticsResult>>()
+
+/** The fits of a kinetics chart: Michaelis–Menten for each series, or one inhibition model over all of them. */
+export function kineticsOf(node: ChartNode): KineticsResult {
+  const model = node.kinetics?.model ?? 'mm'
+  const key = `${model}|${node.groups.map((g) => g.name).join('\u0001')}`
+  let known = kineticsResults.get(node.groups)
+  if (!known) kineticsResults.set(node.groups, (known = new Map()))
+  const done = known.get(key)
+  if (done) return done
+  const result = kinetics(kineticsColumns(node), model)
+  known.set(key, result)
+  return result
+}
+
+/** The fit that draws series i: its own for Michaelis–Menten, the one shared fit for an inhibition model. */
+export function kineticsFitFor(node: ChartNode, result: KineticsResult, i: number): KineticsFit | null {
+  const f = node.kinetics?.model ? result.fits[0] : result.fits[i]
+  return isFit(f) ? f : null
+}
+
+/**
+ * Enzyme kinetics, drawn as a scatter chart: the rates as points and the fitted curve through each
+ * series, from no substrate to the most. As a Lineweaver–Burk plot, 1/v against 1/[S] with the
+ * fitted curves as straight lines reaching back to where they cross the x axis (−1/Km), for the
+ * eye only: the fit is never made on the reciprocals.
+ */
+function kineticsLayout(node: ChartNode): ChartDrawing {
+  const r = kineticsOf(node)
+  const columns = kineticsColumns(node)
+  const inhibition = !!node.kinetics?.model
+  const at = (i: number): number => (inhibition ? (columns[i]?.inhibitor ?? 0) : 0)
+  const notes = [...r.notices]
+  const failed = node.kinetics?.model ? (isFit(r.fits[0]) ? [] : [r.fits[0]?.reason ?? '']) : r.fits.flatMap((f, i) => (f && !isFit(f) && node.groups[i]?.values.length ? [`No curve for ${node.groups[i].name || 'the rates'}: ${f.reason}`] : []))
+  notes.push(...failed.filter(Boolean))
+  const plain = { ...node, fit: undefined, curve: undefined, corr: undefined, band: undefined, doseBottom: undefined, doseTop: undefined }
+  if (!node.kinetics?.lineweaver) {
+    const curves = node.groups.map((_, i) => {
+      const fit = kineticsFitFor(node, r, i)
+      return fit ? { series: i, at: (x: number) => fit.predict(x, at(i)), from: node.xLog ? undefined : 0 } : null
+    })
+    return scatterLayout(
+      { ...plain, ...zeroFloor(node, node.groups), ...(node.xLabel ? {} : { xLabel: '[Substrate]' }), ...(node.yLabel ? {} : { yLabel: 'Rate' }) },
+      { curves: curves.filter((c): c is NonNullable<typeof c> => !!c), notes },
+    )
+  }
+  // Lineweaver–Burk: every point as reciprocals; a substrate or rate of zero or below has none.
+  let dropped = 0
+  const groups = node.groups.map((g) => {
+    const xs: number[] = []
+    const values: number[] = []
+    g.values.forEach((v, k) => {
+      const sx = g.xs?.[k]
+      // No substrate has no reciprocal and no place on this plot; that is expected, not worth a notice.
+      if (sx === undefined || sx === 0) return
+      if (!(sx > 0 && v > 0)) {
+        dropped++
+        return
+      }
+      xs.push(1 / sx)
+      values.push(1 / v)
+    })
+    return { ...g, xs, values, labels: undefined, rows: undefined }
+  })
+  if (dropped) notes.push(`${dropped} ${dropped === 1 ? 'point has' : 'points have'} a rate of zero or below, which has no reciprocal: ${dropped === 1 ? 'it is' : 'they are'} left out of this plot but not of the fit.`)
+  const reach: number[] = []
+  const curves = groups.map((g, i) => {
+    const fit = kineticsFitFor(node, r, i)
+    if (!fit || !g.xs.length) return null
+    const { vmax, km } = apparent(fit, at(i))
+    if (!(vmax > 0 && km > 0)) return null
+    const from = -1 / km
+    reach.push(from)
+    return { series: i, at: (x: number) => (1 + km * x) / vmax, from, to: Math.max(...g.xs) }
+  })
+  return scatterLayout(
+    {
+      ...plain,
+      groups,
+      xLog: undefined,
+      yLog: undefined,
+      xLabel: node.xLabel ? `1 / ${node.xLabel}` : '1 / [Substrate]',
+      yLabel: node.yLabel ? `1 / ${node.yLabel}` : '1 / Rate',
+      // The lines at values belong to the plain plot; here the axes through zero are drawn instead.
+      refLines: [{ axis: 'x', value: 0, dash: 'solid' }, { axis: 'y', value: 0, dash: 'solid' }],
+      pointNames: undefined,
+    },
+    { curves: curves.filter((c): c is NonNullable<typeof c> => !!c), xReach: reach, notes },
+  )
+}
+
+/** Standard curves already worked out, by the chart's table: the curve is fitted once per change of numbers or settings, not at every move. */
+const standardResults = new WeakMap<ChartGroup[], Map<string, StandardResult>>()
+
+/** The curve of a standard curve chart, its standards read back and its samples read off it. */
+export function standardOf(node: ChartNode): StandardResult {
+  const key = JSON.stringify(node.standard ?? {})
+  let known = standardResults.get(node.groups)
+  if (!known) standardResults.set(node.groups, (known = new Map()))
+  const done = known.get(key)
+  if (done) return done
+  const table = standardTableOf(node)
+  const result = standardCurve({ standards: table.standards, samples: table.samples, model: node.standard?.model ?? 'linear', blank: !!node.standard?.blank })
+  known.set(key, result)
+  return result
+}
+
+/**
+ * A standard curve, drawn as a scatter chart: the standards as points with the fitted curve
+ * through them, and every sample that could be read as a point on the curve, at the
+ * concentration in the well (before its dilution is taken into account), named as in the table.
+ */
+function standardLayout(node: ChartNode): ChartDrawing {
+  const r = standardOf(node)
+  const minus = r.blank ?? 0
+  const std = node.groups[0] ?? { name: 'Standards', values: [], xs: [] }
+  const table = standardTableOf(node)
+  const read = r.fit
+    ? r.samples
+        .map((s, k) => ({ s, dilution: table.samples[k]?.dilution ?? 1 }))
+        .filter(({ s }) => s.conc !== null && s.flag !== 'none')
+        .map(({ s, dilution }) => ({ name: s.name, x: s.conc! / dilution, y: r.fit!.predict(s.conc! / dilution) }))
+        .filter((p) => usable(p.x) && usable(p.y))
+    : []
+  const second = node.groups[1]
+  const groups: ChartGroup[] = [
+    { name: std.name || 'Standards', ...(std.color ? { color: std.color } : {}), ...(std.shape ? { shape: std.shape } : {}), values: std.values.map((v) => v - minus), xs: std.xs ?? [] },
+    ...(read.length ? [{ name: second?.name || 'Samples', color: second?.color ?? paletteColours(node.palette)[1], shape: second?.shape ?? ('diamond' as const), values: read.map((p) => p.y), xs: read.map((p) => p.x), labels: read.map((p) => p.name) }] : []),
+  ]
+  // The curve's own notices count the samples outside the standards; the chart names them instead.
+  const notes = r.notices.filter((n) => !/outside the standards:|the curve never reaches/.test(n))
+  if (r.reason) notes.push(r.reason)
+  const away = r.samples.filter((s) => s.flag === 'below' || s.flag === 'above').map((s) => s.name)
+  if (away.length) notes.push(`${listed(away.slice(0, 6))}${away.length > 6 ? ` and ${away.length - 6} more` : ''} ${away.length === 1 ? 'lies' : 'lie'} outside the range of the standards: ${away.length === 1 ? 'its' : 'their'} concentration is an extrapolation. Dilute and measure again for a reliable value.`)
+  const none = r.samples.filter((s) => s.flag === 'none').map((s) => s.name)
+  if (none.length && r.fit) notes.push(`${listed(none.slice(0, 6))}${none.length > 6 ? ` and ${none.length - 6} more` : ''} cannot be read off the curve: the signal lies beyond what the curve can reach.`)
+  // A blank subtracted from replicates leaves the lowest standards a hair below zero.
+  const floor = zeroFloor(node, groups)
+  return scatterLayout(
+    { ...node, ...floor, kind: 'scatter', groups, fit: undefined, curve: undefined, corr: undefined, band: undefined, survival: undefined, ...(node.yLabel ? {} : { yLabel: minus ? 'Signal, blank subtracted' : 'Signal' }), ...(node.xLabel ? {} : { xLabel: 'Concentration' }) },
+    {
+      curve: r.fit ? { series: 0, at: (x) => r.fit!.predict(x) } : undefined,
+      notes,
+      hidden: (n) => `${n} ${n === 1 ? 'standard is' : 'standards are'} at zero, which a logarithmic axis cannot show; ${n === 1 ? 'it is' : 'they are'} still part of the fit.`,
+    },
+  )
+}
+
+/** qPCR analyses already worked out, by the chart's table. */
+const qpcrResults = new WeakMap<ChartGroup[], Map<string, QpcrResult>>()
+
+/** The fold changes of a qPCR chart, worked out from its wells and settings. */
+export function qpcrOf(node: ChartNode): QpcrResult {
+  const key = JSON.stringify([node.qpcr ?? {}, node.error ?? ''])
+  let known = qpcrResults.get(node.groups)
+  if (!known) qpcrResults.set(node.groups, (known = new Map()))
+  const done = known.get(key)
+  if (done) return done
+  const result = analyseQpcr(qpcrWells(node.groups), node.qpcr ?? {}, node.error)
+  known.set(key, result)
+  return result
+}
+
+/**
+ * A qPCR analysis, drawn as grouped bars: one category per gene, one bar per condition, the bar
+ * the fold change of the condition's mean ΔΔCt (2^−ΔΔCt, the geometric mean of the samples' fold
+ * changes), its error bar from 2^−(ΔΔCt + s) to 2^−(ΔΔCt − s), and a dot for every sample. On the
+ * log₂ scale the same, as −ΔΔCt ± s. The bar layout draws it; only the heights and the ends of the
+ * error bars are given here.
+ */
+function qpcrLayout(node: ChartNode): ChartDrawing {
+  const r = qpcrOf(node)
+  const log2 = !!node.qpcr?.log2
+  const groups: ChartGroup[] = []
+  const shown: { mean: number; low: number | null; high: number | null }[] = []
+  // The test of each condition against the control, over its bar and the control's, when asked for.
+  const marks = node.qpcr?.marks
+  const brackets: ChartBracket[] = []
+  for (const gene of r.genes) {
+    const first = groups.length
+    for (const c of gene.conditions) {
+      const own = gene.samples.filter((s) => s.condition === c.condition)
+      if (marks && c.t && gene.conditions[0].condition === r.control) brackets.push({ from: first, to: groups.length, label: marks === 'stars' ? stars(c.t.adjusted) : pText(c.t.adjusted) })
+      groups.push({ name: c.condition, category: gene.target, values: own.map((s) => (log2 ? s.log2fc : 2 ** s.log2fc)) })
+      shown.push(
+        log2
+          ? { mean: -c.ddct, low: c.err === null ? null : -c.ddct - c.err, high: c.err === null ? null : -c.ddct + c.err }
+          : { mean: c.fold, low: c.low, high: c.high },
+      )
+    }
+  }
+  const drawn: ChartNode = {
+    ...node,
+    kind: 'bar',
+    groups,
+    brackets: brackets.length ? brackets : undefined,
+    test: undefined,
+    stacked: undefined,
+    yLabel: node.yLabel ?? (log2 ? 'log_{2} fold change' : 'Fold change'),
+  }
+  const out = columnLayout(drawn, (i) => shown[i] ?? null)
+  out.notes = [...r.notices, ...out.notes]
+  if (marks && r.genes.length && !brackets.length) out.notes.push('No condition could be tested against the control, so no result is written on the chart.')
+  return out
+}
+
+/** Saturation binding: a scatter chart whose series are bound ligand against free concentrations. */
+export const isBinding = (node: ChartNode): boolean => node.kind === 'scatter' && !!node.binding && !node.survival && !node.kinetics
+
+const bindingResults = new WeakMap<ChartGroup[], Map<string, BindingResult>>()
+
+/** The fits of a binding chart: one per series, or the one fit of total and nonspecific binding. */
+export function bindingOf(node: ChartNode): BindingResult {
+  const key = `${bindingModel(node.binding)}|${node.groups.map((g) => g.name).join('\u0001')}`
+  let known = bindingResults.get(node.groups)
+  if (!known) bindingResults.set(node.groups, (known = new Map()))
+  const done = known.get(key)
+  if (done) return done
+  const result = binding(bindingColumns(node), node.binding)
+  known.set(key, result)
+  return result
+}
+
+/** The fit that draws series i, and whether it draws it as total binding; null when it has none. */
+export function bindingFitFor(r: BindingResult, i: number): { fit: BindingFit; total: boolean } | null {
+  if (r.pair) {
+    const f = r.fits[0]
+    if (!isBindingFit(f) || (i !== r.pair.total && i !== r.pair.nonspecific)) return null
+    return { fit: f, total: i === r.pair.total }
+  }
+  const f = r.fits[i]
+  return isBindingFit(f) ? { fit: f, total: true } : null
+}
+
+/**
+ * Saturation binding, drawn as a scatter chart: the bound values as points with the fitted curve
+ * through each series from no ligand on (the nonspecific binding of the total model as its straight
+ * line). As a Scatchard plot, bound/free against bound with the fitted curve carried over as its
+ * straight line, for the eye only.
+ */
+function bindingLayout(node: ChartNode): ChartDrawing {
+  const r = bindingOf(node)
+  const notes = [...r.notices]
+  if (r.pair) {
+    if (!isBindingFit(r.fits[0])) notes.push(`No curve: ${r.fits[0]?.reason ?? ''}`)
+  } else r.fits.forEach((f, i) => f && !isBindingFit(f) && notes.push(`No curve for ${node.groups[i]?.name || 'the values'}: ${f.reason}`))
+  const plain = { ...node, fit: undefined, curve: undefined, corr: undefined, band: undefined, doseBottom: undefined, doseTop: undefined }
+  const scatchard = !!node.binding?.scatchard && bindingModel(node.binding) === 'specific'
+  if (!scatchard) {
+    const curves = node.groups.map((_, i) => {
+      const got = bindingFitFor(r, i)
+      return got ? { series: i, at: (x: number) => got.fit.predict(x, got.total), from: node.xLog ? undefined : 0 } : null
+    })
+    return scatterLayout(
+      { ...plain, ...zeroFloor(node, node.groups), ...(node.xLabel ? {} : { xLabel: '[Ligand]' }), ...(node.yLabel ? {} : { yLabel: 'Bound' }) },
+      { curves: curves.filter((c): c is NonNullable<typeof c> => !!c), notes },
+    )
+  }
+  // Scatchard: bound/free against bound; a concentration of zero has no ratio.
+  const groups = node.groups.map((g) => {
+    const xs: number[] = []
+    const values: number[] = []
+    g.values.forEach((v, k) => {
+      const free = g.xs?.[k]
+      if (free === undefined || !(free > 0)) return
+      xs.push(v)
+      values.push(v / free)
+    })
+    return { ...g, xs, values, labels: undefined, rows: undefined }
+  })
+  const curves = groups.map((g, i) => {
+    const got = bindingFitFor(r, i)
+    const bmax = got?.fit.params.bmax?.value
+    const kd = got?.fit.params.kd?.value
+    if (!got || !g.xs.length || !(bmax! > 0 && kd! > 0)) return null
+    return { series: i, at: (b: number) => (bmax! - b) / kd!, from: 0, to: bmax! }
+  })
+  return scatterLayout(
+    {
+      ...plain,
+      groups,
+      xLog: undefined,
+      yLog: undefined,
+      xLabel: node.yLabel || 'Bound',
+      yLabel: node.yLabel ? `${node.yLabel} / free` : 'Bound / free',
+      refLines: undefined,
+      pointNames: undefined,
+      xMin: undefined,
+      xMax: undefined,
+      yMin: undefined,
+      yMax: undefined,
+    },
+    { curves: curves.filter((c): c is NonNullable<typeof c> => !!c), xReach: [0], notes },
+  )
+}
+
+/** Melting curves: a scatter chart whose series are signals against temperature. */
+export const isMelt = (node: ChartNode): boolean => node.kind === 'scatter' && !!node.melt && !node.survival && !node.kinetics && !node.binding
+
+const meltResults = new WeakMap<ChartGroup[], Map<string, MeltResult>>()
+
+/** The melting temperatures of a melting chart, worked out once per change of numbers or settings. */
+export function meltOf(node: ChartNode): MeltResult {
+  const { view: _v, normalise: _n, ...fitting } = node.melt ?? {}
+  const key = `${JSON.stringify(fitting)}|${node.groups.map((g) => g.name).join('\u0001')}`
+  let known = meltResults.get(node.groups)
+  if (!known) meltResults.set(node.groups, (known = new Map()))
+  const done = known.get(key)
+  if (done) return done
+  const result = melt(meltColumns(node), fitting)
+  known.set(key, result)
+  return result
+}
+
+/** The value of a run of points between them, by straight lines; NaN outside it. */
+function along(p: { t: number; y: number }[], t: number): number {
+  if (!p.length || t < p[0].t || t > p[p.length - 1].t) return NaN
+  let k = 1
+  while (k < p.length - 1 && p[k].t < t) k++
+  const [a, b] = [p[k - 1], p[k]]
+  return b.t === a.t ? a.y : a.y + ((b.y - a.y) * (t - a.t)) / (b.t - a.t)
+}
+
+/** The two levels a curve is scaled between to run from 0 to 1: its fitted plateaus, or its signal at the ends of the transition. */
+function meltLevels(fit: MeltFit | null, p: { t: number; y: number }[]): [number, number] | null {
+  if (fit?.bottom !== undefined && fit.top !== undefined) return fit.top !== fit.bottom ? [fit.bottom, fit.top] : null
+  if (!fit || !p.length) {
+    if (p.length < 2) return null
+    const ys = p.map((q) => q.y)
+    return Math.max(...ys) > Math.min(...ys) ? [Math.min(...ys), Math.max(...ys)] : null
+  }
+  const [a, b] = [along(p, fit.window[0]), along(p, fit.window[1])]
+  return Number.isFinite(a) && Number.isFinite(b) && a !== b ? [a, b] : null
+}
+
+/**
+ * Melting curves, drawn as lines through the mean signal at every temperature, with the melting
+ * temperature of each curve marked on it. Scaled, every curve runs from 0 to 1 between its
+ * plateaus. As derivatives, the rate of change of every curve (turned so that its peak points up),
+ * with the Tm marked on its peak: the melt peaks of a qPCR machine.
+ */
+function meltLayout(node: ChartNode): ChartDrawing {
+  const r = meltOf(node)
+  const notes = [...r.notices]
+  const plain = { ...node, fit: undefined, curve: undefined, corr: undefined, band: undefined, doseBottom: undefined, doseTop: undefined, pointNames: undefined }
+  const fits = r.fits.map((f) => (isMeltFit(f) ? f : null))
+  const marks: { series: number; x: number; y: number }[] = []
+  const curves: ScatterCurve[] = []
+  if (node.melt?.view === 'derivative') {
+    const sign = fits.find((f) => f)?.direction ?? 1
+    const groups = node.groups.map((g, i) => {
+      const d = r.derivatives[i]
+      const fit = fits[i]
+      const dir = fit?.direction ?? sign
+      const p = d ? d.t.map((t, k) => ({ t, y: dir * d.d[k] })) : []
+      if (p.length > 1) curves.push({ series: i, at: (t) => along(p, t) })
+      if (fit && p.length) marks.push({ series: i, x: fit.tm.value, y: along(p, fit.tm.value) })
+      return { ...g, xs: p.map((q) => q.t), values: p.map((q) => q.y), labels: undefined, rows: undefined }
+    })
+    return scatterLayout(
+      { ...plain, groups, yLog: undefined, refLines: undefined, yMin: undefined, yMax: undefined, ...(node.xLabel ? {} : { xLabel: 'Temperature (°C)' }), yLabel: sign < 0 ? '−dF/dT' : 'dF/dT' },
+      { curves, marks: marks.filter((m) => Number.isFinite(m.y)), noPoints: true, xFromData: true, notes },
+    )
+  }
+  const scale = !!node.melt?.normalise
+  const groups = node.groups.map((g, i) => {
+    const col = meltColumns({ groups: [g] })[0]
+    const p = profile(col.t, col.y)
+    const levels = scale ? meltLevels(fits[i], p) : null
+    const f = (v: number): number => (levels ? (v - levels[0]) / (levels[1] - levels[0]) : v)
+    const q = p.map((pt) => ({ t: pt.t, y: f(pt.y) }))
+    if (q.length > 1) curves.push({ series: i, at: (t) => along(q, t) })
+    const fit = fits[i]
+    if (fit && q.length) marks.push({ series: i, x: fit.tm.value, y: along(q, fit.tm.value) })
+    return scale ? { ...g, xs: col.t, values: col.y.map(f), labels: undefined, rows: undefined } : g
+  })
+  if (scale && groups.some((g, i) => g.values.length && !meltLevels(fits[i], profile(meltColumns({ groups: [node.groups[i]] })[0].t, meltColumns({ groups: [node.groups[i]] })[0].y))))
+    notes.push('A curve with no change in its signal cannot be scaled from 0 to 1, and is drawn as it was read.')
+  return scatterLayout(
+    { ...plain, groups, ...(scale ? { yLog: undefined } : {}), ...(node.xLabel ? {} : { xLabel: 'Temperature (°C)' }), ...(node.yLabel && !scale ? {} : { yLabel: scale ? 'Normalised signal' : 'Signal' }) },
+    { curves, marks: marks.filter((m) => Number.isFinite(m.y)), noPoints: true, xFromData: true, notes },
+  )
 }

@@ -44,6 +44,7 @@ const PATHS = {
   toBack: 'M4 4h11v11H4zM20 11v9h-9M20 11h-3M11 20v-3',
   plus: 'M12 5v14M5 12h14',
   close: 'M6 6l12 12M18 6L6 18',
+  mail: 'M4 6h16v12H4zM4 7l8 6l8-6',
   import: 'M12 16V5M7 9l5-5 5 5M5 20h14',
   template: 'M4 4h16v6H4zM4 14h7v6H4zM15 14h5v6h-5z',
   library: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
@@ -64,6 +65,12 @@ const PATHS = {
   play: 'M8 5l11 7-11 7z',
   chevronLeft: 'M14 6l-6 6 6 6',
   chevronRight: 'M10 6l6 6-6 6',
+  search: 'M10.5 4a6.5 6.5 0 1 0 0 13a6.5 6.5 0 0 0 0-13zM20 20l-4.8-4.8',
+  calculator: 'M6 3h12v18H6zM9 6h6v3H9zM9 13h.01M12 13h.01M15 13h.01M9 17h.01M12 17h.01M15 17h.01',
+  addBox: 'M4 4h16v16H4zM12 8v8M8 12h8',
+  molecule: 'M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9zM12 3v4.5M19.8 16.5L16 14.3M4.2 16.5L8 14.3',
+  dna: 'M7 3c0 6 10 6 10 12s-10 6-10 6M17 3c0 6-10 6-10 12M17 21c0-2-1-3.2-2.4-4M8.5 7h7M8.5 17h7',
+  gel: 'M4 4h16v16H4zM7 7h3M14 7h3M7 11h3M14 13h3M7 16h3M14 17h3',
 } as const
 
 export type IconName = keyof typeof PATHS

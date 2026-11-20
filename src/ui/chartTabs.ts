@@ -38,9 +38,9 @@ export function stepTab(current: ChartTab, tabs: ChartTab[], step: 1 | -1): Char
 /**
  * Where the settings of a part of a chart are: the heading, and the name the panel gives the
  * setting (`data-setting`). A group is named by its place in the table; the panel turns that into
- * the row of its list. `survival` says the chart draws survival curves.
+ * the row of its list. `survival` says the chart draws survival curves, `way` the analysis a scatter table is drawn as (enzyme kinetics, binding, melting curves).
  */
-export function settingFor(part: ChartPart, kind: ChartKind, survival = false): { tab: ChartTab; setting: string } {
+export function settingFor(part: ChartPart, kind: ChartKind, survival = false, way: 'kinetics' | 'binding' | 'melt' | null = null): { tab: ChartTab; setting: string } {
   const at = part.at ?? 0
   switch (part.what) {
     case 'group':
@@ -57,9 +57,9 @@ export function settingFor(part: ChartPart, kind: ChartKind, survival = false): 
     case 'error':
       return { tab: 'stats', setting: 'error' }
     case 'fit':
-      return { tab: 'stats', setting: 'fit' }
+      return { tab: 'stats', setting: way ? `${way}-fit` : 'fit' }
     case 'bracket':
-      return { tab: 'stats', setting: `bracket-${at}` }
+      return { tab: 'stats', setting: kind === 'qpcr' ? 'qpcr-marks' : `bracket-${at}` }
     case 'result':
       return { tab: 'stats', setting: survival ? 'log-rank' : 'corr' }
     case 'refLine':
@@ -77,6 +77,8 @@ export function settingFor(part: ChartPart, kind: ChartKind, survival = false): 
       return { tab: 'axes', setting: 'x-title' }
     case 'title':
       return { tab: chartTabs(kind).includes('axes') ? 'axes' : 'look', setting: 'title' }
+    case 'facet':
+      return { tab: 'look', setting: 'facets' }
   }
 }
 

@@ -18,7 +18,7 @@ export interface View {
   zoom: number
 }
 
-export type Dialog = null | 'export' | 'ai' | 'import-icon' | 'help' | 'figures' | 'pathway' | 'analysis' | 'templates'
+export type Dialog = null | 'export' | 'ai' | 'import-icon' | 'help' | 'figures' | 'pathway' | 'analysis' | 'templates' | 'add' | 'import' | 'calculators' | 'search' | 'whats-new' | 'report' | 'protein' | 'molecule' | 'reaction' | 'sketch' | 'suggest'
 
 const HISTORY_LIMIT = 100
 const MERGE_WINDOW_MS = 1000
@@ -79,6 +79,14 @@ export interface EditorState {
    * else is selected, so the box is never one of a chart that looks different by now.
    */
   chartPart: { id: string; part: ChartPart; box: PartBox; node: FigNode; nonce: number } | null
+  /** Words to search the icon library for, asked from elsewhere (the Search box); `n` makes a repeat of the same words a new request. */
+  libraryRequest: { query: string; n: number } | null
+  /** Bumped to ask for the system's file picker for a figure file (File › Open, the Import dialog, Search). */
+  openFileRequest: number
+  /** Words a dialog opened from Search starts with (the compound to draw), or the table the chart suggestions start with; taken by the dialog when it opens. */
+  dialogQuery: string
+  /** What the structure editor opens with: a molfile, and the icon it replaces when it is placed again. Taken by the dialog when it opens. */
+  sketchStart: { molfile: string; name?: string; replace?: string } | null
 
   /** Change the figure and record one undo step. Changes sharing a `merge` key in quick succession become one step. */
   commit: (fn: (doc: FigDoc) => FigDoc, opts?: { merge?: string; select?: string[] }) => void
@@ -131,6 +139,10 @@ export const useEditor = create<EditorState>((set, get) => ({
   favouriteIcons: storedFavourites(),
   recentIcons: storedRecent(),
   chartPart: null,
+  libraryRequest: null,
+  openFileRequest: 0,
+  dialogQuery: '',
+  sketchStart: null,
 
   commit: (fn, opts) => {
     const s = get()

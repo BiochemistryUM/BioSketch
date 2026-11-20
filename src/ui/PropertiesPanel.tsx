@@ -1,6 +1,6 @@
 // The right-hand panel: settings for whatever is selected, or for the page and the active tool.
 
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
   addChart,
   addTable,
@@ -18,6 +18,7 @@ import {
   ungroupSelection,
   unlockAll,
   addPanels,
+  addTableBeside,
   removeGuides,
 } from '../actions'
 import { MISSING_ICON, nameFromId, getIcon } from '../icons/library'
@@ -33,7 +34,56 @@ import { SHAPE_KINDS, shapePath } from '../model/shapes'
 import {
   MAX_BRACKETS, MAX_REF_LINES, NAME_MAX, POINT_NAMES_TOP, POINT_OPACITY_MIN, POINT_SIZE_MAX, POINT_SIZE_MIN,
   VALUE_DECIMALS_MAX,
-  bracketLabel, carryOver, chartAdvice, chartCategories, chartFamily, renameCategory, renameSeries, renameVenn, valueText, chartAnalysis, chartLayout, isSurvival, hazardText, logRankText, survivalOf, survivalText, compareCurves, comparisonText, corrText, curveMethodsText, doseText, heldPlateaus, methodsText, chartSamples, chartSeries, crossTable, hasPoints, headRows, isGrouped, pointNamesIn, pointStyle, readTable, scatterFits, shownValues, splitNameList, stats, tableText, usablePointNames, usableValueLabels, usualValueLabel, withTestBrackets,
+  qpcrOf,
+  bracketLabel,
+  canFacet,
+  carryOver,
+  chartAdvice,
+  chartCategories,
+  chartFamily,
+  renameCategory,
+  renameSeries,
+  renameVenn,
+  valueText,
+  chartAnalysis,
+  chartLayout,
+  isSurvival,
+  hazardText,
+  logRankText,
+  survivalOf,
+  survivalText,
+  compareCurves,
+  comparisonText,
+  corrText,
+  curveMethodsText,
+  doseText,
+  heldPlateaus,
+  methodsText,
+  chartSamples,
+  chartSeries,
+  crossTable,
+  hasPoints,
+  headRows,
+  isGrouped,
+  pointNamesIn,
+  pointStyle,
+  readTable,
+  scatterFits,
+  shownValues,
+  splitNameList,
+  stats,
+  tableText,
+  usablePointNames,
+  usableValueLabels,
+  usualValueLabel,
+  withTestBrackets,
+  standardOf,
+  isKinetics,
+  kineticsOf,
+  isBinding,
+  bindingOf,
+  isMelt,
+  meltOf,
   type Renamed,
   type TableReport,
 } from '../model/chart'
@@ -47,7 +97,55 @@ import { STARS_KEY, TEST_DOES, TEST_NAMES, TEST_SHORT, pText, stars, testFor } f
 import { reversed } from '../model/connector'
 import { DASH_SCALE_MAX, DASH_SCALE_MIN, dashArray, hasDots, lineStyleOf, lineStylePatch, type Dashable, type LineStyle } from '../model/dash'
 import { growToFitLabel, realignText, SHAPE_LABEL_DEFAULT, TEXT_WIDTH_MAX, TEXT_WIDTH_MIN, textBoxed, textBulleted } from '../model/nodes'
-import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartPointNames, ChartRefLine, ChartTest, ChartValueLabels, ConnectorFade, ConnectorKind, ConnectorNode, FigNode, FontFamily, HeatScale, IconNode, ImageNode, LegendPlace, MembraneNode, PointShape, ShapeKind, ShapeNode, StrokeNode, TextAlign, TextNode, TableNode } from '../model/types'
+import type {
+  QpcrSettings,
+  ChartBracket,
+  ChartGroup,
+  ChartKind,
+  ChartNode,
+  ChartPointNames,
+  ChartRefLine,
+  ChartTest,
+  ChartValueLabels,
+  ConnectorFade,
+  ConnectorKind,
+  ConnectorNode,
+  FigNode,
+  FontFamily,
+  HeatScale,
+  IconNode,
+  ImageNode,
+  LegendPlace,
+  MembraneNode,
+  PointShape,
+  ShapeKind,
+  ShapeNode,
+  StrokeNode,
+  TextAlign,
+  TextNode,
+  TableNode,
+  StructureColour,
+  StructureNode,
+  StandardModel,
+  KineticsSettings,
+  BindingSettings,
+  MeltSettings,
+  FacetSettings,
+} from '../model/types'
+import { STRUCTURE_COLOURS, TUBE, marksText, readMarks } from '../model/structure'
+import { IGNORE, STANDARD_MODELS, STANDARD_ROLES, readStandardText, standardGroups, standardTableText, withDilution } from '../model/standardTable'
+import { QPCR_ROLES, qpcrGroups, qpcrTableText, readQpcrText, withConditions } from '../model/qpcrTable'
+import { foldText, qpcrCells, qpcrMethods } from '../model/qpcrReport'
+import { isEfficiencyFit, readDilution } from '../model/qpcrEfficiency'
+import { qpcrPlate, type PlateColour } from '../model/qpcr'
+import { PlateView } from './PlateView'
+import { cellsText as resultText, fitText, resultCells, sampleText, sig4, standardMethods } from '../model/standardReport'
+import { comparisonRows, fitLines, KINETICS_MODELS, kineticsCells, kineticsMethods } from '../model/kineticsReport'
+import { isFit, type KineticsFit, type NoFit } from '../model/kinetics'
+import { kineticsColumns } from '../model/kineticsTable'
+import { BINDING_MODELS, bindingCells, bindingLines, bindingMethods, conditionText, meltCells, meltMethods, tmText } from '../model/bindingReport'
+import { bindingModel, isBindingFit } from '../model/binding'
+import { isMeltFit } from '../model/melt'
 import { toast, useEditor } from '../store'
 import { CHART_TABS, chartTabs, lastChartTab, openTab, rememberChartTab, settingFor, stepTab, type ChartTab } from './chartTabs'
 import { copyText } from './copy'
@@ -434,8 +532,9 @@ function IconProps({ node, single }: { node: IconNode; single: boolean }) {
     return (
       <Section title={MISSING_ICON}>
         <p className="notice">
-          The drawing of this icon{nameFromId(node.iconId) ? ` (“${nameFromId(node.iconId)}”)` : ''} is not in the figure any more, so a dashed box stands in its place, on the page and in exports. BioSketch’s own
-          drawings were taken out in November 2026; the library now holds the NIH, Bioicons and Servier collections.
+          The drawing of this icon
+          {nameFromId(node.iconId) ? ` (“${nameFromId(node.iconId)}”)` : ''} is not in the figure any more, so a dashed box stands in its place, on the page and in exports. BioSketch’s own drawings were taken
+          out in November 2026; the library now holds the NIH, Bioicons and Servier collections.
         </p>
         <p className="hint">{single ? 'With this box selected, tap an icon in the library: it takes this place and size.' : 'Select one box at a time, then tap an icon in the library: it takes that place and size.'}</p>
       </Section>
@@ -443,6 +542,11 @@ function IconProps({ node, single }: { node: IconNode; single: boolean }) {
   }
   return (
     <Section title={def.name}>
+      {def.molfile && single && (
+        <button className="btn small" onClick={() => useEditor.setState({ sketchStart: { molfile: def.molfile!, name: def.name, replace: def.id }, dialog: 'sketch' })}>
+          <Icon name="molecule" size={14} /> Edit the structure
+        </button>
+      )}
       {colors.length > 0 && (
         <Field label="Colours">
           <div className="swatches">
@@ -753,6 +857,98 @@ const TABLE_LINES: { value: TableLines; label: string }[] = [
 ]
 
 /** A table: its cells as text to paste or type, and how it looks. */
+function StructureProps({ node }: { node: StructureNode }) {
+  const set = (change: Partial<StructureNode>, merge?: string) => patch<StructureNode>('structure', change, merge)
+  const [draft, setDraft] = useState<string | null>(null)
+  const [unread, setUnread] = useState<string[]>([])
+  const residues = node.chains.reduce((n, c) => n + c.nums.length, 0)
+  const wrap = (v: number) => (((Math.round(v) % 360) + 540) % 360) - 180
+  return (
+    <Section
+      title="Protein structure"
+      info={
+        <>
+          <p>A tube through the Cα atom of every residue, drawn by BioSketch, so it is exported like everything else. It is a picture of the fold: side chains, ligands and water are not shown.</p>
+          <p>Its credit (AlphaFold DB or the PDB entry) is added to the credits of the export.</p>
+        </>
+      }
+    >
+      <p className="hint">
+        {node.title ? `${node.title}. ` : ''}
+        {node.source.kind === 'alphafold' ? `AlphaFold DB model of UniProt ${node.source.id}` : node.source.kind === 'pdb' ? `PDB ${node.source.id}` : node.source.id || 'From a file'}
+        {` · ${residues} residues${node.chains.length > 1 ? ` in ${node.chains.length} chains` : ''}`}
+      </p>
+      <Field label={`Turn ${node.view[0]}°`}>
+        <Range label="Turn the structure left or right" value={node.view[0]} min={-180} max={180} onChange={(v) => set({ view: [v, node.view[1]] }, 'structure-turn')} />
+      </Field>
+      <Field label={`Tilt ${node.view[1]}°`}>
+        <Range label="Tilt the structure forward or back" value={node.view[1]} min={-90} max={90} onChange={(v) => set({ view: [node.view[0], v] }, 'structure-tilt')} />
+      </Field>
+      <div className="row wrap">
+        <button className="btn small" onClick={() => set({ view: [wrap(node.view[0] + 90), node.view[1]] })}>
+          Quarter turn
+        </button>
+        <button className="btn small" onClick={() => set({ view: [wrap(node.view[0] + 180), node.view[1]] })}>
+          From the back
+        </button>
+        <button className="btn small" onClick={() => set({ view: [0, 0] })}>
+          From the front
+        </button>
+      </div>
+      <Field
+        label="Colours"
+        info={
+          node.source.kind === 'alphafold' ? (
+            <p>AlphaFold’s confidence in each residue (pLDDT): dark blue above 90, light blue 70 to 90, yellow 50 to 70, orange below 50. Orange parts are often disordered and should not be read as a fold.</p>
+          ) : undefined
+        }
+      >
+        <select aria-label="How the structure is coloured" value={node.colour ?? 'chain'} onChange={(e) => set({ colour: e.target.value === 'chain' ? undefined : (e.target.value as StructureColour) })}>
+          {STRUCTURE_COLOURS.filter((c) => c.value !== 'plddt' || node.source.kind === 'alphafold').map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {node.colour === 'single' && (
+        <Field label="Colour">
+          <ColorInput label="Colour of the structure" value={node.color ?? '#4a4fb5'} onChange={(color) => set({ color }, 'structure-color')} />
+        </Field>
+      )}
+      <Thickness label="Tube" value={node.tube ?? TUBE} min={0.5} max={6} onChange={(tube) => set({ tube: tube === TUBE ? undefined : tube }, 'structure-tube')} />
+      <Field
+        label="Mark residues"
+        info={
+          <p>
+            Residues by number, with their letter if you like, and words after them: “R175, H179 zinc, C176”. In a structure of several chains, put the chain first: “B:93”. A residue the structure does not hold
+            is named under the box.
+          </p>
+        }
+      >
+        <input
+          className="text-input"
+          aria-label="Residues to mark"
+          placeholder="R175, H179 zinc"
+          value={draft ?? marksText(node.marks, node.chains)}
+          onChange={(e) => {
+            setDraft(e.target.value)
+            const read = readMarks(e.target.value, node.chains)
+            setUnread(read.unread)
+            set({ marks: read.marks.length ? read.marks : undefined }, 'structure-marks')
+          }}
+          onBlur={() => setDraft(null)}
+        />
+        {unread.length > 0 && <p className="hint">Not found in this structure: {unread.join(', ')}</p>}
+      </Field>
+      <label className="check">
+        <input type="checkbox" checked={!!node.spin} onChange={(e) => set({ spin: e.target.checked || undefined })} />
+        <span>Turn slowly while the slides are presented</span>
+      </label>
+    </Section>
+  )
+}
+
 function TableProps({ node }: { node: TableNode }) {
   // What is in the box while it is being typed in: turned back from the cells it would lose a half-typed row.
   const [draft, setDraft] = useState<string | null>(null)
@@ -856,7 +1052,7 @@ function TableProps({ node }: { node: TableNode }) {
 }
 
 /** What the scientist picks: a kind of chart, or survival curves (which read their table like a scatter chart). */
-type ChartChoice = ChartKind | 'survival'
+type ChartChoice = ChartKind | 'survival' | 'kinetics' | 'binding' | 'melt'
 
 const CHART_OPTIONS: { value: ChartChoice; label: string; title: string }[] = [
   { value: 'bar', label: 'Bars', title: 'A bar for the mean of each group' },
@@ -869,6 +1065,9 @@ const CHART_OPTIONS: { value: ChartChoice; label: string; title: string }[] = [
   { value: 'heatmap', label: 'Heat map', title: 'The table as a grid of coloured cells (a matrix plot)' },
   { value: 'venn', label: 'Venn', title: 'What two or three sets share, from lists of names or from sizes' },
   { value: 'survival', label: 'Survival', title: 'Survival curves (Kaplan–Meier) from times and events' },
+  { value: 'kinetics', label: 'Kinetics', title: 'Enzyme rates against substrate: Michaelis–Menten curves and inhibition models' },
+  { value: 'binding', label: 'Binding', title: 'Bound against free ligand: Kd and Bmax' },
+  { value: 'melt', label: 'Melting', title: 'A signal against temperature: the melting temperature (Tm) of every curve' },
 ]
 
 const ERROR_OPTIONS: { value: 'none' | 'sd' | 'sem'; label: string; title: string }[] = [
@@ -918,7 +1117,10 @@ function AxisRange(props: { title: string; setting?: string; zero?: boolean; col
             </>
           ) : (
             <>
-              <p>Leave a box empty and that end of the axis is chosen to fit the numbers.{props.zero ? ' The axis then includes zero, so that the height of a bar means what it seems to.' : ''}</p>
+              <p>
+                Leave a box empty and that end of the axis is chosen to fit the numbers.
+                {props.zero ? ' The axis then includes zero, so that the height of a bar means what it seems to.' : ''}
+              </p>
               <p>A range you set cuts the data off at the edge of the plot: nothing is drawn beyond it.</p>
               <p>A logarithmic axis shows only values above zero.</p>
             </>
@@ -1048,6 +1250,1285 @@ function ChartTabBar({ id, tabs, tab, onTab, barRef }: { id: string; tabs: Chart
   )
 }
 
+/**
+ * A standard curve: its own panel, as its table is read another way (any layout, with a row of
+ * choices saying what each column is) and what it shows is a list of samples read off the curve.
+ */
+/** Enzyme kinetics under Statistics: the model, the fitted parameters of every series, kcat, the comparison of inhibition models, and the Lineweaver–Burk view. */
+function KineticsSection({ node, set }: { node: ChartNode; set: (change: Partial<ChartNode>, merge?: string) => void }) {
+  const result = kineticsOf(node)
+  const settings = node.kinetics ?? {}
+  const model = settings.model ?? 'mm'
+  const change = (c: Partial<KineticsSettings>) => {
+    const next = { ...settings, ...c }
+    for (const k of Object.keys(next) as (keyof KineticsSettings)[]) if (next[k] === undefined) delete next[k]
+    set({ kinetics: next })
+  }
+  const [enzymeText, setEnzymeText] = useState<string | null>(null)
+  const columns = kineticsColumns(node)
+  const unnamed = settings.model ? columns.filter((c) => c.s.length && c.inhibitor === null).map((c) => c.name) : []
+  const methods = kineticsMethods(node, result)
+  const cells = kineticsCells(node, result)
+  const fitBlock = (title: string, fit: KineticsFit | NoFit | undefined) => (
+    <div key={title} className="fit-block">
+      <b>{title}</b>
+      {fit && isFit(fit) ? fitLines(fit, settings.enzyme).map((line) => <div key={line}>{line}</div>) : <div className="hint">No curve{fit ? `: ${fit.reason}` : ''}</div>}
+    </div>
+  )
+  return (
+    <>
+      <Field
+        label="Model"
+        setting="kinetics-model"
+        info={
+          <>
+            <p>
+              <b>Michaelis–Menten</b> fits v = Vmax·[S] / (Km + [S]) to every series on its own: for one enzyme, or for an enzyme and its mutants.
+            </p>
+            <p>
+              <b>Inhibition</b> fits one model to all series at once, each series one inhibitor concentration (named in its heading), with Vmax, Km and Ki shared. Competitive raises the apparent Km,
+              noncompetitive lowers Vmax, uncompetitive lowers both by one factor, and mixed lets both change (α above 1: the inhibitor prefers the free enzyme). The comparison below says which model the rates
+              support.
+            </p>
+            <p>Every replicate is a point of the fit (unweighted least squares). The numbers are those of R’s nls with the same equations, and of GraphPad Prism.</p>
+          </>
+        }
+      >
+        <select className="text-input" aria-label="Kinetic model" value={model} onChange={(e) => change({ model: e.target.value === 'mm' ? undefined : (e.target.value as KineticsSettings['model']) })}>
+          {KINETICS_MODELS.map((m) => (
+            <option key={m.value} value={m.value} title={m.title}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      {unnamed.length > 0 && (
+        <p className="notice">
+          Name every column by its inhibitor concentration (0, 5 µM, 10 µM): {unnamed.join(', ')} {unnamed.length === 1 ? 'has' : 'have'} no number in the name.
+        </p>
+      )}
+      <Field label="Fitted parameters" setting="kinetics-fit">
+        {settings.model ? fitBlock('All series', result.fits[0]) : node.groups.map((g, i) => (g.values.length ? fitBlock(g.name || `Series ${i + 1}`, result.fits[i]) : null))}
+      </Field>
+      <Field
+        label="Enzyme concentration"
+        setting="kinetics-enzyme"
+        info={
+          <p>
+            The enzyme in the assay, in the concentration unit of the rates (rates in µM/min with 0.05 µM enzyme: type 0.05). kcat = Vmax / [E] is then given per the time unit of the rates, and kcat/Km beside
+            it. The enzyme concentration is taken as exact.
+          </p>
+        }
+      >
+        <input
+          className="text-input"
+          inputMode="decimal"
+          aria-label="Enzyme concentration"
+          placeholder="Not given: no kcat"
+          value={enzymeText ?? (settings.enzyme !== undefined ? String(settings.enzyme) : '')}
+          onChange={(e) => {
+            setEnzymeText(e.target.value)
+            const v = Number(e.target.value.replace(',', '.'))
+            if (e.target.value.trim() === '') change({ enzyme: undefined })
+            else if (Number.isFinite(v) && v > 0) change({ enzyme: v })
+          }}
+          onBlur={() => setEnzymeText(null)}
+        />
+      </Field>
+      {result.comparison && (
+        <Field
+          label="Which model fits best"
+          setting="kinetics-compare"
+          info={
+            <p>
+              Each model is fitted to the same rates. The lowest AICc fits best for the number of parameters it uses. Competitive, noncompetitive and uncompetitive inhibition are special cases of mixed
+              inhibition, so each is also tested against it (extra sum-of-squares F test): a small p says the simpler model fits clearly worse. The three p values are not corrected for being three.
+            </p>
+          }
+        >
+          {comparisonRows(result.comparison).map((row) => (
+            <div key={row.model} className="fit-block">
+              <button className={`btn small${model === row.model ? ' primary' : ''}`} onClick={() => change({ model: row.model })} title="Use this model">
+                {KINETICS_MODELS.find((m) => m.value === row.model)?.label}
+                {row.best ? ' (lowest AICc)' : ''}
+              </button>
+              <div className="hint">{row.text}</div>
+            </div>
+          ))}
+        </Field>
+      )}
+      <Field
+        label="Lineweaver–Burk plot"
+        setting="kinetics-lb"
+        info={
+          <p>
+            Draws 1/v against 1/[S]. It is for the eye only: the lines are the curves fitted to the rates themselves, carried over, not lines fitted to the reciprocals, which weigh the slowest rates far too
+            much. Lines that meet on the y axis show competitive inhibition, on the x axis noncompetitive.
+          </p>
+        }
+      >
+        <Check checked={!!settings.lineweaver} onChange={(v) => change({ lineweaver: v || undefined })}>
+          Show as a double-reciprocal plot
+        </Check>
+      </Field>
+      {cells.length > 1 && (
+        <div className="row wrap">
+          <button className="btn small" onClick={async () => toast((await copyText(resultText(cells))) ? 'Results copied: paste them into a spreadsheet.' : 'The results could not be copied.')}>
+            Copy the results
+          </button>
+          <button className="btn small" onClick={() => addTableBeside(node, cells, 'Results added as a table by the chart. It does not follow later changes of the numbers.')}>
+            Put the results on the page
+          </button>
+        </div>
+      )}
+      {methods && (
+        <div className="with-info">
+          <button
+            className="btn small"
+            onClick={async () =>
+              toast((await copyText(methods)) ? 'Copied. Paste it into your methods or figure legend.' : 'Copying is blocked here. Open the “i” beside the button and copy the text from there.')
+            }
+          >
+            Copy a text for the methods
+          </button>
+          <Info about="The text for the methods">
+            <p>{methods}</p>
+          </Info>
+        </div>
+      )}
+    </>
+  )
+}
+
+/** Results copied for a spreadsheet, or put on the page as a table beside the chart. */
+function ResultButtons({ node, cells }: { node: ChartNode; cells: string[][] }) {
+  if (cells.length < 2) return null
+  return (
+    <div className="row wrap">
+      <button className="btn small" onClick={async () => toast((await copyText(resultText(cells))) ? 'Results copied: paste them into a spreadsheet.' : 'The results could not be copied.')}>
+        Copy the results
+      </button>
+      <button className="btn small" onClick={() => addTableBeside(node, cells, 'Results added as a table by the chart. It does not follow later changes of the numbers.')}>
+        Put the results on the page
+      </button>
+    </div>
+  )
+}
+
+/** The text for the methods, copied with one button, and shown in its note. */
+function MethodsButton({ methods }: { methods: string | null }) {
+  if (!methods) return null
+  return (
+    <div className="with-info">
+      <button
+        className="btn small"
+        onClick={async () => toast((await copyText(methods)) ? 'Copied. Paste it into your methods or figure legend.' : 'Copying is blocked here. Open the “i” beside the button and copy the text from there.')}
+      >
+        Copy a text for the methods
+      </button>
+      <Info about="The text for the methods">
+        <p>{methods}</p>
+      </Info>
+    </div>
+  )
+}
+
+/** Saturation binding under Statistics: the model, the fitted Kd and Bmax of every series, and the Scatchard view. */
+function BindingSection({ node, set }: { node: ChartNode; set: (change: Partial<ChartNode>, merge?: string) => void }) {
+  const result = bindingOf(node)
+  const settings = node.binding ?? {}
+  const model = bindingModel(settings)
+  const change = (c: Partial<BindingSettings>) => {
+    const next = { ...settings, ...c }
+    for (const k of Object.keys(next) as (keyof BindingSettings)[]) if (next[k] === undefined) delete next[k]
+    set({ binding: next })
+  }
+  const block = (title: string, fit: (typeof result.fits)[number]) => (
+    <div key={title} className="fit-block">
+      <b>{title}</b>
+      {isBindingFit(fit) ? bindingLines(fit).map((line) => <div key={line}>{line}</div>) : <div className="hint">No curve{fit ? `: ${fit.reason}` : ''}</div>}
+    </div>
+  )
+  return (
+    <>
+      <Field
+        label="Model"
+        setting="binding-model"
+        info={
+          <>
+            <p>
+              <b>One site</b> fits B = Bmax·X / (Kd + X) to every series on its own, X being the free ligand concentration: for specific binding, with the nonspecific binding already taken off.
+            </p>
+            <p>
+              <b>Hill slope</b> adds h: B = Bmax·Xʰ / (Kdʰ + Xʰ). A slope above 1 says that binding at one site helps binding at the next; the panel tests whether it differs from 1.
+            </p>
+            <p>
+              <b>Total and nonspecific</b> fits the total binding and the nonspecific binding (measured with an excess of unlabelled ligand) together, the nonspecific as a straight line shared by both: better
+              than subtracting one from the other, because the scatter of both is kept. Name the columns “Total” and “Nonspecific” (or “NSB”).
+            </p>
+            <p>Every replicate is a point of the fit (unweighted least squares). The numbers are those of R’s nls with the same equations, and of GraphPad Prism.</p>
+          </>
+        }
+      >
+        <select
+          className="text-input"
+          aria-label="Binding model"
+          value={model}
+          onChange={(e) => change({ model: e.target.value === 'specific' ? undefined : (e.target.value as BindingSettings['model']), ...(e.target.value === 'specific' ? {} : { scatchard: undefined }) })}
+        >
+          {BINDING_MODELS.map((m) => (
+            <option key={m.value} value={m.value} title={m.title}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <Field label="Fitted parameters" setting="binding-fit">
+        {result.pair
+          ? block(node.groups[result.pair.total]?.name || 'Total', result.fits[0])
+          : model === 'total'
+            ? block('Total and nonspecific', result.fits[0])
+            : node.groups.map((g, i) => (g.values.length ? block(g.name || `Series ${i + 1}`, result.fits[i]) : null))}
+      </Field>
+      {model === 'specific' && (
+        <Field
+          label="Scatchard plot"
+          setting="binding-scatchard"
+          info={
+            <p>
+              Draws bound/free against bound. It is for the eye only: the line is the curve fitted to the bound values themselves, carried over (its slope is −1/Kd, and it meets the x axis at Bmax), not a line
+              fitted to the transformed values, which distorts their scatter.
+            </p>
+          }
+        >
+          <Check checked={!!settings.scatchard} onChange={(v) => change({ scatchard: v || undefined })}>
+            Show as a Scatchard plot
+          </Check>
+        </Field>
+      )}
+      <ResultButtons node={node} cells={bindingCells(node, result)} />
+      <MethodsButton methods={bindingMethods(node, result)} />
+    </>
+  )
+}
+
+/** A temperature typed in a box: kept as typed while it has the focus, stored when it is a number. */
+function TemperatureBox({ label, value, onChange }: { label: string; value: number | undefined; onChange: (v: number | undefined) => void }) {
+  const [text, setText] = useState<string | null>(null)
+  return (
+    <input
+      className="text-input"
+      style={{ flex: 1, minWidth: 0 }}
+      inputMode="decimal"
+      aria-label={label}
+      placeholder="Found"
+      value={text ?? (value !== undefined ? String(value) : '')}
+      onChange={(e) => {
+        setText(e.target.value)
+        const v = Number(e.target.value.replace(',', '.'))
+        if (e.target.value.trim() === '') onChange(undefined)
+        else if (Number.isFinite(v)) onChange(v)
+      }}
+      onBlur={() => setText(null)}
+    />
+  )
+}
+
+/** Melting curves under Statistics: how Tm is found, the range of the transition, the Tm of every curve and condition, and how the curves are drawn. */
+function MeltSection({ node, set }: { node: ChartNode; set: (change: Partial<ChartNode>, merge?: string) => void }) {
+  const result = meltOf(node)
+  const settings = node.melt ?? {}
+  const change = (c: Partial<MeltSettings>) => {
+    const next = { ...settings, ...c }
+    for (const k of Object.keys(next) as (keyof MeltSettings)[]) if (next[k] === undefined) delete next[k]
+    set({ melt: next }, 'melt')
+  }
+  const reversed = settings.from !== undefined && settings.to !== undefined && settings.from >= settings.to
+  const replicates = result.conditions.some((c) => c.tms.length > 1)
+  return (
+    <>
+      <Field
+        label="Melting temperature"
+        setting="melt-method"
+        info={
+          <>
+            <p>
+              <b>Boltzmann fit</b> fits y = bottom + (top − bottom) / (1 + exp((Tm − T) / slope)) to the readings of the transition: Tm is its middle, with a standard error. This is what GraphPad Prism and most
+              thermal shift papers report.
+            </p>
+            <p>
+              <b>Derivative</b> takes Tm where the signal changes fastest (the top of the melt peak), as qPCR machines and the software of thermal shift instruments do. It needs no curve shape, so it also works
+              on lopsided transitions.
+            </p>
+            <p>
+              The transition is found from the curve: from the steepest change back to the lowest reading before it and on to the highest after it, so that a fall of the signal after its peak (the protein
+              clumping) is left out. Set the range by hand when it picks the wrong part.
+            </p>
+          </>
+        }
+      >
+        <Segmented
+          label="How Tm is found"
+          value={settings.method ?? 'boltzmann'}
+          options={[
+            { value: 'boltzmann', label: 'Boltzmann fit' },
+            { value: 'derivative', label: 'Derivative' },
+          ]}
+          onChange={(v) => change({ method: v === 'derivative' ? 'derivative' : undefined })}
+        />
+      </Field>
+      <Field label="Range of the transition (°C)" setting="melt-range">
+        <div className="row">
+          <TemperatureBox label="Transition from" value={settings.from} onChange={(from) => change({ from })} />
+          <span>to</span>
+          <TemperatureBox label="Transition to" value={settings.to} onChange={(to) => change({ to })} />
+        </div>
+        {reversed && <p className="notice">The start of the range must be below its end; until it is, the range is not used.</p>}
+      </Field>
+      <Field label="Tm of every curve" setting="melt-fit">
+        {node.groups.map((g, i) => {
+          const f = result.fits[i]
+          if (!g.values.length) return null
+          return (
+            <div key={i} className="fit-block">
+              <b>{g.name || `Curve ${i + 1}`}</b>
+              <div className={isMeltFit(f) ? undefined : 'hint'}>{isMeltFit(f) ? `Tm ${tmText(f)}, from ${f.window[0]} to ${f.window[1]} °C` : `No Tm${f ? `: ${f.reason}` : ''}`}</div>
+            </div>
+          )
+        })}
+      </Field>
+      {result.conditions.length > 1 && (
+        <Field
+          label={replicates ? 'Conditions' : 'Shift from the first curve'}
+          setting="melt-conditions"
+          info={
+            <p>
+              Curves whose names differ only by a number (Apo 1, Apo 2) are replicates of one condition. ΔTm is the mean Tm of a condition less that of the first; with two or more curves in both, Welch’s t test
+              on their Tm values gives a p value, not corrected for several conditions.
+            </p>
+          }
+        >
+          {result.conditions.map((c, k) => (
+            <div key={c.name} className="fit-block">
+              <b>{c.name}</b>
+              <div>{conditionText(c, k === 0)}</div>
+            </div>
+          ))}
+        </Field>
+      )}
+      <Field label="Show" setting="melt-view">
+        <Segmented
+          label="What the chart shows"
+          value={settings.view ?? 'signal'}
+          options={[
+            { value: 'signal', label: 'Signal' },
+            { value: 'derivative', label: 'Derivative (melt peaks)' },
+          ]}
+          onChange={(v) => change({ view: v === 'derivative' ? 'derivative' : undefined })}
+        />
+        {settings.view !== 'derivative' && (
+          <Check checked={!!settings.normalise} onChange={(v) => change({ normalise: v || undefined })}>
+            Scale every curve from 0 to 1
+          </Check>
+        )}
+      </Field>
+      <ResultButtons node={node} cells={meltCells(node, result)} />
+      <MethodsButton methods={meltMethods(node, result)} />
+    </>
+  )
+}
+
+function StandardProps({ node }: { node: ChartNode }) {
+  const set = (change: Partial<ChartNode>, merge?: string) => patch<ChartNode>('chart', change, merge)
+  // What was pasted, and the roles chosen for its columns, kept while the chart still holds what was read from it.
+  const [typed, setTyped] = useState<{ text: string; chosen?: string[]; groups: ChartGroup[] } | null>(null)
+  const live = typed && typed.groups === node.groups ? typed : null
+  const text = live ? live.text : standardTableText(node)
+  const reading = readStandardText(text, live?.chosen)
+  const read = (next: string, chosen?: string[]) => {
+    const found = readStandardText(next, chosen)
+    const { groups, dilution } = standardGroups(found.table)
+    if (!found.table.standards.length && !found.table.samples.length) {
+      setTyped({ text: next, chosen, groups: node.groups })
+      return false
+    }
+    // Colours and marks stay with the standards and the samples.
+    const kept = groups.map((g, i) => ({ ...g, ...(node.groups[i]?.color ? { color: node.groups[i].color } : {}), ...(node.groups[i]?.shape ? { shape: node.groups[i].shape } : {}) }))
+    setTyped({ text: next, chosen: found.roles, groups: kept })
+    set({ groups: kept, standard: withDilution(node.standard, dilution) }, 'chart-data')
+    return true
+  }
+  const tableFile = useRef<HTMLInputElement>(null)
+  const importTable = async (file: File) => {
+    try {
+      const table = await tableFromFile(file)
+      toast(read(table.text) ? `Table read from “${file.name}”. Check what each column is under the table.` : `No standards or samples were found in “${file.name}”.`)
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'This file could not be read.')
+    }
+  }
+  const result = standardOf(node)
+  const drawing = chartLayout(node)
+  const dilutions = node.standard?.dilution ?? {}
+  const model = node.standard?.model ?? 'linear'
+  const methods = standardMethods(node, result)
+  const tabs: ChartTab[] = ['data', 'stats', 'look', 'axes']
+  const [wantedTab, setWantedTab] = useState<ChartTab>(lastChartTab)
+  const tab = openTab(wantedTab, tabs)
+  const tabsId = useId()
+  const tabBar = useRef<HTMLDivElement>(null)
+  const chooseTab = (next: ChartTab) => {
+    rememberChartTab(next)
+    setWantedTab(next)
+  }
+  const headings = reading.cells.header ?? []
+  const width = reading.roles.length
+  const t = reading.table
+  const reps = (rows: { values: number[] }[]): string => {
+    const counts = [...new Set(rows.map((r) => r.values.length))]
+    return counts.length === 1 ? `${counts[0]} ${counts[0] === 1 ? 'value' : 'values'} each` : `${Math.min(...counts)} to ${Math.max(...counts)} values each`
+  }
+  const colourOf = (i: number): string => node.groups[i]?.color ?? paletteColours(node.palette)[i] ?? '#4a4fb5'
+  const setGroup = (i: number, change: Partial<ChartGroup>, merge?: string) => node.groups[i] && set({ groups: node.groups.map((g, k) => (k === i ? { ...g, ...change } : g)) }, merge)
+
+  return (
+    <Section
+      title="Standard curve"
+      info={
+        <>
+          <p>
+            Standards of known concentration give a curve; every sample is read off it. Paste your table under “Data” and check what each column is, choose the curve, and read the results under “Statistics”.
+          </p>
+          <p>The curve is fitted to every replicate by least squares. A sample’s mean signal is read off the curve and multiplied by its dilution.</p>
+        </>
+      }
+    >
+      <ChartTabBar id={tabsId} tabs={tabs} tab={tab} onTab={chooseTab} barRef={tabBar} />
+      <div className="chart-tab" role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-${tab}`}>
+        {drawing.notes.map((note, i) => (
+          <p key={i} className="notice">
+            {note}
+          </p>
+        ))}
+        {tab === 'data' && (
+          <>
+            <Field
+              label="Table"
+              setting="table"
+              info={
+                <>
+                  <p>
+                    Any layout works: one row per standard or sample with the replicates side by side, or one row per well as a plate reader or an ELISA program exports it. A row with a concentration is a
+                    standard; a row without one is a sample. A row named Blank (or a column of types saying Blank) is a standard at concentration 0.
+                  </p>
+                  <p>Under the table BioSketch says what it took each column to be. Change any column there if it guessed wrong.</p>
+                  <p>Paste from a spreadsheet, or import a .csv, .txt or .xlsx file (the first sheet).</p>
+                </>
+              }
+            >
+              <textarea className="text-input table-input" aria-label="Table of the standard curve" rows={8} wrap="off" spellCheck={false} value={text} onChange={(e) => read(e.target.value)} />
+              <button className="btn small" title="Read the table from a CSV, text or Excel file" onClick={() => tableFile.current?.click()}>
+                Import a table from a file…
+              </button>
+              <input
+                ref={tableFile}
+                type="file"
+                accept={TABLE_ACCEPT}
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) void importTable(f)
+                  e.target.value = ''
+                }}
+              />
+            </Field>
+            {width > 0 && (
+              <Field label="What each column is" setting="roles">
+                <div className="role-row">
+                  {reading.roles.map((role, i) => (
+                    <label key={i} className="role-choice" title={reading.why[i] ?? ''}>
+                      <span>{headings[i]?.trim() || `Column ${i + 1}`}</span>
+                      <select
+                        aria-label={`What column ${i + 1} (${headings[i]?.trim() || 'no heading'}) is`}
+                        value={role}
+                        onChange={(e) => {
+                          const chosen = reading.roles.map((r, k) => (k === i ? e.target.value : r))
+                          // A role taken by one column only moves: the column that had it is no longer used.
+                          const one = STANDARD_ROLES.find((spec) => spec.id === e.target.value && !spec.many)
+                          read(text, one ? chosen.map((r, k) => (k !== i && r === one.id ? IGNORE : r)) : chosen)
+                        }}
+                      >
+                        {STANDARD_ROLES.map((spec) => (
+                          <option key={spec.id} value={spec.id}>
+                            {spec.label}
+                          </option>
+                        ))}
+                        <option value={IGNORE}>Not used</option>
+                      </select>
+                    </label>
+                  ))}
+                </div>
+                <p className="hint">
+                  {t.standards.length} {t.standards.length === 1 ? 'standard' : 'standards'}
+                  {t.standards.length ? ` (${reps(t.standards)})` : ''}, {t.samples.length} {t.samples.length === 1 ? 'sample' : 'samples'}
+                  {t.samples.length ? ` (${reps(t.samples)})` : ''}.
+                  {reading.cells.skipped.length ? ` ${reading.cells.skipped.length} ${reading.cells.skipped.length === 1 ? 'line' : 'lines'} above the table left out.` : ''}
+                </p>
+                {reading.missing.includes('signal') && <p className="notice">No column is taken as the signal: choose one above.</p>}
+                {t.unread.length > 0 && (
+                  <p className="notice">
+                    No signal could be read in: {t.unread.slice(0, 8).join(', ')}
+                    {t.unread.length > 8 ? ` and ${t.unread.length - 8} more` : ''}.
+                  </p>
+                )}
+              </Field>
+            )}
+            <Field label="Curve" setting="model">
+              <select
+                value={model}
+                aria-label="Curve fitted to the standards"
+                onChange={(e) => set({ standard: { ...node.standard, model: e.target.value === 'linear' ? undefined : (e.target.value as StandardModel) } })}
+              >
+                {STANDARD_MODELS.map((m) => (
+                  <option key={m.value} value={m.value} title={m.title}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+              <p className="hint">{STANDARD_MODELS.find((m) => m.value === model)?.title}</p>
+            </Field>
+            <Check checked={!!node.standard?.blank} onChange={(v) => set({ standard: { ...node.standard, blank: v || undefined } })}>
+              Subtract the blank (the mean signal of the standards at concentration 0)
+            </Check>
+          </>
+        )}
+        {tab === 'stats' && (
+          <>
+            <Field label="Fitted curve" setting="fit">
+              <p className="chart-summary">{result.fit ? fitText(result.fit) : (result.reason ?? 'No curve could be fitted.')}</p>
+              {result.blank !== null && <p className="hint">Blank subtracted: {sig4(result.blank)}</p>}
+            </Field>
+            {result.samples.length > 0 && (
+              <Field label="Samples" setting="samples">
+                <ul className="chart-summary" aria-label="Samples read off the curve">
+                  {result.samples.map((s, i) => (
+                    <li key={i}>
+                      <span>
+                        <b>{s.name}</b>: {sampleText(s, dilutions[s.name])}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </Field>
+            )}
+            {result.fit && result.standards.length > 0 && (
+              <Field label="Standards read back" info={<p>Each standard’s mean signal read off the curve, and how close it comes to its own concentration. ELISA guidelines usually ask for 80 to 120 %.</p>}>
+                <ul className="chart-summary" aria-label="Standards read back off the curve">
+                  {result.standards
+                    .filter((s) => s.conc > 0)
+                    .map((s, i) => (
+                      <li key={i}>
+                        <span>
+                          <b>{s.name}</b> ({sig4(s.conc)}): {s.recovery === null ? 'cannot be read back' : `${Number(s.recovery.toFixed(1))} %`}
+                        </span>
+                      </li>
+                    ))}
+                </ul>
+              </Field>
+            )}
+            {result.samples.length > 0 && result.fit && (
+              <div className="row wrap">
+                <button
+                  className="btn small"
+                  onClick={async () => toast((await copyText(resultText(resultCells(result, dilutions)))) ? 'Results copied: paste them into a spreadsheet.' : 'The results could not be copied.')}
+                >
+                  Copy the results
+                </button>
+                <button className="btn small" onClick={() => addTableBeside(node, resultCells(result, dilutions), 'Results added as a table beside the curve. It does not follow later changes of the numbers.')}>
+                  Put the results on the page
+                </button>
+              </div>
+            )}
+            {methods && (
+              <div className="with-info">
+                <button
+                  className="btn small"
+                  onClick={async () =>
+                    toast((await copyText(methods)) ? 'Copied. Paste it into your methods or figure legend.' : 'Copying is blocked here. Open the “i” beside the button and copy the text from there.')
+                  }
+                >
+                  Copy a text for the methods
+                </button>
+                <Info about="The text for the methods">
+                  <p>{methods}</p>
+                  <p>It says what was done, in words a journal accepts.</p>
+                </Info>
+              </div>
+            )}
+          </>
+        )}
+        {tab === 'look' && (
+          <>
+            {['Standards', 'Samples'].map((name, i) =>
+              node.groups[i] ? (
+                <Field key={name} label={name}>
+                  <div className="row">
+                    <input type="color" className="color small" aria-label={`Colour of the ${name.toLowerCase()}`} value={colourOf(i)} onChange={(e) => setGroup(i, { color: e.target.value }, 'chart-colour')} />
+                    <select
+                      className="shape-select"
+                      aria-label={`Shape of the ${name.toLowerCase()}`}
+                      value={node.groups[i].shape ?? (i === 1 ? 'diamond' : 'circle')}
+                      onChange={(e) => setGroup(i, { shape: e.target.value as PointShape })}
+                    >
+                      {SHAPE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </Field>
+              ) : null,
+            )}
+            <Field label="Text size">
+              <NumberInput label="Size of the chart's text" value={node.fontSize ?? 13} min={6} max={60} onChange={(fontSize) => set({ fontSize }, 'chart-font')} />
+            </Field>
+          </>
+        )}
+        {tab === 'axes' && (
+          <>
+            <Field label="Title" setting="title">
+              <input
+                type="text"
+                className="text-line"
+                maxLength={120}
+                value={node.title ?? ''}
+                placeholder="e.g. BCA assay"
+                onChange={(e) => set({ title: e.target.value.trim() ? e.target.value : undefined }, 'chart-title')}
+              />
+            </Field>
+            <Field label="Title of the y axis" setting="y-title">
+              <input
+                type="text"
+                className="text-line"
+                maxLength={120}
+                value={node.yLabel ?? ''}
+                placeholder="e.g. A_{562}"
+                onChange={(e) => set({ yLabel: e.target.value.trim() ? e.target.value : undefined }, 'chart-ylabel')}
+              />
+            </Field>
+            <Field label="Title of the x axis" setting="x-title">
+              <input
+                type="text"
+                className="text-line"
+                maxLength={120}
+                value={node.xLabel ?? ''}
+                placeholder="e.g. BSA (µg/mL)"
+                onChange={(e) => set({ xLabel: e.target.value.trim() ? e.target.value : undefined }, 'chart-xlabel')}
+              />
+            </Field>
+            <AxisRange
+              title="Range of the y axis"
+              setting="y-range"
+              min={node.yMin}
+              max={node.yMax}
+              log={!!node.yLog}
+              onMin={(yMin) => set({ yMin }, 'chart-range')}
+              onMax={(yMax) => set({ yMax }, 'chart-range')}
+              onLog={(v) => set({ yLog: v || undefined })}
+            />
+            <AxisRange
+              title="Range of the x axis"
+              setting="x-range"
+              min={node.xMin}
+              max={node.xMax}
+              log={!!node.xLog}
+              onMin={(xMin) => set({ xMin }, 'chart-range')}
+              onMax={(xMax) => set({ xMax }, 'chart-range')}
+              onLog={(v) => set({ xLog: v || undefined })}
+            />
+          </>
+        )}
+      </div>
+    </Section>
+  )
+}
+
+/**
+ * A qPCR analysis: its own panel, as its table is read like a standard curve's (any layout, with a
+ * row of choices saying what each column is), and what it shows is a fold change per gene and condition.
+ */
+function QpcrProps({ node }: { node: ChartNode }) {
+  const set = (change: Partial<ChartNode>, merge?: string) => patch<ChartNode>('chart', change, merge)
+  const settings = node.qpcr ?? {}
+  const change = (c: Partial<QpcrSettings>) => {
+    const next: QpcrSettings = { ...settings, ...c }
+    for (const k of Object.keys(next) as (keyof QpcrSettings)[]) if (next[k] === undefined) delete next[k]
+    set({ qpcr: Object.keys(next).length ? next : undefined })
+  }
+  const [typed, setTyped] = useState<{ text: string; chosen?: string[]; groups: ChartGroup[] } | null>(null)
+  const live = typed && typed.groups === node.groups ? typed : null
+  const text = live ? live.text : qpcrTableText(node)
+  const reading = readQpcrText(text, live?.chosen)
+  const read = (next: string, chosen?: string[]) => {
+    const found = readQpcrText(next, chosen)
+    const groups = qpcrGroups(found.table)
+    if (!groups.length) {
+      setTyped({ text: next, chosen, groups: node.groups })
+      return false
+    }
+    setTyped({ text: next, chosen: found.roles, groups })
+    const kept = withConditions(settings, found.table.conditions)
+    set({ groups, qpcr: Object.keys(kept).length ? kept : undefined }, 'chart-data')
+    return true
+  }
+  const tableFile = useRef<HTMLInputElement>(null)
+  const importTable = async (file: File) => {
+    try {
+      const table = await tableFromFile(file)
+      toast(read(table.text) ? `Table read from “${file.name}”. Check what each column is under the table.` : `No wells with a Cq were found in “${file.name}”.`)
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'This file could not be read.')
+    }
+  }
+  const result = qpcrOf(node)
+  const drawing = chartLayout(node)
+  const methods = qpcrMethods(node, result)
+  const cells = qpcrCells(result, node.error)
+  const tabs: ChartTab[] = ['data', 'stats', 'look', 'axes']
+  const [wantedTab, setWantedTab] = useState<ChartTab>(lastChartTab)
+  const tab = openTab(wantedTab, tabs)
+  const tabsId = useId()
+  const tabBar = useRef<HTMLDivElement>(null)
+  const chooseTab = (next: ChartTab) => {
+    rememberChartTab(next)
+    setWantedTab(next)
+  }
+  const [effText, setEffText] = useState<Record<string, string>>({})
+  const headings = reading.cells.header ?? []
+  const t = reading.table
+  const samples = new Set(t.wells.map((w) => w.sample))
+  const few = (items: string[]) => (items.length > 6 ? `${items.slice(0, 6).join(', ')} and ${items.length - 6} more` : items.join(', '))
+  const log2 = !!settings.log2
+  const placed = node.groups.some((g) => g.wells?.some(Boolean))
+  const plateFor = useCallback((by: PlateColour) => qpcrPlate(node.groups, node.qpcr ?? {}, by), [node.groups, node.qpcr])
+
+  return (
+    <Section
+      title="qPCR fold change"
+      info={
+        <>
+          <p>
+            Relative expression by the ΔΔCt method: every target against the reference gene, every condition against the control. Paste the results of your qPCR machine under “Data”, check what each column is
+            and which gene is the reference, and read the fold changes under “Statistics”.
+          </p>
+          <p>Technical replicates (wells of one sample) are averaged; the samples of a condition are its biological replicates.</p>
+        </>
+      }
+    >
+      <ChartTabBar id={tabsId} tabs={tabs} tab={tab} onTab={chooseTab} barRef={tabBar} />
+      <div className="chart-tab" role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-${tab}`}>
+        {drawing.notes.map((note, i) => (
+          <p key={i} className="notice">
+            {note}
+          </p>
+        ))}
+        {tab === 'data' && (
+          <>
+            <Field
+              label="Table"
+              setting="table"
+              info={
+                <>
+                  <p>
+                    Paste the results as your qPCR machine exports them, one row per well: a sample, a target and a Cq (Bio-Rad CFX, QuantStudio, LightCycler and others). A table with one row per sample and a
+                    column of Cq values for every target, named by the target, works too.
+                  </p>
+                  <p>Controls without template (NTC, water, no RT) are left out, and so are wells without a Cq (“Undetermined”). A control without template that has a Cq is reported.</p>
+                  <p>Under the table BioSketch says what it took each column to be. Change any column there if it guessed wrong.</p>
+                </>
+              }
+            >
+              <textarea className="text-input table-input" aria-label="Table of the qPCR analysis" rows={8} wrap="off" spellCheck={false} value={text} onChange={(e) => read(e.target.value)} />
+              <button className="btn small" title="Read the table from a CSV, text or Excel file" onClick={() => tableFile.current?.click()}>
+                Import a table from a file…
+              </button>
+              <input
+                ref={tableFile}
+                type="file"
+                accept={TABLE_ACCEPT}
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) void importTable(f)
+                  e.target.value = ''
+                }}
+              />
+            </Field>
+            {reading.roles.length > 0 && (
+              <Field label="What each column is" setting="roles">
+                <div className="role-row">
+                  {reading.roles.map((role, i) => (
+                    <label key={i} className="role-choice" title={reading.why[i] ?? ''}>
+                      <span>{headings[i]?.trim() || `Column ${i + 1}`}</span>
+                      <select
+                        aria-label={`What column ${i + 1} (${headings[i]?.trim() || 'no heading'}) is`}
+                        value={role}
+                        onChange={(e) => {
+                          const chosen = reading.roles.map((r, k) => (k === i ? e.target.value : r))
+                          // A role taken by one column only moves, except Cq, which a table with a column per target has several of.
+                          const one = QPCR_ROLES.find((spec) => spec.id === e.target.value && spec.id !== 'cq')
+                          read(text, one ? chosen.map((r, k) => (k !== i && r === one.id ? IGNORE : r)) : chosen)
+                        }}
+                      >
+                        {QPCR_ROLES.map((spec) => (
+                          <option key={spec.id} value={spec.id}>
+                            {spec.label}
+                          </option>
+                        ))}
+                        <option value={IGNORE}>Not used</option>
+                      </select>
+                    </label>
+                  ))}
+                </div>
+                <p className="hint">
+                  {t.wells.length} {t.wells.length === 1 ? 'well' : 'wells'} with a Cq, {result.targets.length} {result.targets.length === 1 ? 'target' : 'targets'}, {samples.size}{' '}
+                  {samples.size === 1 ? 'sample' : 'samples'}.{t.controls.length ? ` Left out as controls: ${few(t.controls)}.` : ''}
+                  {t.noCq.length ? ` No Cq in ${t.noCq.length} ${t.noCq.length === 1 ? 'well' : 'wells'}: ${few(t.noCq)}.` : ''}
+                  {reading.cells.skipped.length ? ` ${reading.cells.skipped.length} ${reading.cells.skipped.length === 1 ? 'line' : 'lines'} above the table left out.` : ''}
+                </p>
+                {t.amplified.length > 0 && <p className="notice">A control without template has a Cq, which points to contamination or primer dimers: {few(t.amplified)}.</p>}
+                {reading.missing.length > 0 && <p className="notice">No column is taken as {reading.missing.map((m) => QPCR_ROLES.find((r) => r.id === m)?.label).join(' or ')}: choose one above.</p>}
+              </Field>
+            )}
+            {result.targets.length > 1 && (
+              <Field
+                label="Reference genes"
+                setting="qpcr-reference"
+                info={
+                  <p>
+                    The genes every target is compared with (GAPDH, ACTB, 18S…). With several, their mean Cq is used, which is the geometric mean of their amounts. BioSketch takes a gene with a usual reference
+                    name, or else the first target.
+                  </p>
+                }
+              >
+                <div className="row wrap">
+                  {result.targets.map((target) => (
+                    <Check
+                      key={target}
+                      checked={result.reference.includes(target)}
+                      onChange={(v) => {
+                        const next = v ? [...result.reference, target] : result.reference.filter((r) => r !== target)
+                        if (next.length && next.length < result.targets.length) change({ reference: next })
+                        else toast(next.length ? 'At least one target must stay a target.' : 'At least one reference gene is needed.')
+                      }}
+                    >
+                      {target}
+                    </Check>
+                  ))}
+                </div>
+              </Field>
+            )}
+            {result.conditions.length > 0 && (
+              <Field
+                label="Conditions"
+                setting="qpcr-conditions"
+                info={
+                  <>
+                    <p>
+                      The samples of a condition are its biological replicates (mice, cultures, patients). BioSketch reads the condition from a sample’s name without the number at its end: “Control 1” and
+                      “Control 2” are “Control”. A column of conditions in the table, when there is one, decides instead.
+                    </p>
+                    <p>Fold changes are relative to the control condition: its mean ΔCt is the zero of ΔΔCt.</p>
+                  </>
+                }
+              >
+                <select className="text-input" aria-label="Control condition" value={result.control ?? ''} onChange={(e) => change({ control: e.target.value })}>
+                  {result.conditions.map((c) => (
+                    <option key={c} value={c}>
+                      Control: {c}
+                    </option>
+                  ))}
+                </select>
+                <ul className="chart-summary" aria-label="Samples of every condition">
+                  {result.conditions.map((c) => (
+                    <li key={c}>
+                      <span>
+                        <b>{c}</b>: {few(result.members[c] ?? [])}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <Check checked={!!settings.ownSamples} onChange={(v) => change({ ownSamples: v || undefined })}>
+                  Every sample is a condition of its own
+                </Check>
+                {!settings.ownSamples && result.conditions.length > 1 && (
+                  <div className="with-info">
+                    <Check checked={!!settings.paired} onChange={(v) => change({ paired: v || undefined })}>
+                      Each sample has its own control, with the same number
+                    </Check>
+                    <Info about="Paired samples">
+                      <p>
+                        Tick it when a sample and a control belong together: cells of one donor, one animal, one culture or one day, treated and untreated. They are matched by the number at the end of
+                        their names: “LPS 2” with “Control 2”. The test is then the paired t test on ΔCt, which removes the differences between donors; the fold changes and error bars stay the same.
+                      </p>
+                    </Info>
+                  </div>
+                )}
+              </Field>
+            )}
+            {result.targets.length > 1 && (
+              <Field
+                label="Efficiency of the primers"
+                setting="qpcr-efficiency"
+                info={
+                  <p>
+                    From a standard curve of the primer pair: 100 % means the product doubles every cycle. With efficiencies other than 100 % the fold change follows Pfaffl (2001). Leave 100 % when it is not
+                    known.
+                  </p>
+                }
+              >
+                {result.targets.map((target) => (
+                  <div key={target} className="row">
+                    <span className="grow">{target}</span>
+                    <input
+                      className="text-input small"
+                      inputMode="decimal"
+                      aria-label={`Efficiency of ${target}, in per cent`}
+                      value={effText[target] ?? String(settings.efficiency?.[target] ?? 100)}
+                      onChange={(e) => {
+                        setEffText({ ...effText, [target]: e.target.value })
+                        const v = Number(e.target.value.replace(',', '.'))
+                        if (Number.isFinite(v) && v >= 50 && v <= 150) {
+                          const { [target]: _old, ...others } = settings.efficiency ?? {}
+                          const next = v === 100 ? others : { ...others, [target]: v }
+                          change({ efficiency: Object.keys(next).length ? next : undefined })
+                        }
+                      }}
+                      onBlur={() => setEffText({})}
+                    />
+                    <span>%</span>
+                  </div>
+                ))}
+                <DilutionSeries
+                  targets={result.targets}
+                  onUse={(found) => {
+                    const next = { ...(settings.efficiency ?? {}) }
+                    for (const [target, v] of Object.entries(found)) {
+                      if (v === 100) delete next[target]
+                      else next[target] = v
+                    }
+                    setEffText({})
+                    change({ efficiency: Object.keys(next).length ? next : undefined })
+                  }}
+                />
+              </Field>
+            )}
+            <Field
+              label="Plate"
+              setting="plate"
+              info={
+                <>
+                  <p>The plate as the table names its wells: every well coloured by its condition, sample or target, with its Cq. A red ring marks a well the analysis has a remark on.</p>
+                  <p>“Put the plate on the page” adds the picture as circles and labels in one group, for a figure of the plate layout or a lab notebook.</p>
+                </>
+              }
+            >
+              {placed ? (
+                <PlateView<PlateColour>
+                  entriesFor={plateFor}
+                  choices={[
+                    { value: 'condition', label: 'Condition' },
+                    { value: 'sample', label: 'Sample' },
+                    { value: 'target', label: 'Target' },
+                  ]}
+                  initial="condition"
+                  palette={node.palette}
+                  flagWords="technical replicates more than 0.5 cycles apart, or a mean Cq of 35 or more"
+                  valueWords="Write the Cq in each well"
+                />
+              ) : (
+                <p className="hint">The table names no wells, so the plate cannot be drawn. Paste it with its column of wells (A1, B3 …), as the machine exports it.</p>
+              )}
+            </Field>
+          </>
+        )}
+        {tab === 'stats' && (
+          <>
+            <Field
+              label="Error bars"
+              setting="error"
+              info={
+                <>
+                  <p>
+                    The SD or SEM of ΔCt over the samples of a condition (its biological replicates). A condition with one sample takes it from its technical replicates instead: √(s_target² + s_reference²).
+                  </p>
+                  <p>On the fold-change scale an error bar reaches from 2^−(ΔΔCt + s) to 2^−(ΔΔCt − s), so it is longer above the bar than below it.</p>
+                </>
+              }
+            >
+              <Segmented label="Error bars" value={node.error ?? 'none'} options={ERROR_OPTIONS} onChange={(error) => set({ error: error === 'none' ? undefined : error })} />
+            </Field>
+            {result.genes.map((g) => (
+              <Field key={g.target} label={g.target} setting="fit">
+                <ul className="chart-summary" aria-label={`Fold changes of ${g.target}`}>
+                  {g.conditions.map((c) => (
+                    <li key={c.condition}>
+                      <span>
+                        <b>{c.condition}</b>: {foldText(c, log2)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </Field>
+            ))}
+            {result.compared > 0 && (
+              <p className="hint">
+                Each condition is compared with {result.control} by {result.paired ? 'the paired t test' : 'Welch’s t test'} on ΔCt
+                {result.compared > 1 ? `, corrected for ${result.compared} comparisons per gene by Holm’s method` : ''}.
+              </p>
+            )}
+            {result.genes.length > 0 && (
+              <Field label="On the chart" setting="qpcr-marks" info={<p>The result of the test of each condition against {result.control ?? 'the control'}, over the two bars: as stars ({STARS_KEY}) or as the p value, corrected by Holm’s method.</p>}>
+                <Segmented
+                  label="Test results on the chart"
+                  value={settings.marks ?? 'none'}
+                  options={[
+                    { value: 'none', label: 'Nothing' },
+                    { value: 'stars', label: 'Stars' },
+                    { value: 'p', label: 'p values' },
+                  ]}
+                  onChange={(v) => change({ marks: v === 'none' ? undefined : v })}
+                />
+              </Field>
+            )}
+            {cells.length > 1 && (
+              <div className="row wrap">
+                <button className="btn small" onClick={async () => toast((await copyText(resultText(cells))) ? 'Results copied: paste them into a spreadsheet.' : 'The results could not be copied.')}>
+                  Copy the results
+                </button>
+                <button className="btn small" onClick={() => addTableBeside(node, cells, 'Results added as a table by the chart. It does not follow later changes of the numbers.')}>
+                  Put the results on the page
+                </button>
+              </div>
+            )}
+            {methods && (
+              <div className="with-info">
+                <button
+                  className="btn small"
+                  onClick={async () =>
+                    toast((await copyText(methods)) ? 'Copied. Paste it into your methods or figure legend.' : 'Copying is blocked here. Open the “i” beside the button and copy the text from there.')
+                  }
+                >
+                  Copy a text for the methods
+                </button>
+                <Info about="The text for the methods">
+                  <p>{methods}</p>
+                </Info>
+              </div>
+            )}
+          </>
+        )}
+        {tab === 'look' && (
+          <>
+            <Field
+              label="Scale"
+              setting="qpcr-scale"
+              info={
+                <p>
+                  The fold change (2^−ΔΔCt: 1 is no change, 2 twice as much, 0.5 half), or its logarithm to base 2 (−ΔΔCt: 0 is no change, 1 twice as much, −1 half), on which a fall and a rise of the same size
+                  look the same.
+                </p>
+              }
+            >
+              <Segmented
+                label="Scale of the bars"
+                value={log2 ? 'log2' : 'fold'}
+                options={[
+                  { value: 'fold', label: 'Fold change', title: '2^−ΔΔCt' },
+                  { value: 'log2', label: 'log₂', title: '−ΔΔCt' },
+                ]}
+                onChange={(v) => change({ log2: v === 'log2' || undefined })}
+              />
+            </Field>
+            <Check checked={!!node.points} onChange={(v) => set({ points: v || undefined })}>
+              A dot for every sample
+            </Check>
+            <Field label="Colours" info={<p>{PALETTES.find((p) => p.id === (node.palette ?? 'biosketch'))?.about} Every condition takes the next colour.</p>}>
+              <select aria-label="Colour palette" value={node.palette ?? 'biosketch'} onChange={(e) => set({ palette: e.target.value === 'biosketch' ? undefined : e.target.value })}>
+                {PALETTES.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <div className="palette-strip" aria-hidden="true">
+                {paletteColours(node.palette).map((c) => (
+                  <span key={c} style={{ background: c }} />
+                ))}
+              </div>
+            </Field>
+            <Field label="Text size">
+              <NumberInput label="Size of the chart's text" value={node.fontSize ?? 13} min={6} max={60} onChange={(fontSize) => set({ fontSize }, 'chart-font')} />
+            </Field>
+          </>
+        )}
+        {tab === 'axes' && (
+          <>
+            <Field label="Title" setting="title">
+              <input
+                type="text"
+                className="text-line"
+                maxLength={120}
+                value={node.title ?? ''}
+                placeholder="e.g. Cytokines after LPS"
+                onChange={(e) => set({ title: e.target.value.trim() ? e.target.value : undefined }, 'chart-title')}
+              />
+            </Field>
+            <Field label="Title of the y axis" setting="y-title">
+              <input
+                type="text"
+                className="text-line"
+                maxLength={120}
+                value={node.yLabel ?? ''}
+                placeholder={log2 ? 'log_{2} fold change' : 'Fold change'}
+                onChange={(e) => set({ yLabel: e.target.value.trim() ? e.target.value : undefined }, 'chart-ylabel')}
+              />
+            </Field>
+            <AxisRange
+              title="Range of the y axis"
+              setting="y-range"
+              min={node.yMin}
+              max={node.yMax}
+              log={!!node.yLog}
+              onMin={(yMin) => set({ yMin }, 'chart-range')}
+              onMax={(yMax) => set({ yMax }, 'chart-range')}
+              onLog={(v) => set({ yLog: v || undefined })}
+            />
+          </>
+        )}
+      </div>
+    </Section>
+  )
+}
+
+/** Efficiencies worked out from a pasted dilution series, offered to replace the typed ones. */
+function DilutionSeries({ targets, onUse }: { targets: string[]; onUse: (found: Record<string, number>) => void }) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const reading = useMemo(() => (text.trim() ? readDilution(text) : null), [text])
+  if (!open) {
+    return (
+      <button className="btn small" onClick={() => setOpen(true)}>
+        From a dilution series…
+      </button>
+    )
+  }
+  const fits = reading?.fits ?? []
+  // Only targets of this chart, with an efficiency the analysis can take.
+  const usable = fits.filter(isEfficiencyFit).filter((f) => targets.includes(f.target) && f.efficiency >= 50 && f.efficiency <= 150)
+  const elsewhere = fits.filter((f) => !targets.includes(f.target)).map((f) => f.target)
+  return (
+    <div className="fit-block">
+      <span className="with-info">
+        <span className="sub-label">Dilution series</span>
+        <Info about="Efficiency from a dilution series">
+          <p>
+            Paste the Cq values of a dilution series of template: the amount in the first column (1, 0.1, 0.01 or 1:10, 1:100), then a column for every target named as in the table, one row per well. A table
+            exported by the machine with columns for the quantity, the target and the Cq works too.
+          </p>
+          <p>Cq is fitted as a straight line against log₁₀ of the amount (R: lm), and the efficiency is 10^(−1/slope) − 1: 100 % for a slope of −3.32.</p>
+        </Info>
+      </span>
+      <textarea className="text-input table-input" aria-label="Dilution series" rows={5} wrap="off" spellCheck={false} placeholder={'Dilution\tGAPDH\tIL6\n1\t15.0\t20.1\n1:10\t18.4\t23.6'} value={text} onChange={(e) => setText(e.target.value)} />
+      {reading?.notices.map((n, i) => (
+        <p key={i} className="notice">
+          {n}
+        </p>
+      ))}
+      {fits.length > 0 && (
+        <ul className="chart-summary" aria-label="Efficiencies of the dilution series">
+          {fits.map((f) => (
+            <li key={f.target}>
+              <span>
+                <b>{f.target}</b>:{' '}
+                {isEfficiencyFit(f)
+                  ? `${sig4(f.efficiency)} %${f.lo !== null && sig4(f.lo) !== sig4(f.hi!) ? ` (${sig4(f.lo)} to ${sig4(f.hi!)})` : ''}, slope ${sig4(f.slope)}, R² ${f.r2.toFixed(4)}, ${f.n} wells`
+                  : f.reason}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {elsewhere.length > 0 && <p className="hint">Not a target of this chart: {elsewhere.join(', ')}.</p>}
+      <div className="row wrap">
+        <button className="btn small" disabled={!usable.length} onClick={() => onUse(Object.fromEntries(usable.map((f) => [f.target, Math.round(f.efficiency * 10) / 10])))}>
+          Use {usable.length === 1 ? 'this efficiency' : 'these efficiencies'}
+        </button>
+        <button className="btn small" onClick={() => setOpen(false)}>
+          Close
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Small panels: the chart split into one panel per category or series, side by side. */
+function FacetSetting({ node, grouped }: { node: ChartNode; grouped: boolean }) {
+  const facet = node.facet
+  // Optional choices are left out rather than written as false.
+  const setFacet = (change: Partial<FacetSettings>) => {
+    const next = { ...facet, ...change }
+    const tidy = Object.fromEntries(Object.entries(next).filter(([, v]) => v !== undefined && v !== false)) as FacetSettings
+    patch<ChartNode>('chart', { facet: tidy })
+  }
+  const what = !grouped ? 'series' : facet?.by === 'series' ? 'series' : 'category'
+  return (
+    <Field
+      label="Small panels"
+      setting="facets"
+      info={
+        <>
+          The chart drawn as a row or grid of small panels, one per {grouped ? 'category (or series)' : 'series'}, with one legend and the axis titles written once. Only the drawing changes: the test, its
+          brackets and the fitted lines are those of the whole chart, and a bracket between groups of two panels is not drawn.
+        </>
+      }
+    >
+      <Check checked={!!facet} onChange={(on) => patch<ChartNode>('chart', { facet: on ? {} : undefined })}>
+        One panel per {what}
+      </Check>
+      {facet && (
+        <div className="fit-block">
+          {grouped && (
+            <Segmented
+              label="What each panel holds"
+              value={facet.by === 'series' ? 'series' : 'category'}
+              options={[
+                { value: 'category', label: 'A category' },
+                { value: 'series', label: 'A series' },
+              ]}
+              onChange={(v) => setFacet({ by: v === 'series' ? 'series' : undefined })}
+            />
+          )}
+          <Field label="Panels in a row">
+            <select aria-label="Panels in a row" value={facet.cols ?? 'auto'} onChange={(e) => setFacet({ cols: e.target.value === 'auto' ? undefined : Number(e.target.value) })}>
+              <option value="auto">Automatic</option>
+              {[1, 2, 3, 4, 5, 6].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Check checked={!!facet.free} onChange={(free) => setFacet({ free })}>
+            Each panel its own value axis
+          </Check>
+        </div>
+      )}
+    </Field>
+  )
+}
+
 function ChartProps({ node }: { node: ChartNode }) {
   // While the numbers are being typed the box shows exactly what was typed. That text is kept for
   // as long as the chart still holds the groups read from it; when they change in any other way
@@ -1122,10 +2603,46 @@ function ChartProps({ node }: { node: ChartNode }) {
 
   /** Survival curves are a way of drawing a table with times in its first column: the same table a scatter chart reads. */
   const onChoice = (choice: ChartChoice) => {
+    if (choice === 'kinetics' || choice === 'binding' || choice === 'melt') {
+      if (way === choice) return
+      if (!scatter) onKind('scatter')
+      return set({
+        kind: 'scatter',
+        kinetics: choice === 'kinetics' ? {} : undefined,
+        binding: choice === 'binding' ? {} : undefined,
+        melt: choice === 'melt' ? {} : undefined,
+        survival: undefined,
+        logRank: undefined,
+        fit: undefined,
+        curve: undefined,
+        doseBottom: undefined,
+        doseTop: undefined,
+        corr: undefined,
+        band: undefined,
+        xLog: undefined,
+        yLog: undefined,
+      })
+    }
+    if (way) set({ kinetics: undefined, binding: undefined, melt: undefined })
     if (choice === 'survival') {
       if (survival) return
       if (!scatter) onKind('scatter')
-      return set({ kind: 'scatter', survival: true, fit: undefined, curve: undefined, doseBottom: undefined, doseTop: undefined, corr: undefined, pointNames: undefined, xLog: undefined, yLog: undefined, yMin: undefined, yMax: undefined, refLines: undefined })
+      return set({
+        kind: 'scatter',
+        survival: true,
+        kinetics: undefined,
+        fit: undefined,
+        curve: undefined,
+        doseBottom: undefined,
+        doseTop: undefined,
+        corr: undefined,
+        pointNames: undefined,
+        xLog: undefined,
+        yLog: undefined,
+        yMin: undefined,
+        yMax: undefined,
+        refLines: undefined,
+      })
     }
     if (survival) set({ survival: undefined, logRank: undefined })
     onKind(choice)
@@ -1191,12 +2708,22 @@ function ChartProps({ node }: { node: ChartNode }) {
   }
   const pie = node.kind === 'pie'
   const survival = isSurvival(node)
+  const kin = isKinetics(node)
+  const bind = isBinding(node)
+  const mlt = isMelt(node)
+  /** A scatter table drawn as an analysis of its own: enzyme kinetics, binding or melting curves. */
+  const way: 'kinetics' | 'binding' | 'melt' | null = kin ? 'kinetics' : bind ? 'binding' : mlt ? 'melt' : null
   const lives = survival ? survivalOf(node) : null
   /** A chart with axes and groups along them: neither a pie, nor a heat map, nor a Venn diagram. */
   const axes = !pie && !heat && !venn
   const matrix = heat ? heatMatrix(node) : null
   const sets = venn ? vennOf(node.groups) : null
-  const hasLegend = !heat && !venn && (grouped || pie || (scatter && series.length > 1))
+  const hasLegend =
+    !heat &&
+    !venn &&
+    (grouped || pie || (scatter && series.length > 1)) &&
+    // Small panels of one series each are named by their titles, with no legend.
+    !(node.facet && canFacet(node) && (scatter || node.facet.by === 'series'))
   // The number written at every group: what the chart holds, as it is drawn.
   const labels = usableValueLabels(node.valueLabels)
   const setLabels = (change: Partial<ChartValueLabels>, merge?: string) => set({ valueLabels: usableValueLabels({ ...(labels ?? { show: usualValueLabel(node.kind) }), ...change }) }, merge)
@@ -1249,7 +2776,7 @@ function ChartProps({ node }: { node: ChartNode }) {
   const shownDone = useRef(0)
   useEffect(() => {
     if (!pressed || pressed.id !== node.id) return
-    const to = settingFor(pressed.part, node.kind, survival)
+    const to = settingFor(pressed.part, node.kind, survival, way)
     if (!tabs.includes(to.tab)) return
     let setting = to.setting
     if (pressed.part.what === 'group') {
@@ -1408,7 +2935,7 @@ function ChartProps({ node }: { node: ChartNode }) {
         ))}
         {tab === 'data' && (
           <>
-            <Segmented label="Chart type" value={survival ? 'survival' : node.kind} options={CHART_OPTIONS} onChange={onChoice} wrap />
+            <Segmented label="Chart type" value={survival ? 'survival' : (way ?? node.kind)} options={CHART_OPTIONS} onChange={onChoice} wrap />
             <Field
               label={venn ? 'Sets' : 'Numbers'}
                 setting="table"
@@ -1420,10 +2947,16 @@ function ChartProps({ node }: { node: ChartNode }) {
                       : heat
                         ? 'One column for every column of cells, with its name in the first row; one row for every row of cells. To name the rows (genes, samples), put a column of names before the numbers.'
                         : survival
-                      ? 'First column: the time (days, weeks) at which each subject had the event or left the study. Each further column is one group, with its name in the first row: in the row of a subject write 1 if it had the event (died, relapsed) at that time, or 0 if it left the study without it. Leave the other groups empty in that row.'
-                      : scatter
-                        ? 'First column: the x values. Each further column: the y values of one series, with its name in the first row.'
-                        : 'One column per group, with its name in the first row; one row per replicate.'}
+                          ? 'First column: the time (days, weeks) at which each subject had the event or left the study. Each further column is one group, with its name in the first row: in the row of a subject write 1 if it had the event (died, relapsed) at that time, or 0 if it left the study without it. Leave the other groups empty in that row.'
+                          : bind
+                            ? 'First column: the free ligand concentration. Each further column: the bound ligand of one series (a receptor, a mutant), with its name in the first row. Replicates go in rows of their own with the same concentration.'
+                            : mlt
+                              ? 'First column: the temperature. Each further column: the signal of one well or curve (fluorescence, absorbance, ellipticity), with its name in the first row.'
+                              : kin
+                                ? 'First column: the substrate concentration. Each further column: the initial rates of one series (an enzyme, a mutant, or one inhibitor concentration), with its name in the first row. Replicates go in rows of their own with the same concentration.'
+                                : scatter
+                                  ? 'First column: the x values. Each further column: the y values of one series, with its name in the first row.'
+                                  : 'One column per group, with its name in the first row; one row per replicate.'}
                   </p>
                   <p>
                     {venn
@@ -1431,10 +2964,16 @@ function ChartProps({ node }: { node: ChartNode }) {
                       : heat
                         ? 'An empty cell of the table is drawn as an empty cell. A heat map takes up to 24 columns and draws up to 400 rows.'
                         : survival
-                      ? 'A subject that is still alive when the study ends is written with the time the study ended and 0.'
-                      : scatter
-                        ? 'To write names beside points (genes, samples), put a column of names before the x values; only rows with a name are labelled.'
-                        : 'For a grouped chart, add a row above with the category of each column (for example WT, WT, KO, KO).'}
+                          ? 'A subject that is still alive when the study ends is written with the time the study ended and 0.'
+                          : bind
+                            ? 'For total and nonspecific binding fitted together, name one column “Total” and one “Nonspecific” (or “NSB”).'
+                            : mlt
+                              ? 'Wells whose names differ only by a number (Apo 1, Apo 2) are taken as replicates of one condition, and the Tm of each condition is compared with the first.'
+                              : kin
+                                ? 'For a model of inhibition, name each column by its inhibitor concentration: 0, 5 µM, 10 µM (the first number in the name is taken; “Control” or “No inhibitor” counts as 0).'
+                                : scatter
+                                  ? 'To write names beside points (genes, samples), put a column of names before the x values; only rows with a name are labelled.'
+                                  : 'For a grouped chart, add a row above with the category of each column (for example WT, WT, KO, KO).'}
                   </p>
                   <p>Paste from a spreadsheet, type with tabs, commas or spaces between the numbers, or import a .csv, .txt or .xlsx file (the first sheet).</p>
                 </>
@@ -1607,7 +3146,7 @@ function ChartProps({ node }: { node: ChartNode }) {
                 <Segmented label="Error bars" value={node.error ?? 'none'} options={ERROR_OPTIONS} onChange={(error) => set({ error: error === 'none' ? undefined : error })} />
               </Field>
             )}
-            {scatter && !survival && (
+            {scatter && !survival && !way && (
               <Field
                 label="Fitted line"
                 setting="fit"
@@ -1687,7 +3226,7 @@ function ChartProps({ node }: { node: ChartNode }) {
                 )}
               </Field>
             )}
-            {scatter && !survival && (
+            {scatter && !survival && !way && (
               <Field
                 label="Correlation"
                 setting="corr"
@@ -1717,6 +3256,9 @@ function ChartProps({ node }: { node: ChartNode }) {
                 {node.corr && perSeries('The correlation of each series', corrOf)}
               </Field>
             )}
+            {kin && <KineticsSection node={node} set={set} />}
+            {bind && <BindingSection node={node} set={set} />}
+            {mlt && <MeltSection node={node} set={set} />}
             {survival && lives && (
               <Field
                 label="Log-rank test"
@@ -1996,7 +3538,10 @@ function ChartProps({ node }: { node: ChartNode }) {
                       {showsPoints && !survival ? ', the shape of the points' : ''}
                       {heat ? '' : ' and the'} name of each {grouped ? 'series' : heat ? 'column' : 'group'}.
                     </p>
-                    <p>Type over a name to change it: on the chart{hasLegend ? ', in the legend' : ''} and in the table under “Data”. Names accept {MARKS}.</p>
+                    <p>
+                      Type over a name to change it: on the chart
+                      {hasLegend ? ', in the legend' : ''} and in the table under “Data”. Names accept {MARKS}.
+                    </p>
                     {grouped && <p>The categories are named under the series.</p>}
                   </>
                 }
@@ -2168,6 +3713,7 @@ function ChartProps({ node }: { node: ChartNode }) {
                 )}
               </Field>
             )}
+            {canFacet(node) && <FacetSetting node={node} grouped={grouped} />}
             {hasLegend && (
               <Field label="Legend" setting="legend">
                 <select aria-label="Place of the legend" value={node.legend ?? 'right'} onChange={(e) => set({ legend: e.target.value === 'right' ? undefined : (e.target.value as LegendPlace) })}>
@@ -2229,7 +3775,10 @@ function ChartProps({ node }: { node: ChartNode }) {
                 setting="lines"
                 info={
                   <>
-                    <p>A dashed line across the plot at a value you choose, for example a threshold or a detection limit.{scatter ? ' In a scatter chart a line can also stand upright at an x value.' : ''}</p>
+                    <p>
+                      A dashed line across the plot at a value you choose, for example a threshold or a detection limit.
+                      {scatter ? ' In a scatter chart a line can also stand upright at an x value.' : ''}
+                    </p>
                     <p>The axis always reaches the line. A label is written on the line at its right end.</p>
                     <p>In words: “dotted line at 1.3 labelled cut-off”.</p>
                   </>
@@ -2325,7 +3874,10 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
       label="Statistical test"
       info={
         <>
-          <p>Say how the groups were measured: tick the box when each row of the table is one sample measured in every group{k > 2 ? ', and choose which pairs of groups to compare' : ''}.</p>
+          <p>
+            Say how the groups were measured: tick the box when each row of the table is one sample measured in every group
+            {k > 2 ? ', and choose which pairs of groups to compare' : ''}.
+          </p>
           <p>BioSketch then suggests a test for this table. The suggestion is advice: choose the test yourself below, and its result appears under it.</p>
           <p>All p values are two-sided and worked out as R does by default. Results are not stored: they follow the numbers in the table.</p>
         </>
@@ -2973,11 +4525,14 @@ function AddToPage() {
         <button className="btn small" title="Add the next panel letter: A, B, C…" onClick={addPanelLetter}>
           <Icon name="text" size={14} /> Panel letter
         </button>
-        <button className="btn small" title="Add a chart drawn from your own numbers" onClick={addChart}>
+        <button className="btn small" title="Add a chart drawn from your own numbers" onClick={() => addChart()}>
           <Icon name="chart" size={14} /> Chart
         </button>
         <button className="btn small" title="Add a table of words and numbers, pasted from a spreadsheet or typed" onClick={() => addTable()}>
           <Icon name="grid" size={14} /> Table
+        </button>
+        <button className="btn small" title="Every kind of chart, analysis and object, with a preview" onClick={() => useEditor.setState({ dialog: 'add' })}>
+          <Icon name="addBox" size={14} /> More…
         </button>
       </div>
       <Field label="Panels">
@@ -3132,8 +4687,12 @@ export function PropertiesPanel() {
           {nodes.length > 1 && <p className="selection-count">{nodes.length} objects selected</p>}
           {sameType && first.type === 'icon' && <IconProps node={first} single={nodes.length === 1} />}
           {sameType && first.type === 'image' && <ImageProps node={first} />}
-          {sameType && first.type === 'chart' && nodes.length === 1 && <ChartProps key={first.id} node={first} />}
+          {sameType &&
+            first.type === 'chart' &&
+            nodes.length === 1 &&
+            (first.kind === 'standard' ? <StandardProps key={first.id} node={first} /> : first.kind === 'qpcr' ? <QpcrProps key={first.id} node={first} /> : <ChartProps key={first.id} node={first} />)}
           {sameType && first.type === 'table' && nodes.length === 1 && <TableProps key={first.id} node={first} />}
+          {sameType && first.type === 'structure' && nodes.length === 1 && <StructureProps key={first.id} node={first} />}
           {sameType && first.type === 'shape' && <ShapeProps node={first} single={nodes.length === 1} />}
           {sameType && first.type === 'text' && <TextProps node={first} single={nodes.length === 1} />}
           {sameType && first.type === 'connector' && <ConnectorProps node={first} />}

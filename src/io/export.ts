@@ -1,5 +1,6 @@
 // Export: SVG, PNG and the attribution text for the icons used.
 
+import { structureCredit } from '../model/structure'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { getIcon, isPublicDomain } from '../icons/library'
@@ -68,9 +69,16 @@ export function attributionLines(doc: FigDoc): string[] {
   return [...new Set(lines)]
 }
 
+/** The credit of every protein structure shown (AlphaFold DB asks for one; the PDB entry is named). */
+export function structureCredits(doc: FigDoc): string[] {
+  return [...new Set(doc.nodes.flatMap((n) => (n.type === 'structure' && !n.hidden ? [structureCredit(n)] : [])).filter(Boolean))]
+}
+
 export function attributionText(doc: FigDoc): string {
   const lines = attributionLines(doc)
-  return lines.length ? `Created with BioSketch. Icons: ${lines.join('; ')}.` : ''
+  const structures = structureCredits(doc)
+  if (!lines.length && !structures.length) return ''
+  return ['Created with BioSketch.', lines.length ? `Icons: ${lines.join('; ')}.` : '', ...structures].filter(Boolean).join(' ')
 }
 
 /** Millimetres per figure unit when a printed width is set, otherwise null. */

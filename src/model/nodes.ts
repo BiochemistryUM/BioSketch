@@ -284,7 +284,7 @@ export const findNode = (doc: FigDoc, id: string | undefined): FigNode | undefin
 
 /** Node types a connector end can attach to. */
 export const canAttach = (n: FigNode | undefined): boolean =>
-  !!n && (n.type === 'icon' || n.type === 'shape' || n.type === 'text' || n.type === 'image' || n.type === 'chart' || n.type === 'table')
+  !!n && (n.type === 'icon' || n.type === 'shape' || n.type === 'text' || n.type === 'image' || n.type === 'chart' || n.type === 'table' || n.type === 'structure')
 
 // ---------- connectors ----------
 
@@ -462,6 +462,7 @@ export function getBox(node: FigNode, doc: FigDoc): Box {
     case 'image':
     case 'chart':
     case 'table':
+    case 'structure':
       return { x: node.x, y: node.y, w: node.w, h: node.h, rotation: node.rotation }
     case 'text': {
       const m = measureText(node)
@@ -501,6 +502,7 @@ export function translateNode<T extends FigNode>(node: T, dx: number, dy: number
     case 'image':
     case 'chart':
     case 'table':
+    case 'structure':
       return { ...node, x: node.x + dx, y: node.y + dy }
     case 'membrane':
       return { ...node, points: node.points.map((p) => ({ x: p.x + dx, y: p.y + dy })) }
@@ -537,6 +539,7 @@ export function resizeNode(node: FigNode, oldBox: Box, newBox: Box): FigNode {
     case 'image':
     case 'chart':
     case 'table':
+    case 'structure':
       return { ...node, x: newBox.x, y: newBox.y, w: newBox.w, h: newBox.h }
     case 'text': {
       const scale = oldBox.h > 1e-6 ? newBox.h / oldBox.h : 1
@@ -598,7 +601,8 @@ export function rotateNodeAbout<T extends FigNode>(node: T, delta: number, origi
     case 'text':
     case 'image':
     case 'chart':
-    case 'table': {
+    case 'table':
+    case 'structure': {
       const c = rectCenter(getBox(node, doc))
       const moved = rotate(c, delta, origin)
       return { ...translateNode(node, moved.x - c.x, moved.y - c.y), rotation: normDeg(node.rotation + delta) }
@@ -638,7 +642,8 @@ export function scaleNode<T extends FigNode>(node: T, s: number, origin: Point, 
     case 'shape':
     case 'image':
     case 'chart':
-    case 'table': {
+    case 'table':
+    case 'structure': {
       const c = at(rectCenter(getBox(node, doc)))
       const w = node.w * s
       const h = node.h * s

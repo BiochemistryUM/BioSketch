@@ -14,7 +14,7 @@ const SHAPES = {
   callout: 'Callout',
   bracket: 'Bracket',
 } as const
-const CHARTS = { bar: 'Bar chart', dot: 'Dot chart', line: 'Line chart', box: 'Box plot', violin: 'Violin plot', scatter: 'Scatter chart', pie: 'Pie chart', heatmap: 'Heat map', venn: 'Venn diagram' } as const
+const CHARTS = { bar: 'Bar chart', dot: 'Dot chart', line: 'Line chart', box: 'Box plot', violin: 'Violin plot', scatter: 'Scatter chart', pie: 'Pie chart', heatmap: 'Heat map', venn: 'Venn diagram', standard: 'Standard curve', qpcr: 'qPCR fold change' } as const
 const CONNECTORS = { arrow: 'Arrow', inhibit: 'Inhibition arrow', dot: 'Round-ended arrow', line: 'Line', double: 'Double arrow' } as const
 
 /** Text without formatting marks, on one line, shortened to `max` characters. */
@@ -48,6 +48,8 @@ export function nodeKind(node: FigNode, iconName?: string): string {
       return CHARTS[node.kind]
     case 'table':
       return 'Table'
+    case 'structure':
+      return 'Protein structure'
   }
 }
 

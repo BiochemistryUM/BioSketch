@@ -1,0 +1,66 @@
+{
+  "query_id" : "3742db85-ed9d-4b84-875c-96e01d4fe48f",
+  "result_type" : "entry",
+  "total_count" : 179,
+  "result_set" : [ {
+    "identifier" : "5EC6",
+    "score" : 1.0
+  }, {
+    "identifier" : "5EE2",
+    "score" : 0.9807049257374575
+  }, {
+    "identifier" : "4X0J",
+    "score" : 0.9692655564886425
+  }, {
+    "identifier" : "2M5J",
+    "score" : 0.9573567889354807
+  }, {
+    "identifier" : "9DIR",
+    "score" : 0.9350944510104675
+  }, {
+    "identifier" : "9DIS",
+    "score" : 0.9350944510104675
+  }, {
+    "identifier" : "3S48",
+    "score" : 0.917686120944503
+  }, {
+    "identifier" : "3FHH",
+    "score" : 0.9138440588675452
+  }, {
+    "identifier" : "9DHE",
+    "score" : 0.9138440588675452
+  }, {
+    "identifier" : "1HDA",
+    "score" : 0.8966452041008588
+  }, {
+    "identifier" : "3CSN",
+    "score" : 0.874114672093432
+  }, {
+    "identifier" : "5C58",
+    "score" : 0.874114672093432
+  }, {
+    "identifier" : "9YJW",
+    "score" : 0.8707195414937072
+  }, {
+    "identifier" : "1W09",
+    "score" : 0.8603697840298519
+  }, {
+    "identifier" : "1W0A",
+    "score" : 0.8603697840298519
+  }, {
+    "identifier" : "1W0B",
+    "score" : 0.8603697840298519
+  }, {
+    "identifier" : "1XZY",
+    "score" : 0.8603697840298519
+  }, {
+    "identifier" : "3OVU",
+    "score" : 0.8577898531596336
+  }, {
+    "identifier" : "1Z8U",
+    "score" : 0.8443477099909217
+  }, {
+    "identifier" : "3CSL",
+    "score" : 0.8262213800192827
+  } ]
+}

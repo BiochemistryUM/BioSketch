@@ -209,4 +209,40 @@ export async function loadStartup(): Promise<{ id: string; doc: FigDoc | null }>
   return { id: pick.id, doc: await loadFigure(pick.id) }
 }
 
+/**
+ * Add the figures of a backup to this browser, each under a new id and with its time and project.
+ * A figure that is already here exactly as it is (same text) is not added twice, so reading the
+ * same backup again changes nothing. Nothing here is replaced or deleted.
+ */
+export async function restoreFigures(entries: { doc: FigDoc; project?: string; updated: number }[]): Promise<{ added: number; same: number; failed: number }> {
+  const all = await listFigures()
+  const here = new Set<string>()
+  for (const m of all) {
+    const text = await kvGet(figKey(m.id))
+    if (text) here.add(text)
+  }
+  const added: FigureMeta[] = []
+  let same = 0
+  let failed = 0
+  for (const e of entries) {
+    const text = serializeDoc(e.doc)
+    if (here.has(text)) {
+      same++
+      continue
+    }
+    const id = newId()
+    if (!(await kvSet(figKey(id), text))) {
+      failed++
+      continue
+    }
+    here.add(text)
+    added.push({ id, name: e.doc.name, updated: e.updated, objects: everyNode(e.doc).length, slides: slideCount(e.doc), ...(e.project ? { project: e.project } : {}) })
+  }
+  // The index is read again: autosave may have changed it while the figures were being read and written.
+  if (added.length && !(await kvSet(INDEX, JSON.stringify([...(await listFigures()), ...added].sort((a, b) => b.updated - a.updated))))) {
+    return { added: 0, same, failed: failed + added.length }
+  }
+  return { added: added.length, same, failed }
+}
+
 export { newId as newFigureId }

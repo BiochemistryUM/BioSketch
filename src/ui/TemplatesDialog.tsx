@@ -19,7 +19,7 @@ interface Start {
   build: () => Promise<FigDoc | null>
 }
 
-const TOUR: Start = { id: 'tour', name: 'Tour of the features', description: 'Twelve slides with examples to try, from icons to statistics', group: 'Learn', build: tourDoc }
+const TOUR: Start = { id: 'tour', name: 'Tour of the features', description: 'Thirteen slides with examples to try, from icons to statistics and molecules', group: 'Learn', build: tourDoc }
 const start = (t: Template): Start => ({ id: t.id, name: t.name, description: t.description, group: t.group ?? 'Example figures', build: () => exampleDoc(t) })
 
 /** The starts in the order they are listed, under the heading of their group. */

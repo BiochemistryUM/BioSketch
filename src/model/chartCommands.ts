@@ -47,7 +47,7 @@ export const INSTRUCTION_EXAMPLES = [
 
 const NUM = '[-+]?(?:\\d+(?:[.,]\\d+)?|[.,]\\d+)(?:e[-+]?\\d+)?'
 const toNumber = (s: string): number => Number(s.replace(',', '.'))
-const KIND_NAMES: Record<ChartKind, string> = { bar: 'bar chart', dot: 'dot chart', line: 'line chart', box: 'box plot', violin: 'violin plot', scatter: 'scatter chart', pie: 'pie chart', heatmap: 'heat map', venn: 'Venn diagram' }
+const KIND_NAMES: Record<ChartKind, string> = { bar: 'bar chart', dot: 'dot chart', line: 'line chart', box: 'box plot', violin: 'violin plot', scatter: 'scatter chart', pie: 'pie chart', heatmap: 'heat map', venn: 'Venn diagram', standard: 'standard curve', qpcr: 'qPCR fold change' }
 const COLOURS: Record<string, string> = {
   red: '#d9534f', blue: '#4a90d9', green: '#5cb85c', orange: '#f0a04b', yellow: '#f3c95e', purple: '#8e6bbf', violet: '#8e6bbf', pink: '#e58ab5',
   grey: '#9aa3ad', gray: '#9aa3ad', black: '#2b2f36', teal: '#3aa6a0', turquoise: '#3aa6a0', brown: '#9c6b4e', white: '#ffffff', magenta: '#cc3fa4', cyan: '#43b7d6',

@@ -1,5 +1,7 @@
 // Editor commands. Menus, buttons and keyboard shortcuts all call these.
 
+import type { Trace } from './io/structures'
+import { chainsFrom, residuesLeftOut, STRUCTURE_RESIDUES_MAX } from './model/structure'
 import { keepFavourites, keepRecent, toggleId, usedId } from './icons/favourites'
 import { getIcon } from './icons/library'
 import { finishReshape } from './icons/reshape'
@@ -32,8 +34,9 @@ import { TEXT_WIDTH_MIN, findNode, getRect, translateNode } from './model/nodes'
 import { layoutNodes, slideFromTemplate, type SlideLayoutId } from './model/layouts'
 import { panelNodes, type PanelLayout } from './model/panels'
 import { newTable } from './model/table'
+import { chartSample, type ChartSample, type ChartStart } from './model/chartSamples'
 import { MAX_SLIDES, addSlide, duplicateSlide, mapSlides, moveSlide, removeSlide, showSlide, slideCount, slideIndex } from './model/slides'
-import type { ChartNode, FigDoc, FigNode, IconDef, IconNode, Point, Rect, TextNode } from './model/types'
+import type { ChartNode, FigDoc, FigNode, IconDef, IconNode, Point, Rect, StructureNode, TextNode } from './model/types'
 import { isPickable } from './model/types'
 import { toast, useEditor, type Tool, type View } from './store'
 
@@ -194,27 +197,34 @@ export const SAMPLE_CHART: ChartNode['groups'] = [
   { name: 'Rescue', values: [5, 4.7, 5.6, 5.2] },
 ]
 
+/** What a new chart says about its example numbers, by the kind it was added as. */
+const CHART_ADDED: Partial<Record<ChartSample, string>> = {
+  scatter: 'Scatter chart added. Paste your table under “Numbers”: x values in the first column.',
+  dose: 'Dose-response curve added. Paste doses in the first column and responses beside them.',
+  survival: 'Survival curves added. Paste times in the first column, then 1 (event) or 0 (left the study) per group.',
+  heatmap: 'Heat map added. Paste your table under “Numbers”: names of rows in the first column.',
+  standard: 'Standard curve added with a BCA example. Paste your plate or table under “Table”: BioSketch shows what it took each column to be.',
+  kinetics: 'Enzyme kinetics added. Paste substrate concentrations in the first column and rates beside them, one column per enzyme or per inhibitor concentration.',
+  binding: 'Saturation binding added. Paste free ligand concentrations in the first column and the bound values beside them, one column per receptor (or “Total” and “Nonspecific”).',
+  melt: 'Melting curves added. Paste temperatures in the first column and the signal of every well beside them; wells named “Apo 1”, “Apo 2” count as replicates.',
+  venn: 'Venn diagram added. Paste your lists of names under “Sets”, one column per set.',
+  qpcr: 'qPCR fold change added with an example plate. Paste the results of your qPCR machine under “Table”, one row per well: BioSketch shows what it took each column to be.',
+}
+
 /** Add a chart with example numbers in the middle of the view, selected, so its numbers can be replaced in the panel. */
-export function addChart(): void {
+export function addChart(sample: ChartSample = 'bar'): void {
+  placeChart(chartSample(sample), CHART_ADDED[sample] ?? 'Chart added with example numbers. Paste your own under “Numbers” in the panel.')
+}
+
+/** Add a chart that is already filled (a suggestion for a pasted table) in the middle of the view, selected. */
+export function placeChart(start: ChartStart, note: string): void {
   const s = S()
-  const [w, h] = [360, 260]
-  const centre = { x: (s.canvasSize.w / 2 - s.view.x) / s.view.zoom, y: (s.canvasSize.h / 2 - s.view.y) / s.view.zoom }
-  const node: ChartNode = {
-    id: uid(),
-    type: 'chart',
-    x: Math.round(centre.x - w / 2),
-    y: Math.round(centre.y - h / 2),
-    w,
-    h,
-    rotation: 0,
-    kind: 'bar',
-    groups: SAMPLE_CHART.map((g) => ({ ...g, values: [...g.values] })),
-    error: 'sd',
-    points: true,
-  }
+  const [w, h] = start.kind === 'pie' || start.kind === 'venn' ? [300, 260] : start.kind === 'qpcr' || start.kind === 'heatmap' ? [400, 280] : [360, 260]
+  const centre = viewCenter()
+  const node: ChartNode = { id: uid(), type: 'chart', x: Math.round(centre.x - w / 2), y: Math.round(centre.y - h / 2), w, h, rotation: 0, ...start }
   s.commit((doc) => ({ ...doc, nodes: [...doc.nodes, node] }), { select: [node.id] })
   s.set({ tool: 'select' })
-  toast('Chart added with example numbers. Paste your own under “Numbers” in the panel.')
+  toast(note)
 }
 
 /** The cells a new table starts with, so there is something to look at before the scientist pastes their own. */
@@ -234,6 +244,51 @@ export function addTable(cells: string[][] = SAMPLE_TABLE): void {
   s.commit((doc) => ({ ...doc, nodes: [...doc.nodes, node] }), { select: [node.id] })
   s.set({ tool: 'select' })
   toast('Table added with example cells. Paste your own under “Cells” in the panel.')
+}
+
+/** Add a table of results beside an object (at its right), selected. */
+export function addTableBeside(beside: Rect, cells: string[][], note: string): void {
+  const s = S()
+  const right = newTable(uid(), cells, beside.x + beside.w + 24, beside.y, Math.max(200, s.doc.width * 0.6))
+  // Beside the chart when there is room on the page, otherwise under it, kept on the page.
+  const node =
+    right.x + right.w <= s.doc.width
+      ? right
+      : { ...right, x: Math.max(0, Math.min(beside.x, s.doc.width - right.w)), y: beside.y + beside.h + 24 }
+  s.commit((doc) => ({ ...doc, nodes: [...doc.nodes, node] }), { select: [node.id] })
+  toast(note)
+}
+
+/** Add a protein structure read from a file or a database, in the middle of the view, seen from the front. */
+export function addStructure(trace: Trace, source: StructureNode['source'], title?: string): void {
+  const s = S()
+  const chains = chainsFrom(trace)
+  if (!chains.length) return toast('No protein chain was found in this structure.')
+  const size = Math.round(Math.max(160, Math.min(s.doc.width, s.doc.height) * 0.5))
+  const centre = viewCenter()
+  const plddt = source.kind === 'alphafold'
+  const node: StructureNode = {
+    id: uid(),
+    type: 'structure',
+    x: Math.round(centre.x - size / 2),
+    y: Math.round(centre.y - size / 2),
+    w: size,
+    h: size,
+    rotation: 0,
+    chains,
+    view: [0, 0],
+    ...(plddt ? { colour: 'plddt' as const } : chains.length === 1 ? { colour: 'rainbow' as const } : {}),
+    source,
+    ...(title ? { title: title.slice(0, 200) } : {}),
+  }
+  s.commit((doc) => ({ ...doc, nodes: [...doc.nodes, node] }), { select: [node.id] })
+  s.set({ tool: 'select' })
+  const left = residuesLeftOut(trace)
+  const count = chains.reduce((n, c) => n + c.nums.length, 0)
+  toast(
+    `${title ? `${title}: ` : ''}${count} residues in ${chains.length} chain${chains.length === 1 ? '' : 's'} added. Turn it and colour it in the panel.` +
+      (left ? ` ${left} residues beyond the first ${STRUCTURE_RESIDUES_MAX} were left out.` : ''),
+  )
 }
 
 /** Add the next panel letter (A, B, C…) as a bold label near the top-left of the view. */
@@ -444,6 +499,25 @@ export function addText(at: Point, text = 'Label', width?: number): string {
 
 export function addCustomIcon(def: IconDef): void {
   S().commit((doc) => ({ ...doc, customIcons: { ...doc.customIcons, [def.id]: def } }))
+}
+
+/**
+ * An icon of the figure drawn again (a chemical structure edited in the structure editor): every
+ * use of it on every slide keeps its middle and its scale, and takes the new drawing's shape.
+ */
+export function replaceCustomIcon(def: IconDef): void {
+  S().commit((doc) => {
+    const old = doc.customIcons[def.id]
+    const redraw = (nodes: FigNode[]): FigNode[] =>
+      nodes.map((n) => {
+        if (n.type !== 'icon' || n.iconId !== def.id || !old) return n
+        const k = n.w / old.viewBox[0]
+        const w = def.viewBox[0] * k
+        const h = def.viewBox[1] * k
+        return { ...n, x: n.x + (n.w - w) / 2, y: n.y + (n.h - h) / 2, w, h }
+      })
+    return { ...mapSlides(doc, redraw), customIcons: { ...doc.customIcons, [def.id]: def } }
+  })
 }
 
 export function removeCustomIcon(id: string): void {

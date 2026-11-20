@@ -20,9 +20,30 @@ import {
 import { input } from './canvas/input'
 import { finishReshape } from './icons/reshape'
 import { placeImageFile } from './io/images'
+import { isTableText } from './model/tableRoles'
 import { slideCount } from './model/slides'
 import { useEditor, type Tool } from './store'
 import { saveFile } from './ui/TopBar'
+
+/**
+ * What BioSketch puts on the computer's clipboard when objects are copied, so that a table copied
+ * from a spreadsheet earlier is not taken for what is to be pasted. Where the browser does not let
+ * the page write it, objects copied in BioSketch are pasted before any table.
+ */
+const COPIED = 'BioSketch objects'
+let markerUnwritten = false
+
+function copyObjects(): void {
+  copySelection()
+  if (!useEditor.getState().selection.length) return
+  markerUnwritten = true
+  navigator.clipboard
+    ?.writeText(COPIED)
+    .then(() => {
+      markerUnwritten = false
+    })
+    .catch(() => undefined)
+}
 
 const TOOL_KEYS: Record<string, Tool> = { v: 'select', h: 'pan', t: 'text', r: 'shape', a: 'connector', m: 'membrane', p: 'pen', e: 'eraser' }
 
@@ -39,6 +60,15 @@ function isTyping(target: EventTarget | null): boolean {
 
 export function installKeyboard(): () => void {
   const onKeyDown = (e: KeyboardEvent) => {
+    // ⌘K / Ctrl K opens Search from anywhere, also while typing in a box, but not over another dialog.
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k' && !useEditor.getState().presenting) {
+      const d = useEditor.getState().dialog
+      if (!d || d === 'search') {
+        e.preventDefault()
+        useEditor.setState({ dialog: 'search' })
+        return
+      }
+    }
     if (isTyping(e.target)) return
     const s = useEditor.getState()
     // While the slides are shown full screen the keys belong to the presentation (see Presenter).
@@ -73,10 +103,10 @@ export function installKeyboard(): () => void {
             s.redo()
             return true
           case 'c':
-            copySelection()
+            copyObjects()
             return true
           case 'x':
-            copySelection()
+            copyObjects()
             deleteSelection()
             return true
           case 'v':
@@ -174,12 +204,15 @@ export function installKeyboard(): () => void {
   const onBlur = () => {
     input.space = false
   }
-  // Paste: a picture copied from elsewhere is placed on the page; otherwise objects copied in BioSketch.
+  // Paste: a picture copied from elsewhere is placed on the page; a table copied from a spreadsheet
+  // opens "Chart from a table"; otherwise objects copied in BioSketch.
   const onPaste = (e: ClipboardEvent) => {
     if (isTyping(e.target) || useEditor.getState().dialog || useEditor.getState().presenting) return
     const picture = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/'))
+    const text = e.clipboardData?.getData('text/plain') ?? ''
     e.preventDefault()
     if (picture) void placeImageFile(picture)
+    else if (text !== COPIED && !(markerUnwritten && useEditor.getState().clipboard.length) && isTableText(text)) useEditor.setState({ dialog: 'suggest', dialogQuery: text })
     else pasteClipboard()
   }
   window.addEventListener('paste', onPaste)

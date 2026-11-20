@@ -1,33 +1,29 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
-import { missingIconsNote } from './icons/library'
-import { startAutosave } from './io/autosave'
-import { loadStartup } from './io/storage'
-import { toast, useEditor } from './store'
+import { openLastFigure } from './startup'
+import { useEditor } from './store'
+import { Crash } from './ui/Crash'
 import { preloadDialogs } from './ui/lazyDialogs'
 import { applyTheme } from './ui/theme'
+import { VERSION } from './version'
 import './styles.css'
 
-async function start() {
-  // Open the figure that was open last time, then keep saving it as it changes.
-  const { id, doc } = await loadStartup()
-  useEditor.getState().set({ figureId: id })
-  if (doc) useEditor.getState().loadDoc(doc)
-  startAutosave()
-  const note = doc && missingIconsNote(doc)
-  if (note) toast(note)
-
+function start() {
   // In development, expose the editor state for debugging from the browser console.
   if (import.meta.env.DEV) (window as unknown as { __editor: typeof useEditor }).__editor = useEditor
 
   applyTheme(useEditor.getState().theme)
 
+  // The editor is drawn first, so that a browser whose storage is slow or broken never shows a white page.
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <App />
+      <Crash>
+        <App />
+      </Crash>
     </StrictMode>,
   )
+  void openLastFigure()
 
   // The dialogs are separate files, fetched when first opened. Fetch them all now, in the
   // background, so that nothing waits for them later and the whole app is there offline.
@@ -47,11 +43,20 @@ async function start() {
           .getEntriesByType('resource')
           .map((entry) => entry.name)
           .filter((url) => url.startsWith(location.origin) && /\.(js|css|svg|png|webmanifest)$/.test(new URL(url).pathname))
-        const cache = await caches.open('biosketch-v6')
+        const cache = await caches.open('biosketch-v7')
         await Promise.all(own.map((url) => cache.add(url).catch(() => undefined)))
       })
       .catch(() => undefined)
   }
 }
 
-void start()
+try {
+  start()
+} catch (error) {
+  // index.html shows its own message when the editor never appears; say why as well.
+  const boot = document.getElementById('boot-status')
+  if (boot) {
+    boot.setAttribute('data-told', '1')
+    boot.textContent = `BioSketch could not start (version ${VERSION}): ${error instanceof Error ? error.message : String(error)}. Reload the page; if that does not help, try another browser.`
+  }
+}

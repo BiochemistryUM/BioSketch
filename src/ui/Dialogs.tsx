@@ -5,6 +5,7 @@ import { addCustomIcon, addIcon } from '../actions'
 import { extractColors, parseSvgFile, prefixIds, type ParsedSvg } from '../icons/svg'
 import {
   attributionLines,
+  structureCredits,
   attributionText,
   download,
   exportRect,
@@ -27,6 +28,7 @@ import { everyNode, slideCount, slideDocs, slideIndex } from '../model/slides'
 import { toast, useEditor } from '../store'
 import { Icon } from './Icon'
 import { TOOLS } from './ToolRail'
+import { VERSION } from '../version'
 
 export function Modal({ title, children, onClose, wide }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -83,7 +85,7 @@ export function ExportDialog() {
   })
   const scales = [...[1, 2, 3, 4].map((s) => ({ value: s, label: `${s}×` })), ...dpiScales]
   const smallest = smallestTextPt(whole)
-  const credits = attributionLines(whole)
+  const credits = [...attributionLines(whole), ...structureCredits(whole)]
   const creditText = attributionText(whole)
   const shadedIcons = useMemo(() => whole.nodes.filter((n) => needsPicture(whole, n)).length, [whole])
   const preview = useMemo(() => {
@@ -356,6 +358,7 @@ const SHORTCUTS: [string, string][] = [
   ['Ctrl/⌘ G / Shift G', 'Group, ungroup'],
   ['Ctrl/⌘ A', 'Select everything'],
   ['Ctrl/⌘ S', 'Save figure file'],
+  ['Ctrl/⌘ K', 'Search: things to add, commands, icons'],
   ['Delete', 'Delete selection'],
   ['Arrow keys', 'Nudge (Shift: 10 px)'],
   ['Space + drag', 'Move the view'],
@@ -381,8 +384,18 @@ export function HelpDialog() {
         >
           <Icon name="slides" size={16} /> Open the tour of the features
         </button>
-        <p className="hint">Twelve slides with examples to try. It opens as a new figure; your own figures stay as they are.</p>
+        <p className="hint">Thirteen slides with examples to try. It opens as a new figure; your own figures stay as they are.</p>
       </div>
+      <p className="hint about-line">
+        BioSketch {VERSION}.{' '}
+        <button className="link" onClick={() => useEditor.setState({ dialog: 'whats-new' })}>
+          What's new
+        </button>
+        {' · '}
+        <button className="link" onClick={() => useEditor.setState({ dialog: 'report' })}>
+          Report a problem
+        </button>
+      </p>
       <div className="help-grid">
         <section>
           <h2>Basics</h2>
@@ -399,7 +412,7 @@ export function HelpDialog() {
             <li>With a keyboard: click the page, then Tab moves from object to object, the arrow keys move it (Shift for bigger steps), Enter edits a text.</li>
             <li>With the arrow tool, drag from one icon to another. Attached arrows follow their icons, and can be straight, curved or right-angled.</li>
             <li>Lock a background so it stays put; “Unlock all” is in the right-hand panel when nothing is selected.</li>
-            <li>File › Import a pathway finds a pathway on WikiPathways (or opens a .gpml file) and redraws it as boxes and arrows you can change.</li>
+            <li>Import (top bar or File menu), then Pathway, finds a pathway on WikiPathways (or opens a .gpml file) and redraws it as boxes and arrows you can change.</li>
             <li>Drag in or paste your own pictures. File › My figures keeps every figure you have made in this browser.</li>
             <li>With the text tool, a press places a label and a drag draws a text box, which breaks its lines at its width and can have bullet points. “Table” under “Add to the page” adds a table you can paste from a spreadsheet.</li>
             <li>File › Start from a template has a timeline, a workflow, a graphical abstract and posters. File › My figures can file your figures under projects. The star on an icon of the library keeps it under “Favourites”.</li>

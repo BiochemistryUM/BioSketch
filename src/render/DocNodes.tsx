@@ -4,20 +4,23 @@
 import { getStroke } from 'perfect-freehand'
 import { memo, useMemo } from 'react'
 import { getIcon } from '../icons/library'
-import { iconMarkup } from '../icons/svg'
+import { iconMarkup, sanitizeBody } from '../icons/svg'
 import { chartLayout, pointPath, type ChartDrawing } from '../model/chart'
 import { BAR_WIDTH, connectorShape, fadeStops } from '../model/connector'
 import { dashArray, hasDots } from '../model/dash'
 import { round } from '../model/geometry'
 import { membraneShape } from '../model/membrane'
+import { uprightStructure } from '../model/molecule'
 import { connectorLabelNode, fontStack, resolveConnector, shapeLabelNode, textLayout, type ResolvedConnector } from '../model/nodes'
 import { SCRIPT_SCALE, SCRIPT_SHIFT, parseRich } from '../model/richtext'
 import { isOpenShape, shapePath } from '../model/shapes'
 import { TABLE_LINE, tableLayout } from '../model/table'
+import { structureLayout } from '../model/structure'
 import {
   FONT_FAMILY,
   LINE_HEIGHT,
   type TableNode,
+  type StructureNode,
   type ConnectorNode,
   type FigDoc,
   type FigNode,
@@ -63,7 +66,15 @@ const boxTransform = (n: { x: number; y: number; w: number; h: number; rotation:
   `translate(${round(n.x)} ${round(n.y)})${n.rotation ? ` rotate(${n.rotation} ${round(n.w / 2)} ${round(n.h / 2)})` : ''}`
 
 function IconView({ node, icon, interactive }: { node: IconNode; icon: IconDef | undefined; interactive: boolean }) {
-  const markup = useMemo(() => (icon ? iconMarkup(icon, node.colors, node.id, node.strokeScale) : ''), [icon, node.colors, node.id, node.strokeScale])
+  // A chemical structure that is turned or mirrored is drawn again with its letters upright.
+  const upright = useMemo(
+    () => (icon?.molfile ? uprightStructure(icon.molfile, icon.viewBox, icon.body, { w: node.w, h: node.h, rotation: node.rotation, flipX: node.flipX, flipY: node.flipY }) : null),
+    [icon, node.w, node.h, node.rotation, node.flipX, node.flipY],
+  )
+  const markup = useMemo(
+    () => (icon ? iconMarkup(upright ? { ...icon, body: sanitizeBody(upright.body) } : icon, node.colors, node.id, node.strokeScale) : ''),
+    [icon, upright, node.colors, node.id, node.strokeScale],
+  )
   if (!icon) {
     return (
       <g data-id={node.id} transform={boxTransform(node)} opacity={node.opacity}>
@@ -71,6 +82,14 @@ function IconView({ node, icon, interactive }: { node: IconNode; icon: IconDef |
         <text x={node.w / 2} y={node.h / 2 + 6} textAnchor="middle" fontFamily={FONT_FAMILY} fontSize={16} fill="#868e96">
           ?
         </text>
+      </g>
+    )
+  }
+  if (upright) {
+    return (
+      <g data-id={node.id} transform={boxTransform(node)} opacity={node.opacity}>
+        <g transform={upright.transform} dangerouslySetInnerHTML={{ __html: markup }} />
+        {interactive && <rect width={node.w} height={node.h} fill={HIT} />}
       </g>
     )
   }
@@ -108,6 +127,43 @@ const TableView = memo(function TableView({ node, interactive }: { node: TableNo
       ))}
       {table.texts.map((t, i) => (
         <TextView key={`t${i}`} node={t} interactive={false} />
+      ))}
+    </g>
+  )
+})
+
+/** A protein structure: a tube through its Cα atoms, drawn from the back to the front. `spinBy` turns it further (the presenter). */
+export const StructureView = memo(function StructureView({ node, interactive, spinBy = 0 }: { node: StructureNode; interactive: boolean; spinBy?: number }) {
+  // Laid out again only when something inside its box changes (or it turns), not when it is moved.
+  // The chains (thousands of residues) are compared by identity: every edit that changes them makes new ones.
+  const { chains, view, colour, color, tube, marks, w, h } = node
+  const key = JSON.stringify([view, colour, color, tube, marks, w, h])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const drawn = useMemo(() => structureLayout(node, spinBy), [chains, key, spinBy])
+  return (
+    <g data-id={node.id} transform={boxTransform(node)} opacity={node.opacity}>
+      <rect width={round(node.w)} height={round(node.h)} fill={interactive ? HIT : 'none'} />
+      <g fill="none" strokeLinecap="round" strokeLinejoin="round">
+        {drawn.layers.map((layer, i) => (
+          <g key={i}>
+            {layer.map((sg, j) => (
+              <path key={`o${j}`} d={sg.d} stroke={sg.outline} strokeWidth={round(sg.width + Math.max(0.6, sg.width * 0.22))} />
+            ))}
+            {layer.map((sg, j) => (
+              <path key={`f${j}`} d={sg.d} stroke={sg.colour} strokeWidth={sg.width} />
+            ))}
+          </g>
+        ))}
+      </g>
+      {drawn.marks.map((m, i) => (
+        <g key={`m${i}`}>
+          <circle cx={m.x} cy={m.y} r={m.r} fill="#1f2933" stroke="#fff" strokeWidth={round(m.r * 0.35)} />
+          <TextView
+            node={{ id: `${node.id}-m${i}`, type: 'text', x: m.lx, y: round(m.ly - drawn.fontSize * 0.6), text: m.label, fontSize: drawn.fontSize, fill: '#1f2933', bold: true, align: m.anchor === 'start' ? 'left' : 'right', rotation: 0 }}
+            interactive={false}
+            halo
+          />
+        </g>
       ))}
     </g>
   )
@@ -224,6 +280,12 @@ const ChartMarks = memo(function ChartMarks({ chart, clipId }: { chart: ChartDra
       )}
       {chart.texts.map((t, i) => (
         <TextView key={`t${i}`} node={t} interactive={false} />
+      ))}
+      {/* Small panels: each drawn as a chart of its own in its place, cut off at its own plot. */}
+      {chart.panels?.map((p, i) => (
+        <g key={`f${i}`} transform={`translate(${p.x} ${p.y})`}>
+          <ChartMarks chart={p.drawing} clipId={`${clipId}-${i}`} />
+        </g>
       ))}
     </>
   )
@@ -414,6 +476,8 @@ function draw({ node, icon, resolved, interactive, hideLabel }: NodeViewProps) {
       return <ChartView node={node} interactive={interactive} />
     case 'table':
       return <TableView node={node} interactive={interactive} />
+    case 'structure':
+      return <StructureView node={node} interactive={interactive} />
     case 'shape':
       return <ShapeView node={node} interactive={interactive} hideLabel={!!hideLabel} />
     case 'text':

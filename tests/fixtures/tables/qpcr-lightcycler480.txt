@@ -1,0 +1,9 @@
+Experiment: Abs Quant Il6 19Nov  Selected Filter: SYBR Green I (483-533)  Include: Include	Selected Filter: 483-533	Integration Time (Sec): 1
+Include	Color	Pos	Name	Cp	Concentration	Standard	Status
+True	255	A1	Standard 1	17.21	1000000	1000000	
+True	256	A2	Standard 2	20.58	100000	100000	
+True	257	A3	Standard 3	23.94	10000	10000	
+True	258	A4	Standard 4	27.33	1000	1000	
+True	259	A5	Sample 1	22.1	25400	0	
+True	260	A6	Sample 2	24.9	3720	0	
+True	261	A7	Water			0	

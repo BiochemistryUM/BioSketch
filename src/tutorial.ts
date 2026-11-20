@@ -1,15 +1,20 @@
-// The tour of the features: a figure of twelve slides. Every slide has a few numbered examples,
+// The tour of the features: a figure of thirteen slides. Every slide has a few numbered examples,
 // which are real objects (select one and its settings are in the panel), and under each a line
 // that says where to click. It is built here from the same parts a scientist uses, so the examples
 // can never show something BioSketch does not do, and it opens like the example figures: its icons
-// come from the NIH BioArt cells collection, the one the library opens on.
+// come from the NIH BioArt cells collection, the one the library opens on. Its one chemical
+// structure is drawn here, from atoms written below, and stored in the figure as a drawn one is.
 
 import type { IconLookup } from './ai/scene'
+import { sanitizeBody } from './icons/svg'
+import { chartSample } from './model/chartSamples'
+import { moleculeSvg, type Molecule } from './model/molecule'
+import { writeMolfile } from './model/sketch'
 import { INK, outlinePoints } from './model/build'
 import { emptyDoc } from './model/doc'
 import { wrapText } from './model/nodes'
 import { withSlides } from './model/slides'
-import type { ChartGroup, ChartKind, ChartNode, ConnectorKind, ConnectorNode, FigDoc, FigNode, IconNode, MembraneNode, Point, ShapeKind, ShapeNode, StrokeNode, TextNode } from './model/types'
+import type { ChartGroup, ChartKind, ChartNode, ConnectorKind, ConnectorNode, FigDoc, FigNode, IconDef, IconNode, MembraneNode, Point, ShapeKind, ShapeNode, StrokeNode, TextNode } from './model/types'
 import type { Template } from './templates'
 
 const W = 1280
@@ -37,6 +42,25 @@ const SAMPLE: ChartGroup[] = [
   { name: 'Treated', values: [6.9, 7.4, 6.1, 7.8] },
   { name: 'Rescue', values: [5, 4.7, 5.6, 5.2] },
 ]
+
+/** Paracetamol, as the structure editor would store it: a benzene ring with a hydroxyl and an acetamide. */
+const PARACETAMOL: Molecule = (() => {
+  const r = Math.sqrt(3) / 2
+  const at = (element: string, x: number, y: number) => ({ element, x, y, charge: 0 })
+  const bond = (from: number, to: number, order: 1 | 2 = 1) => ({ from, to, order, stereo: 0 as const })
+  return {
+    title: 'Paracetamol',
+    atoms: [at('C', 0, 1), at('C', r, 0.5), at('C', r, -0.5), at('C', 0, -1), at('C', -r, -0.5), at('C', -r, 0.5), at('O', 0, 2), at('N', 0, -2), at('C', r, -2.5), at('O', r, -3.5), at('C', 2 * r, -2)],
+    bonds: [bond(0, 1, 2), bond(1, 2), bond(2, 3, 2), bond(3, 4), bond(4, 5, 2), bond(5, 0), bond(0, 6), bond(3, 7), bond(7, 8), bond(8, 9, 2), bond(8, 10)],
+  }
+})()
+export const TOUR_MOLECULE = 'tour-paracetamol'
+
+/** The structure as an icon of the figure, with its molfile, so “Edit the structure” opens it. */
+function moleculeIcon(): IconDef {
+  const { viewBox, body } = moleculeSvg(PARACETAMOL, { colour: true })
+  return { id: TOUR_MOLECULE, name: 'Paracetamol', category: 'Imported', tags: [], viewBox, body: sanitizeBody(body), license: 'Public domain', author: '', source: '', molfile: writeMolfile(PARACETAMOL) }
+}
 
 /** The tour as a figure. It names its icons; `buildTemplate` stores their drawings in it. */
 export function tutorialDoc(icons: IconLookup): FigDoc {
@@ -101,7 +125,7 @@ export function tutorialDoc(icons: IconLookup): FigDoc {
   // ---------- 2. The screen ----------
   const part = (x: number, y: number, w: number, h: number, fill = '#ffffff'): ShapeNode => shape('rect', x, y, w, h, { fill, stroke: FRAME, strokeWidth: 1.5 })
   const places: [number, number, string][] = [
-    [377, 129, 'Top bar: File, the name of the figure, Undo, zoom, Slides, Present, AI and Export.'],
+    [377, 129, 'Top bar: File, the name of the figure, Undo, Slides, Add, Import, Calculators, Search, Present, AI and Export.'],
     [70, 300, 'Tools: select, move the view, text, shape, arrow, membrane, pen and eraser.'],
     [158, 300, 'Icon library: choose a collection or search all of them. Tap an icon to place it.'],
     [390, 186, 'The page: what you draw here is what is exported.'],
@@ -138,7 +162,7 @@ export function tutorialDoc(icons: IconLookup): FigDoc {
     ...how(1, 'Tap an icon in the library to place it, or drag it onto the page. Drag a corner to resize it and the round handle to turn it.', COLS[0], 360, COL_W),
     ...how(2, 'In the panel: flip it, change its colours, make its outlines thicker or thinner. “Transparency” fades it, as here.', COLS[1], 360, COL_W),
     ...how(3, '“Split into parts” turns an icon into pieces to move, recolour or delete. “Reshape” shows the points of its outline: drag them.', COLS[2], 360, COL_W),
-    ...how(4, 'The collections are NIH BioArt, Bioicons and Servier Medical Art. Search looks through all of them. File › Import SVG icon adds your own.', COLS[3], 360, COL_W),
+    ...how(4, 'The collections are NIH BioArt, Bioicons and Servier Medical Art. Search looks through all of them. Import SVG icon, under the library, adds your own.', COLS[3], 360, COL_W),
     band('An icon you place is stored in the figure, so a figure never depends on the library being reachable. Icons that need a credit are listed under Export, with the text to copy.', 580),
   ]
 
@@ -310,14 +334,37 @@ export function tutorialDoc(icons: IconLookup): FigDoc {
     band('A chart keeps its numbers: paste a new table at any time, and colours, brackets and settings follow the groups by name. Palettes, the shape of the points, lines at chosen values and numbers at the groups are under Look and Axes.', 596),
   ]
 
-  // ---------- 10. AI and pathways ----------
+  // ---------- 10. Analyses and molecules ----------
+  const molecule = moleculeIcon()
+  const sampled = (kind: 'standard' | 'kinetics', x: number): ChartNode => {
+    // The example the gallery adds, without its title: the line under it says what it is.
+    const { title: _title, ...start } = chartSample(kind)
+    return { ...chart('bar', [], x, 124, COL_W, QUARTER_H), ...start }
+  }
+  const structureH = 210
+  const structureW = (structureH * molecule.viewBox[0]) / molecule.viewBox[1]
+  const buttons = ['Add', 'Import', 'Calculators', 'Search'].map((name, i) => pill(name, COLS[3] + COL_W / 2, 150 + i * 62, 180, 46))
+  const analyses: FigNode[] = [
+    ...heading('Analyses and molecules'),
+    sampled('standard', COLS[0]),
+    sampled('kinetics', COLS[1]),
+    { id: id(), type: 'icon', iconId: TOUR_MOLECULE, x: Math.round(COLS[2] + COL_W / 2 - structureW / 2), y: 136, w: structureW, h: structureH, rotation: 0 },
+    ...buttons,
+    ...how(1, 'Add › Chart › Standard curve: standards with their concentrations, then the samples. Each sample is read off the curve and multiplied by its dilution.', COLS[0], 392, COL_W),
+    ...how(2, 'Enzyme kinetics: substrate in the first column, rates beside it. Km and Vmax for each series, or a model of inhibition fitted to all of them.', COLS[1], 392, COL_W),
+    ...how(3, 'Add › Draw a structure: bonds, rings, elements and charges. Select a structure and press “Edit the structure” to change it. Turned, its letters stay level.', COLS[2], 392, COL_W),
+    ...how(4, 'The top bar: Add for charts and molecules, Import for tables and pathways, lab calculators, and Search (Ctrl/⌘ K), which finds any of them by words.', COLS[3], 392, COL_W),
+    band('Under Molecules, Add also draws a protein from AlphaFold or the PDB as a tube you can turn, the domains and mutations of a protein from UniProt, a compound found by name in PubChem, and a reaction.', 596),
+  ]
+
+  // ---------- 11. AI and pathways ----------
   const route = ['Describe or sketch', 'Copy the request', 'Your Claude app', 'Paste the answer', 'Editable figure'].map((name, i) => pill(name, 154 + i * 243, 160, 180, 54, i === 2 ? '#fff3d6' : SOFT, i === 2 ? '#d39a1c' : ACCENT))
-  const molecule = (name: string, cx: number, cy: number, w = 150): ShapeNode => named('rect', name, cx - w / 2, cy - 22, w, 44, { stroke: LINE, strokeWidth: 1.5 })
-  const ligand = molecule('Ligand', 200, 420)
-  const receptor = molecule('Receptor', 440, 420)
-  const kinase = molecule('Kinase', 680, 420)
-  const factor = molecule('Transcription factor', 970, 420, 220)
-  const drug = molecule('Inhibitor', 680, 506)
+  const box = (name: string, cx: number, cy: number, w = 150): ShapeNode => named('rect', name, cx - w / 2, cy - 22, w, 44, { stroke: LINE, strokeWidth: 1.5 })
+  const ligand = box('Ligand', 200, 420)
+  const receptor = box('Receptor', 440, 420)
+  const kinase = box('Kinase', 680, 420)
+  const factor = box('Transcription factor', 970, 420, 220)
+  const drug = box('Inhibitor', 680, 506)
   const helpers: FigNode[] = [
     ...heading('AI and pathways'),
     ...route,
@@ -332,10 +379,10 @@ export function tutorialDoc(icons: IconLookup): FigDoc {
     link(receptor, kinase),
     link(kinase, factor),
     link(drug, kinase, 'inhibit', { stroke: '#c9403d' }),
-    ...how(2, 'File › Import a pathway searches WikiPathways by name, gene or metabolite (or opens a .gpml file) and redraws the pathway as boxes and arrows, every one of which can be changed. It opens as a new figure or is added to the open one.', LEFT, 566, WIDE),
+    ...how(2, 'Import in the top bar, then Pathway, searches WikiPathways by name, gene or metabolite (or opens a .gpml file) and redraws the pathway as boxes and arrows, every one of which can be changed. It opens as a new figure or is added to the open one.', LEFT, 566, WIDE),
   ]
 
-  // ---------- 11. Slides and presenting ----------
+  // ---------- 12. Slides and presenting ----------
   const thumbs = [0, 1, 2].map((i) => named('rect', String(i + 1), 84 + i * 124, 183, 110, 62, { stroke: i === 1 ? ACCENT : FRAME, strokeWidth: i === 1 ? 3 : 1.5 }, 16))
   const stage = shape('rect', 700, 124, 320, 180, { fill: '#111827', stroke: '#111827' })
   const presenting: FigNode[] = [
@@ -350,7 +397,7 @@ export function tutorialDoc(icons: IconLookup): FigDoc {
     ...how(3, 'Under Export, “All slides” saves one PDF with a page per slide, one PowerPoint file, or every slide as a picture in one ZIP file. The page, its size and its colour, is the same for every slide.', LEFT, 512, WIDE),
   ]
 
-  // ---------- 12. Export, saving and keys ----------
+  // ---------- 13. Export, saving and keys ----------
   const closing: FigNode[] = [
     ...heading('Export, saving and keys'),
     ...['SVG', 'PNG', 'PDF', 'PowerPoint'].map((name, i) => pill(name, 149 + i * 200, 154, 170, 50)),
@@ -360,15 +407,15 @@ export function tutorialDoc(icons: IconLookup): FigDoc {
     text('That is the tour. File › New figure starts your own.', W / 2, 560, 28, { bold: true, align: 'center', fill: ACCENT }),
   ]
 
-  const page = { ...emptyDoc('Tour of the features'), width: W, height: H }
-  return withSlides(page, [welcome, screen, iconsSlide, writing, arrows, arranging, charts, statistics, kindsSlide, helpers, presenting, closing], 0)
+  const page = { ...emptyDoc('Tour of the features'), width: W, height: H, customIcons: { [TOUR_MOLECULE]: molecule } }
+  return withSlides(page, [welcome, screen, iconsSlide, writing, arrows, arranging, charts, statistics, kindsSlide, analyses, helpers, presenting, closing], 0)
 }
 
 /** The tour as something to open from the File menu, like the example figures. */
 export const TUTORIAL: Template = {
   id: 'tour',
   name: 'Tour of the features',
-  description: 'Twelve slides with examples to try, from icons to statistics',
+  description: 'Thirteen slides with examples to try, from icons to statistics and molecules',
   icons: [MACROPHAGE, T_CELL, NEUTROPHIL, MITOCHONDRIA, RED_CELL, NEURON],
   build: tutorialDoc,
 }

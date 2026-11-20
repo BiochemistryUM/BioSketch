@@ -118,6 +118,11 @@ const grow = (box: PartBox | null, x1: number, y1: number, x2: number, y2: numbe
 /** A box round everything a drawing holds for a part; null when it holds nothing for it. */
 export function partBox(drawing: ChartDrawing, part: ChartPart): PartBox | null {
   let box: PartBox | null = null
+  // The marks of small panels, moved to where each panel stands.
+  for (const p of drawing.panels ?? []) {
+    const own = partBox(p.drawing, part)
+    if (own) box = grow(box, p.x + own.x, p.y + own.y, p.x + own.x + own.w, p.y + own.y + own.h)
+  }
   const mine = (mark: object): boolean => {
     const own = partOf(mark)
     return !!own && samePart(own, part)
@@ -145,6 +150,21 @@ const AREA_RADIUS = 14
  * place itself, then axes and brackets within reach, then what is filled and only near.
  */
 export function partAt(drawing: ChartDrawing, x: number, y: number, reach: number): PartHit | null {
+  // A chart of small panels: its own lettering and legend first, then the panel under the press.
+  if (drawing.panels?.length) {
+    const own = marksAt({ ...drawing, panels: undefined }, x, y, reach)
+    if (own) return { part: own.part, box: partBox(drawing, own.part) ?? own.box }
+    for (const p of drawing.panels) {
+      if (x < p.x - reach || x > p.x + p.w + reach || y < p.y - reach || y > p.y + p.h + reach) continue
+      const hit = marksAt(p.drawing, x - p.x, y - p.y, reach)
+      if (hit) return { part: hit.part, box: { ...hit.box, x: hit.box.x + p.x, y: hit.box.y + p.y } }
+    }
+    return null
+  }
+  return marksAt(drawing, x, y, reach)
+}
+
+function marksAt(drawing: ChartDrawing, x: number, y: number, reach: number): PartHit | null {
   let best: { part: ChartPart; score: number } | null = null
   const offer = (mark: object, tier: number, far: number) => {
     const part = partOf(mark)

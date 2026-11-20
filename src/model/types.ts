@@ -201,7 +201,80 @@ export interface ImageNode extends NodeBase {
   rotation: number
 }
 
-export type ChartKind = 'bar' | 'dot' | 'line' | 'box' | 'violin' | 'scatter' | 'pie' | 'heatmap' | 'venn'
+export type ChartKind = 'bar' | 'dot' | 'line' | 'box' | 'violin' | 'scatter' | 'pie' | 'heatmap' | 'venn' | 'standard' | 'qpcr'
+/** The curve a standard curve fits through its standards. */
+export type StandardModel = 'linear' | 'quadratic' | '4pl' | '5pl'
+/**
+ * The choices of a standard curve (`kind: 'standard'`). Its first group holds the standards
+ * (concentration in `xs`, signal in `values`, name in `labels`, one entry per replicate); its
+ * second group, when there is one, the samples to be read off the curve (signal and name, no
+ * concentration). Results are never stored: they are worked out from the numbers.
+ */
+export interface StandardSettings {
+  /** Absent = a straight line. */
+  model?: StandardModel
+  /** Subtract the mean signal of the standards at concentration 0 from every signal. */
+  blank?: boolean
+  /** How much each sample was diluted, by its name (10 = diluted tenfold). A sample not listed was not diluted. */
+  dilution?: Record<string, number>
+}
+/**
+ * The choices of a qPCR analysis (`kind: 'qpcr'`). Every group of the chart is one target (gene):
+ * the Cq of each well in `values`, the sample of that well in `labels`. Results are never stored.
+ */
+export interface QpcrSettings {
+  /** The reference genes, by name. Absent: the housekeeping genes among the targets, or the first target. */
+  reference?: string[]
+  /** The control condition, by name. Absent: one named as a control, or the first. */
+  control?: string
+  /** The condition of each sample, from a column of the table. Absent: the sample's name without its replicate number. */
+  conditions?: Record<string, string>
+  /** Every sample is a condition of its own (no biological replicates). */
+  ownSamples?: boolean
+  /** The amplification efficiency of a target in per cent (100: the product doubles every cycle), by name. Absent: 100. */
+  efficiency?: Record<string, number>
+  /** Show −ΔΔCt (the log₂ fold change) instead of the fold change. */
+  log2?: boolean
+  /** Each sample is paired with the control sample of the same number ("LPS 2" with "Control 2"), and the test is the paired t test. */
+  paired?: boolean
+  /** The result of the test of each condition against the control, written over its bar: as stars or as the p value. Absent: none. */
+  marks?: 'stars' | 'p'
+}
+/** How enzyme rates are fitted: Michaelis–Menten for each series on its own, or one inhibition model over all series. */
+export type KineticsModel = 'mm' | 'competitive' | 'uncompetitive' | 'noncompetitive' | 'mixed'
+/**
+ * The choices of enzyme kinetics, a way of drawing a scatter table (`kind: 'scatter'` with
+ * `kinetics` present, even empty): substrate concentrations as x, initial rates as values, one
+ * series per column. For an inhibition model every series is one inhibitor concentration, read
+ * from the series' name ("0", "5 µM", "I = 10"). Results are never stored.
+ */
+export interface KineticsSettings {
+  /** Absent = Michaelis–Menten, each series on its own. */
+  model?: Exclude<KineticsModel, 'mm'>
+  /** The enzyme in the assay, in the concentration unit of the rates, for kcat = Vmax / [E]. Absent = no kcat. */
+  enzyme?: number
+  /** Draw 1/v against 1/[S] (Lineweaver–Burk) with the lines of the fitted curve, for display only. */
+  lineweaver?: boolean
+}
+/** Saturation binding on a scatter chart: bound against free ligand (see `src/model/binding.ts`). */
+export interface BindingSettings {
+  /** Absent = one site, specific binding, every series on its own. `hill`: with a Hill slope. `total`: total and nonspecific binding fitted together. */
+  model?: 'hill' | 'total'
+  /** Draw bound/free against bound (Scatchard), for display only; one-site model only. */
+  scatchard?: boolean
+}
+/** Melting curves on a scatter chart: a signal against temperature (see `src/model/melt.ts`). */
+export interface MeltSettings {
+  /** Absent = Tm of a fitted Boltzmann sigmoid; `derivative`: where the signal changes fastest. */
+  method?: 'derivative'
+  /** The range of temperatures of the transition; absent = found from the curve. */
+  from?: number
+  to?: number
+  /** Draw the rate of change of each curve instead of the signal (melt peaks). */
+  view?: 'derivative'
+  /** Draw every curve scaled from 0 to 1 between its plateaus. */
+  normalise?: boolean
+}
 /** The run of colours the cells of a heat map take, from the lowest value to the highest. */
 export type HeatScale = 'viridis' | 'blues' | 'greys' | 'bluered' | 'purpleorange'
 /** The mark drawn for a data point. */
@@ -239,6 +312,11 @@ export interface ChartGroup {
    * values row by row, so the rows must survive.
    */
   rows?: number[]
+  /**
+   * qPCR charts: the well of the plate every value was read from ("B3"), as many as there are
+   * values; '' = not known. Absent = the table named no wells. Draws the picture of the plate.
+   */
+  wells?: string[]
 }
 
 /** A bracket over two groups, with a label the scientist typed (for example "p = 0.03", "**" or "ns") or the result of the chart's test. */
@@ -388,6 +466,32 @@ export interface ChartNode extends NodeBase {
   pointNames?: ChartPointNames
   /** The statistical test for the groups. Its results are never stored: they are worked out from the numbers. */
   test?: ChartTest
+  /** Standard curves: the curve, the blank and the dilutions. */
+  standard?: StandardSettings
+  /** qPCR: relative expression by ΔΔCt (see `QpcrSettings`). */
+  qpcr?: QpcrSettings
+  /** Scatter charts: enzyme kinetics instead of points with a straight line (see `KineticsSettings`). */
+  kinetics?: KineticsSettings
+  /** Scatter charts: saturation binding (see `BindingSettings`). */
+  binding?: BindingSettings
+  /** Scatter charts: melting curves (see `MeltSettings`). */
+  melt?: MeltSettings
+  /** Drawn as small panels, one per category, series or curve (see `FacetSettings`); kept even when empty. */
+  facet?: FacetSettings
+}
+
+/**
+ * A chart drawn as small panels side by side: one per category of a grouped chart (or one per
+ * series), one per series of a scatter chart. It changes how the chart is drawn, never what is
+ * worked out: tests, brackets and fits are those of the whole chart.
+ */
+export interface FacetSettings {
+  /** Grouped charts: one panel per series instead of per category. */
+  by?: 'series'
+  /** Panels side by side before the next row (1 to 6); absent = as square a grid as fits. */
+  cols?: number
+  /** Every panel its own value axis; absent = one range for all, so heights can be compared. */
+  free?: boolean
 }
 
 /** A table: rows and columns of words and numbers, pasted from a spreadsheet or typed. See `src/model/table.ts`. */
@@ -414,7 +518,59 @@ export interface TableNode extends NodeBase {
   color?: string
 }
 
-export type FigNode = IconNode | ShapeNode | TextNode | ConnectorNode | MembraneNode | StrokeNode | ImageNode | ChartNode | TableNode
+/** One chain of a protein structure: the Cα atom of every residue. See `src/model/structure.ts`. */
+export interface StructureChain {
+  id: string
+  /** Residue numbers, one per residue. */
+  nums: number[]
+  /** Cα coordinates in ångström, three numbers per residue (x, y, z). */
+  ca: number[]
+  /** B-factor of every residue; for an AlphaFold model, the confidence (pLDDT, 0 to 100). */
+  b: number[]
+  /** The residues in one-letter code, one letter per residue ('X' when unknown). */
+  seq: string
+}
+
+/** A residue marked with a dot and a few words. */
+export interface StructureMark {
+  chain: string
+  n: number
+  label: string
+}
+
+export type StructureColour = 'chain' | 'rainbow' | 'plddt' | 'single'
+
+/**
+ * A protein structure drawn as a smooth tube through its Cα atoms, seen from a chosen side. It is
+ * drawn as SVG by BioSketch itself, so it is exported like everything else and can turn while
+ * the slides are presented.
+ */
+export interface StructureNode extends NodeBase {
+  type: 'structure'
+  x: number
+  y: number
+  w: number
+  h: number
+  rotation: number
+  chains: StructureChain[]
+  /** The side it is seen from: a turn about the upright axis, then a tilt, in degrees. */
+  view: [number, number]
+  /** How it is coloured. Absent = by chain. */
+  colour?: StructureColour
+  /** The colour of a structure coloured with one colour. */
+  color?: string
+  /** Thickness of the tube, in ångström. Absent = 1.5 (`TUBE`). */
+  tube?: number
+  marks?: StructureMark[]
+  /** Turns slowly while the slides are presented. */
+  spin?: boolean
+  /** Where it came from, for the credit: an AlphaFold DB model (UniProt accession), a PDB entry, or a file. */
+  source: { kind: 'alphafold' | 'pdb' | 'file'; id: string }
+  /** The protein's name, as its source gives it. */
+  title?: string
+}
+
+export type FigNode = IconNode | ShapeNode | TextNode | ConnectorNode | MembraneNode | StrokeNode | ImageNode | ChartNode | TableNode | StructureNode
 export type NodeType = FigNode['type']
 
 export interface IconDef {
@@ -429,6 +585,8 @@ export interface IconDef {
   license: string
   author: string
   source: string
+  /** A chemical structure: the molfile it was drawn from, so that it can be opened in the structure editor again. */
+  molfile?: string
 }
 
 /**

@@ -162,7 +162,9 @@ export function startReshape(nodeId: string): void {
     return
   }
   const id = `part-${uid()}`
-  const copy: IconDef = { ...icon, id, category: 'Part', tags: [], body }
+  // A reshaped structure is no longer what its molfile says: it is a drawing from now on.
+  const { molfile: _molfile, ...plain } = icon
+  const copy: IconDef = { ...plain, id, category: 'Part', tags: [], body }
   s.commit((doc) => dropUnusedParts({ ...doc, customIcons: { ...doc.customIcons, [id]: copy }, nodes: doc.nodes.map((n) => (n.id === nodeId ? { ...node, iconId: id } : n)) }), { select: [nodeId] })
   s.set({ tool: 'select', reshape: { nodeId, iconId: id } })
 }

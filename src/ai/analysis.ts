@@ -25,7 +25,7 @@ export interface AnalysisPlan {
 }
 
 const three = (v: number): string => String(Number(v.toPrecision(3)))
-const KIND: Record<ChartNode['kind'], string> = { bar: 'bar chart', dot: 'dot chart', line: 'line chart', box: 'box plot', violin: 'violin plot', scatter: 'scatter chart', pie: 'pie chart', heatmap: 'heat map', venn: 'Venn diagram' }
+const KIND: Record<ChartNode['kind'], string> = { bar: 'bar chart', dot: 'dot chart', line: 'line chart', box: 'box plot', violin: 'violin plot', scatter: 'scatter chart', pie: 'pie chart', heatmap: 'heat map', venn: 'Venn diagram', standard: 'standard curve', qpcr: 'qPCR fold change' }
 
 /** One line per group: how many values, and where they lie. */
 function summary(names: string[], samples: number[][]): string {

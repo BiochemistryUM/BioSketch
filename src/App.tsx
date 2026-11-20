@@ -77,6 +77,11 @@ export function App() {
   const [showProps, setShowProps] = useState(isWide)
 
   useEffect(() => installKeyboard(), [])
+  // Search asked for icons: the library must be open to show them.
+  const libraryRequest = useEditor((s) => s.libraryRequest)
+  useEffect(() => {
+    if (libraryRequest) setShowLibrary(true)
+  }, [libraryRequest])
 
   return (
     <div className={`app${showLibrary ? ' with-library' : ''}${showProps ? ' with-props' : ''}${showSlides ? ' with-slides' : ''}`}>

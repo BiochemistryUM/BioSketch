@@ -30,6 +30,25 @@ export function saveFile(): void {
   toast('Figure file downloaded')
 }
 
+/** Switch between the light and the dark look, and remember the choice. */
+export function toggleTheme(): void {
+  const next = useEditor.getState().theme === 'dark' ? 'light' : 'dark'
+  applyTheme(next, true)
+  useEditor.setState({ theme: next })
+}
+
+/** Open a figure file (.biosketch.json) as a new figure. */
+export async function openFigureFile(file: File | undefined): Promise<void> {
+  if (!file) return
+  try {
+    const doc = parseDoc(await file.text())
+    await newFigure(doc)
+    toast(`Opened “${doc.name}” as a new figure`)
+  } catch (e) {
+    toast(e instanceof Error ? e.message : 'This file could not be opened.')
+  }
+}
+
 function FileMenu() {
   const [open, setOpen] = useState(false)
   const theme = useEditor((s) => s.theme)
@@ -63,16 +82,11 @@ function FileMenu() {
     </button>
   )
 
-  const openFile = async (file: File | undefined) => {
-    if (!file) return
-    try {
-      const doc = parseDoc(await file.text())
-      await newFigure(doc)
-      toast(`Opened “${doc.name}” as a new figure`)
-    } catch (e) {
-      toast(e instanceof Error ? e.message : 'This file could not be opened.')
-    }
-  }
+  // Other places (the Import dialog, Search) ask for the file picker through the store.
+  const openRequest = useEditor((s) => s.openFileRequest)
+  useEffect(() => {
+    if (openRequest) fileRef.current?.click()
+  }, [openRequest])
 
   return (
     <div className="menu-wrap" ref={ref}>
@@ -87,7 +101,7 @@ function FileMenu() {
           <div className="menu-sep" />
           {item('Open figure file…', 'open', () => fileRef.current?.click())}
           {item('Save figure file', 'save', saveFile)}
-          {item('Import a pathway…', 'pathway', () => useEditor.setState({ dialog: 'pathway' }))}
+          {item('Import…', 'import', () => useEditor.setState({ dialog: 'import' }))}
           {item('Start from a template…', 'template', () => useEditor.setState({ dialog: 'templates' }))}
           <button
             role="menuitem"
@@ -100,17 +114,14 @@ function FileMenu() {
             <Icon name="slides" size={16} />
             <span>
               Tour of the features
-              <small>Twelve slides with examples to try, from icons to statistics</small>
+              <small>Thirteen slides with examples to try, from icons to statistics and molecules</small>
             </span>
           </button>
           <div className="menu-sep" />
-          {item('Import SVG icon…', 'import', () => useEditor.setState({ dialog: 'import-icon' }))}
-          {item(theme === 'dark' ? 'Light theme' : 'Dark theme', theme === 'dark' ? 'sun' : 'moon', () => {
-            const next = theme === 'dark' ? 'light' : 'dark'
-            applyTheme(next, true)
-            useEditor.setState({ theme: next })
-          })}
+          {item(theme === 'dark' ? 'Light theme' : 'Dark theme', theme === 'dark' ? 'sun' : 'moon', toggleTheme)}
           {item('Help and shortcuts', 'help', () => useEditor.setState({ dialog: 'help' }))}
+          {item("What's new", 'sparkles', () => useEditor.setState({ dialog: 'whats-new' }))}
+          {item('Report a problem…', 'mail', () => useEditor.setState({ dialog: 'report' }))}
         </div>
       )}
       <input
@@ -119,11 +130,57 @@ function FileMenu() {
         accept=".json,application/json"
         hidden
         onChange={(e) => {
-          void openFile(e.target.files?.[0])
+          void openFigureFile(e.target.files?.[0])
           e.target.value = ''
         }}
       />
     </div>
+  )
+}
+
+/** The four doors to what BioSketch can do besides drawing: add, import, calculators, search. In a narrow window they fold into one menu. */
+const TOOLS_ITEMS: { icon: IconName; text: string; label: string; dialog: 'add' | 'import' | 'calculators' | 'search' }[] = [
+  { icon: 'addBox', text: 'Add', label: 'Add to the page: charts, analyses, shapes, tables…', dialog: 'add' },
+  { icon: 'import', text: 'Import', label: 'Import a pathway, a table, a picture or a figure file', dialog: 'import' },
+  { icon: 'calculator', text: 'Calculators', label: 'Lab calculators: molarity, dilution, molecular weight', dialog: 'calculators' },
+  { icon: 'search', text: 'Search', label: 'Search for anything to add, a command or an icon (⌘K)', dialog: 'search' },
+]
+
+function ToolsGroup() {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && setOpen(false)
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [open])
+  const go = (dialog: (typeof TOOLS_ITEMS)[number]['dialog']) => {
+    setOpen(false)
+    useEditor.setState({ dialog })
+  }
+  return (
+    <>
+      <div className="bar-group tools-group">
+        {TOOLS_ITEMS.map((t) => (
+          <BarButton key={t.dialog} icon={t.icon} label={t.label} text={t.text} className="slim bar-tool" onClick={() => go(t.dialog)} />
+        ))}
+      </div>
+      <div className="menu-wrap tools-more" ref={ref}>
+        <button className="bar-btn" aria-haspopup="menu" aria-expanded={open} aria-label="More: add, import, calculators, search" title="Add, import, calculators, search" onClick={() => setOpen(!open)}>
+          <Icon name="addBox" size={18} />
+        </button>
+        {open && (
+          <div className="menu" role="menu">
+            {TOOLS_ITEMS.map((t) => (
+              <button key={t.dialog} role="menuitem" className="menu-item" onClick={() => go(t.dialog)}>
+                <Icon name={t.icon} size={16} /> {t.text}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   )
 }
 
@@ -175,7 +232,7 @@ export function TopBar({ showLibrary, showProps, onToggleLibrary, onToggleProps 
           onClick={() => set({ showSketch: !showSketch, selection: [] })}
         />
       </div>
-      <div className="bar-group">
+      <div className="bar-group slides-group">
         <BarButton
           icon="slides"
           label={slides > 1 ? `Slides: this figure has ${slides}` : slidesShown ? 'Hide the slides' : 'Show the slides, to make a presentation of several'}
@@ -186,6 +243,7 @@ export function TopBar({ showLibrary, showProps, onToggleLibrary, onToggleProps 
           onClick={() => (slides < 2 ? set({ slidesShown: !slidesShown }) : document.querySelector<HTMLElement>('.slide-thumb.current')?.focus())}
         />
       </div>
+      <ToolsGroup />
       <div className="spacer" />
       <BarButton icon="play" label="Present: show the slides full screen" text="Present" className="slim present-btn" onClick={present} />
       <BarButton icon="sparkles" label="Create a figure with AI" text="AI" className="accent" onClick={() => set({ dialog: 'ai' })} />

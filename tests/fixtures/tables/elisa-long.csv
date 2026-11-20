@@ -1,0 +1,29 @@
+Well,Sample,Conc (pg/mL),OD450
+A1,Std 1,1000,2.412
+A2,Std 1,1000,2.423
+B1,Std 2,500,1.488
+B2,Std 2,500,1.499
+C1,Std 3,250,0.871
+C2,Std 3,250,0.882
+D1,Std 4,125,0.502
+D2,Std 4,125,0.513
+E1,Std 5,62.5,0.301
+E2,Std 5,62.5,0.312
+F1,Std 6,31.25,0.188
+F2,Std 6,31.25,0.199
+G1,Std 7,15.6,0.121
+G2,Std 7,15.6,0.132
+H1,Blank,0,0.052
+H2,Blank,0,0.063
+A3,Ctrl 1,,0.412
+A4,Ctrl 1,,0.427
+B3,Ctrl 2,,0.398
+B4,Ctrl 2,,0.413
+C3,Patient 01,,1.103
+C4,Patient 01,,1.118
+D3,Patient 02,,0.956
+D4,Patient 02,,0.971
+E3,Patient 03,,1.740
+E4,Patient 03,,1.755
+F3,Patient 04,,0.221
+F4,Patient 04,,0.236

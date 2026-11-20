@@ -17,6 +17,17 @@ const loaders: Record<Name, () => Promise<{ default: ComponentType }>> = {
   pathway: () => import('./PathwayDialog').then((m) => ({ default: m.PathwayDialog })),
   analysis: () => import('./AnalysisDialog').then((m) => ({ default: m.AnalysisDialog })),
   templates: () => import('./TemplatesDialog').then((m) => ({ default: m.TemplatesDialog })),
+  add: () => import('./AddDialog').then((m) => ({ default: m.AddDialog })),
+  import: () => import('./AddDialog').then((m) => ({ default: m.ImportDialog })),
+  search: () => import('./AddDialog').then((m) => ({ default: m.SearchDialog })),
+  suggest: () => import('./SuggestDialog').then((m) => ({ default: m.SuggestDialog })),
+  calculators: () => import('./CalculatorsDialog').then((m) => ({ default: m.CalculatorsDialog })),
+  'whats-new': () => import('./AboutDialog').then((m) => ({ default: m.WhatsNewDialog })),
+  molecule: () => import('./MoleculeDialog').then((m) => ({ default: m.MoleculeDialog })),
+  reaction: () => import('./MoleculeDialog').then((m) => ({ default: m.ReactionDialog })),
+  sketch: () => import('./SketchDialog').then((m) => ({ default: m.SketchDialog })),
+  protein: () => import('./ProteinDialog').then((m) => ({ default: m.ProteinDialog })),
+  report: () => import('./AboutDialog').then((m) => ({ default: m.ReportDialog })),
 }
 
 const views = Object.fromEntries(Object.entries(loaders).map(([name, load]) => [name, lazy(load)])) as unknown as Record<Name, ComponentType>

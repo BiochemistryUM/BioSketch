@@ -14,7 +14,25 @@
     <title>BioSketch</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Shown until the editor draws itself, which replaces it. If that never happens (an old copy of the
+           page asking for files that are gone, scripts blocked, a browser too old), it says what to do. -->
+      <div id="boot" style="font: 15px/1.5 -apple-system, system-ui, sans-serif; max-width: 520px; margin: 18vh auto 0; padding: 0 16px; color: #5f6c7b">
+        <p id="boot-status">Opening BioSketch…</p>
+        <noscript><p>BioSketch needs JavaScript. Turn it on for this site and reload the page.</p></noscript>
+      </div>
+    </div>
+    <script>
+      setTimeout(function () {
+        var status = document.getElementById('boot-status')
+        if (!status || status.getAttribute('data-told')) return
+        status.setAttribute('data-told', '1')
+        status.innerHTML =
+          '<strong>BioSketch did not start.</strong><br>Reload the page without the copy your browser keeps: ' +
+          '<b>⌘ Shift R</b> on a Mac, <b>Ctrl Shift R</b> or <b>Ctrl F5</b> on Windows and Linux. ' +
+          'If it still does not start, try another browser (a recent Chrome, Firefox, Safari or Edge) and tell whoever shared BioSketch with you.'
+      }, 15000)
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

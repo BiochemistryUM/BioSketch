@@ -36,5 +36,5 @@ export const loadStub = async (pack: PackInfo): Promise<IconDef[]> => pack.names
 /** An example figure, complete with (stand-in) drawings, as the app builds it once its packs are fetched. */
 export function example(template: Template): FigDoc {
   const doc = template.build(packIcons)
-  return { ...doc, customIcons: iconsUsed(everyNode(doc), packIcons) }
+  return { ...doc, customIcons: { ...doc.customIcons, ...iconsUsed(everyNode(doc), packIcons) } }
 }
