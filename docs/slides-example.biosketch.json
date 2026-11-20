@@ -1,0 +1,435 @@
+{
+ "app": "biosketch",
+ "version": 1,
+ "name": "Slides example",
+ "width": 1280,
+ "height": 720,
+ "background": "#ffffff",
+ "nodes": [
+  {
+   "id": "t1",
+   "type": "text",
+   "x": 640,
+   "y": 220,
+   "text": "Slides in BioSketch",
+   "fontSize": 68,
+   "fill": "#1f2933",
+   "align": "center",
+   "rotation": 0,
+   "bold": true
+  },
+  {
+   "id": "t2",
+   "type": "text",
+   "x": 640,
+   "y": 330,
+   "text": "One figure, several slides. Press **Present** to show them full screen.",
+   "fontSize": 30,
+   "fill": "#5f6c7b",
+   "align": "center",
+   "rotation": 0
+  },
+  {
+   "id": "r3",
+   "type": "shape",
+   "shape": "rect",
+   "x": 560,
+   "y": 400,
+   "w": 160,
+   "h": 6,
+   "rotation": 0,
+   "fill": "#1c7462",
+   "stroke": "#1c7462",
+   "strokeWidth": 0
+  },
+  {
+   "id": "t4",
+   "type": "text",
+   "x": 640,
+   "y": 620,
+   "text": "→ or a click: next slide     ←: previous slide     Escape: back to the editor",
+   "fontSize": 20,
+   "fill": "#5f6c7b",
+   "align": "center",
+   "rotation": 0
+  }
+ ],
+ "customIcons": {},
+ "slides": {
+  "before": [],
+  "after": [
+   {
+    "nodes": [
+     {
+      "id": "t8",
+      "type": "text",
+      "x": 80,
+      "y": 56,
+      "text": "Making slides",
+      "fontSize": 44,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0,
+      "bold": true
+     },
+     {
+      "id": "r9",
+      "type": "shape",
+      "shape": "rect",
+      "x": 80,
+      "y": 124,
+      "w": 120,
+      "h": 6,
+      "rotation": 0,
+      "fill": "#1c7462",
+      "stroke": "#1c7462",
+      "strokeWidth": 0
+     },
+     {
+      "id": "t10",
+      "type": "text",
+      "x": 80,
+      "y": 170,
+      "text": "•  **Slides** in the top bar shows the row of slides under the page.",
+      "fontSize": 25,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "t11",
+      "type": "text",
+      "x": 80,
+      "y": 238,
+      "text": "•  **+** adds an empty slide after the open one.",
+      "fontSize": 25,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "t12",
+      "type": "text",
+      "x": 80,
+      "y": 306,
+      "text": "•  The buttons at the right copy, move and delete the open slide.",
+      "fontSize": 25,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "t13",
+      "type": "text",
+      "x": 80,
+      "y": 374,
+      "text": "•  Drag a slide in the row to move it. Page Down and Page Up open the next and the previous one.",
+      "fontSize": 25,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "t14",
+      "type": "text",
+      "x": 80,
+      "y": 442,
+      "text": "•  The size and colour of the page are those of every slide.",
+      "fontSize": 25,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "b5",
+      "type": "shape",
+      "shape": "roundrect",
+      "x": 150,
+      "y": 560,
+      "w": 220,
+      "h": 90,
+      "rotation": 0,
+      "fill": "#e1f1ed",
+      "stroke": "#1c7462",
+      "strokeWidth": 2,
+      "label": {
+       "text": "Draw a figure",
+       "fontSize": 24,
+       "fill": "#1f2933"
+      }
+     },
+     {
+      "id": "b6",
+      "type": "shape",
+      "shape": "roundrect",
+      "x": 530,
+      "y": 560,
+      "w": 220,
+      "h": 90,
+      "rotation": 0,
+      "fill": "#e1f1ed",
+      "stroke": "#1c7462",
+      "strokeWidth": 2,
+      "label": {
+       "text": "Add slides",
+       "fontSize": 24,
+       "fill": "#1f2933"
+      }
+     },
+     {
+      "id": "b7",
+      "type": "shape",
+      "shape": "roundrect",
+      "x": 910,
+      "y": 560,
+      "w": 220,
+      "h": 90,
+      "rotation": 0,
+      "fill": "#e1f1ed",
+      "stroke": "#1c7462",
+      "strokeWidth": 2,
+      "label": {
+       "text": "Present",
+       "fontSize": 24,
+       "fill": "#1f2933"
+      }
+     },
+     {
+      "id": "c15",
+      "type": "connector",
+      "kind": "arrow",
+      "from": {
+       "nodeId": "b5",
+       "x": 370,
+       "y": 605.0
+      },
+      "to": {
+       "nodeId": "b6",
+       "x": 530,
+       "y": 605.0
+      },
+      "stroke": "#334155",
+      "strokeWidth": 3
+     },
+     {
+      "id": "c16",
+      "type": "connector",
+      "kind": "arrow",
+      "from": {
+       "nodeId": "b6",
+       "x": 750,
+       "y": 605.0
+      },
+      "to": {
+       "nodeId": "b7",
+       "x": 910,
+       "y": 605.0
+      },
+      "stroke": "#334155",
+      "strokeWidth": 3
+     }
+    ]
+   },
+   {
+    "nodes": [
+     {
+      "id": "t18",
+      "type": "text",
+      "x": 80,
+      "y": 56,
+      "text": "Everything works on a slide",
+      "fontSize": 44,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0,
+      "bold": true
+     },
+     {
+      "id": "r19",
+      "type": "shape",
+      "shape": "rect",
+      "x": 80,
+      "y": 124,
+      "w": 120,
+      "h": 6,
+      "rotation": 0,
+      "fill": "#1c7462",
+      "stroke": "#1c7462",
+      "strokeWidth": 0
+     },
+     {
+      "id": "ch17",
+      "type": "chart",
+      "x": 80,
+      "y": 180,
+      "w": 540,
+      "h": 440,
+      "rotation": 0,
+      "kind": "bar",
+      "groups": [
+       {
+        "name": "Control",
+        "values": [
+         4.1,
+         3.8,
+         4.6,
+         4.3
+        ]
+       },
+       {
+        "name": "Treated",
+        "values": [
+         6.9,
+         7.4,
+         6.1,
+         7.8
+        ]
+       },
+       {
+        "name": "Rescue",
+        "values": [
+         5,
+         4.7,
+         5.6,
+         5.2
+        ]
+       }
+      ],
+      "error": "sd",
+      "points": true,
+      "yLabel": "Signal (a.u.)",
+      "fontSize": 16
+     },
+     {
+      "id": "t20",
+      "type": "text",
+      "x": 690,
+      "y": 220,
+      "text": "•  Charts, icons, arrows and text\n    are placed as on any figure.",
+      "fontSize": 25,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "t21",
+      "type": "text",
+      "x": 690,
+      "y": 298,
+      "text": "•  Copy and paste carry objects\n    from one slide to another.",
+      "fontSize": 25,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "t22",
+      "type": "text",
+      "x": 690,
+      "y": 376,
+      "text": "•  Undo takes back the last change\n    and shows the slide it was made on.",
+      "fontSize": 25,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "t23",
+      "type": "text",
+      "x": 690,
+      "y": 454,
+      "text": "•  Icons are kept once for the\n    whole figure.",
+      "fontSize": 25,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     }
+    ]
+   },
+   {
+    "nodes": [
+     {
+      "id": "t24",
+      "type": "text",
+      "x": 80,
+      "y": 56,
+      "text": "Presenting and exporting",
+      "fontSize": 44,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0,
+      "bold": true
+     },
+     {
+      "id": "r25",
+      "type": "shape",
+      "shape": "rect",
+      "x": 80,
+      "y": 124,
+      "w": 120,
+      "h": 6,
+      "rotation": 0,
+      "fill": "#1c7462",
+      "stroke": "#1c7462",
+      "strokeWidth": 0
+     },
+     {
+      "id": "t26",
+      "type": "text",
+      "x": 80,
+      "y": 180,
+      "text": "•  **Present** shows the slides full screen, starting with the open one.",
+      "fontSize": 26,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "t27",
+      "type": "text",
+      "x": 80,
+      "y": 252,
+      "text": "•  Arrow keys, Space or a click move on; a swipe works on a touch screen.",
+      "fontSize": 26,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "t28",
+      "type": "text",
+      "x": 80,
+      "y": 324,
+      "text": "•  **Export**, then “All slides”: one PDF with a page per slide,",
+      "fontSize": 26,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "t29",
+      "type": "text",
+      "x": 80,
+      "y": 364,
+      "text": "    one PowerPoint file, or every slide as a picture in one ZIP file.",
+      "fontSize": 26,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     },
+     {
+      "id": "t30",
+      "type": "text",
+      "x": 80,
+      "y": 436,
+      "text": "•  File › Save figure file keeps all slides in one file.",
+      "fontSize": 26,
+      "fill": "#1f2933",
+      "align": "left",
+      "rotation": 0
+     }
+    ]
+   }
+  ]
+ }
+}

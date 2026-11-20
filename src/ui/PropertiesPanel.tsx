@@ -1,6 +1,6 @@
 // The right-hand panel: settings for whatever is selected, or for the page and the active tool.
 
-import { useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import {
   addChart,
   addPanelLetter,
@@ -28,20 +28,25 @@ import { removeNodes } from '../model/doc'
 import { SYMBOL_GROUPS, insertText, wrapSelection } from '../model/richtext'
 import { SHAPE_KINDS, shapePath } from '../model/shapes'
 import {
-  MAX_BRACKETS, MAX_REF_LINES, POINT_NAMES_TOP, POINT_OPACITY_MIN, POINT_SIZE_MAX, POINT_SIZE_MIN,
+  MAX_BRACKETS, MAX_REF_LINES, NAME_MAX, POINT_NAMES_TOP, POINT_OPACITY_MIN, POINT_SIZE_MAX, POINT_SIZE_MIN,
   VALUE_DECIMALS_MAX,
-  bracketLabel, carryOver, chartAdvice, chartAnalysis, chartLayout, curveMethodsText, doseText, methodsText, chartSamples, chartSeries, crossTable, hasPoints, headRows, isGrouped, pointNamesIn, pointStyle, readTable, scatterFits, shownValues, splitNameList, stats, tableText, usablePointNames, usableValueLabels, usualValueLabel, withTestBrackets,
+  bracketLabel, carryOver, chartAdvice, chartCategories, chartFamily, renameCategory, renameSeries, renameVenn, valueText, chartAnalysis, chartLayout, isSurvival, logRankText, survivalOf, survivalText, compareCurves, comparisonText, corrText, curveMethodsText, doseText, heldPlateaus, methodsText, chartSamples, chartSeries, crossTable, hasPoints, headRows, isGrouped, pointNamesIn, pointStyle, readTable, scatterFits, shownValues, splitNameList, stats, tableText, usablePointNames, usableValueLabels, usualValueLabel, withTestBrackets,
+  type Renamed,
   type TableReport,
 } from '../model/chart'
 import { INSTRUCTION_EXAMPLES, applyInstruction } from '../model/chartCommands'
+import { HEAT_SCALES, heatColour, heatMatrix, heatSummary } from '../model/heatmap'
 import { PALETTES, paletteColours } from '../model/palettes'
+import { regionName, vennOf } from '../model/venn'
 import { TABLE_ACCEPT, tableFromFile } from '../io/tables'
 import { boxStats } from '../model/chartStats'
 import { STARS_KEY, TEST_DOES, TEST_NAMES, TEST_SHORT, pText, stars, testFor } from '../model/chartTests'
+import { reversed } from '../model/connector'
 import { DASH_SCALE_MAX, DASH_SCALE_MIN, dashArray, hasDots, lineStyleOf, lineStylePatch, type Dashable, type LineStyle } from '../model/dash'
 import { growToFitLabel, SHAPE_LABEL_DEFAULT } from '../model/nodes'
-import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartPointNames, ChartRefLine, ChartTest, ChartValueLabels, ConnectorFade, ConnectorKind, ConnectorNode, FigNode, FontFamily, IconNode, ImageNode, LegendPlace, MembraneNode, PointShape, ShapeKind, ShapeNode, StrokeNode, TextAlign, TextNode } from '../model/types'
+import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartPointNames, ChartRefLine, ChartTest, ChartValueLabels, ConnectorFade, ConnectorKind, ConnectorNode, FigNode, FontFamily, HeatScale, IconNode, ImageNode, LegendPlace, MembraneNode, PointShape, ShapeKind, ShapeNode, StrokeNode, TextAlign, TextNode } from '../model/types'
 import { toast, useEditor } from '../store'
+import { CHART_TABS, chartTabs, lastChartTab, openTab, rememberChartTab, settingFor, stepTab, type ChartTab } from './chartTabs'
 import { copyText } from './copy'
 import { PANEL_LAYOUTS, type PanelLayout } from '../model/panels'
 import { ObjectsList } from './ObjectsList'
@@ -54,11 +59,11 @@ import { Info } from './Info'
 const MARKS = 'Ca^{2+}, H_{2}O, *italic* and **bold**'
 
 /** A setting with its name above it. With `info`, an "i" beside the name opens a note that explains the setting. */
-function Field({ label, info, children }: { label: string; info?: ReactNode; children: ReactNode }) {
+function Field({ label, info, setting, children }: { label: string; info?: ReactNode; setting?: string; children: ReactNode }) {
   // A button inside a <label> would become the control the label stands for, so a field with a note is a plain group.
   if (info) {
     return (
-      <div className="field" role="group" aria-label={label}>
+      <div className="field" role="group" aria-label={label} data-setting={setting}>
         <span className="field-head">
           <span className="field-label">{label}</span>
           <Info about={label}>{info}</Info>
@@ -68,7 +73,7 @@ function Field({ label, info, children }: { label: string; info?: ReactNode; chi
     )
   }
   return (
-    <label className="field">
+    <label className="field" data-setting={setting}>
       <span className="field-label">{label}</span>
       {children}
     </label>
@@ -716,13 +721,20 @@ function TextProps({ node, single }: { node: TextNode; single: boolean }) {
   )
 }
 
-const CHART_OPTIONS: { value: ChartKind; label: string; title: string }[] = [
+/** What the scientist picks: a kind of chart, or survival curves (which read their table like a scatter chart). */
+type ChartChoice = ChartKind | 'survival'
+
+const CHART_OPTIONS: { value: ChartChoice; label: string; title: string }[] = [
   { value: 'bar', label: 'Bars', title: 'A bar for the mean of each group' },
   { value: 'dot', label: 'Dots', title: 'Every value as a dot, with a line at the mean' },
   { value: 'box', label: 'Box', title: 'Median, quartiles and whiskers of each group' },
   { value: 'violin', label: 'Violin', title: 'The spread of the values in each group as an outline' },
   { value: 'line', label: 'Line', title: 'The means joined by a line, in the order of the columns' },
   { value: 'scatter', label: 'Scatter', title: 'Pairs of x and y values as points' },
+  { value: 'pie', label: 'Pie', title: 'The share of each group in the whole' },
+  { value: 'heatmap', label: 'Heat map', title: 'The table as a grid of coloured cells (a matrix plot)' },
+  { value: 'venn', label: 'Venn', title: 'What two or three sets share, from lists of names or from sizes' },
+  { value: 'survival', label: 'Survival', title: 'Survival curves (Kaplan–Meier) from times and events' },
 ]
 
 const ERROR_OPTIONS: { value: 'none' | 'sd' | 'sem'; label: string; title: string }[] = [
@@ -757,15 +769,26 @@ function OptionalNumber({ label, value, placeholder, onChange }: { label: string
 }
 
 /** The ends of one axis and whether it is logarithmic. */
-function AxisRange(props: { title: string; zero?: boolean; min: number | undefined; max: number | undefined; log: boolean; onMin: (v: number | undefined) => void; onMax: (v: number | undefined) => void; onLog: (v: boolean) => void }) {
+function AxisRange(props: { title: string; setting?: string; zero?: boolean; colours?: boolean; min: number | undefined; max: number | undefined; log: boolean; onMin: (v: number | undefined) => void; onMax: (v: number | undefined) => void; onLog: (v: boolean) => void }) {
   return (
     <Field
       label={props.title}
+      setting={props.setting}
       info={
         <>
-          <p>Leave a box empty and that end of the axis is chosen to fit the numbers.{props.zero ? ' The axis then includes zero, so that the height of a bar means what it seems to.' : ''}</p>
-          <p>A range you set cuts the data off at the edge of the plot: nothing is drawn beyond it.</p>
-          <p>A logarithmic axis shows only values above zero.</p>
+          {props.colours ? (
+            <>
+              <p>The values the lowest and the highest colour stand for. Leave a box empty and that end is chosen to fit the numbers; a scale of two colours then keeps its white middle at zero (on a logarithmic scale: at 1).</p>
+              <p>A value beyond an end you set takes the colour of that end. Set the same range on several heat maps to make their colours comparable.</p>
+              <p>Logarithmic: the colours follow the logarithm of the values, so that a doubling is the same step in colour everywhere. Values of zero or below cannot be shown and are left empty.</p>
+            </>
+          ) : (
+            <>
+              <p>Leave a box empty and that end of the axis is chosen to fit the numbers.{props.zero ? ' The axis then includes zero, so that the height of a bar means what it seems to.' : ''}</p>
+              <p>A range you set cuts the data off at the edge of the plot: nothing is drawn beyond it.</p>
+              <p>A logarithmic axis shows only values above zero.</p>
+            </>
+          )}
         </>
       }
     >
@@ -819,6 +842,78 @@ function tableNotices(report: TableReport): string[] {
   return notices
 }
 
+/**
+ * A name of the chart that is typed over. What is typed stays in the box for as long as the box
+ * has the focus, and goes into the chart whenever it is a name the chart can take: an empty box
+ * changes nothing, and a name that is refused is said to be so under the box.
+ */
+function NameInput({ value, label, placeholder, onName }: { value: string; label: string; placeholder?: string; onName: (typed: string) => string | undefined }) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const [problem, setProblem] = useState('')
+  return (
+    <>
+      <input
+        type="text"
+        className="text-line name-input"
+        aria-label={label}
+        aria-invalid={!!problem}
+        maxLength={NAME_MAX}
+        placeholder={placeholder}
+        value={draft ?? value}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          setProblem(onName(e.target.value) ?? '')
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+        }}
+        onBlur={() => {
+          setDraft(null)
+          setProblem('')
+        }}
+      />
+      {problem && (
+        <span className="notice name-problem" role="status">
+          {problem}
+        </span>
+      )}
+    </>
+  )
+}
+
+/**
+ * The headings the settings of a chart are sorted under. One is open at a time; the arrow keys
+ * move from one to the next, as in any row of tabs.
+ */
+function ChartTabBar({ id, tabs, tab, onTab, barRef }: { id: string; tabs: ChartTab[]; tab: ChartTab; onTab: (tab: ChartTab) => void; barRef: RefObject<HTMLDivElement | null> }) {
+  return (
+    <div className="tabs" role="tablist" aria-label="Settings of the chart" ref={barRef}>
+      {CHART_TABS.filter((t) => tabs.includes(t.id)).map((t) => (
+        <button
+          key={t.id}
+          role="tab"
+          id={`${id}-${t.id}`}
+          className={tab === t.id ? 'active' : ''}
+          aria-selected={tab === t.id}
+          aria-controls={`${id}-panel`}
+          tabIndex={tab === t.id ? 0 : -1}
+          title={t.title}
+          onClick={() => onTab(t.id)}
+          onKeyDown={(e) => {
+            if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
+            e.preventDefault()
+            const next = stepTab(tab, tabs, e.key === 'ArrowRight' ? 1 : -1)
+            onTab(next)
+            document.getElementById(`${id}-${next}`)?.focus()
+          }}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function ChartProps({ node }: { node: ChartNode }) {
   // While the numbers are being typed the box shows exactly what was typed. That text is kept for
   // as long as the chart still holds the groups read from it; when they change in any other way
@@ -826,6 +921,10 @@ function ChartProps({ node }: { node: ChartNode }) {
   const [typed, setTyped] = useState<{ text: string; groups: ChartGroup[]; head?: 0 | 1 | 2; report: TableReport } | null>(null)
   const live = typed && typed.groups === node.groups ? typed : null
   const scatter = node.kind === 'scatter'
+  const heat = node.kind === 'heatmap'
+  const venn = node.kind === 'venn'
+  // A scatter table and the lists of a Venn diagram have one row of names at most.
+  const oneHead = scatter || venn
   const grouped = isGrouped(node)
   const set = (change: Partial<ChartNode>, merge?: string) => patch<ChartNode>('chart', change, merge)
   const ownHead = headRows(node.groups, node.kind)
@@ -836,7 +935,7 @@ function ChartProps({ node }: { node: ChartNode }) {
     // Unless the scientist said how many rows of names there are, the table keeps at least as
     // many as it had: a first row made of numbers (doses, time points) stays a row of names.
     const guess = readTable(text, node.kind)
-    const head = Math.min(chosen ?? Math.max(guess.head, ownHead), scatter ? 1 : 2) as 0 | 1 | 2
+    const head = Math.min(chosen ?? Math.max(guess.head, ownHead), oneHead ? 1 : 2) as 0 | 1 | 2
     const report = head === guess.head ? guess : readTable(text, node.kind, head)
     if (!report.groups.some((g) => g.values.length)) {
       setTyped({ text, groups: node.groups, head: chosen, report })
@@ -865,18 +964,37 @@ function ChartProps({ node }: { node: ChartNode }) {
   // was before the crossing is remembered, and given back if nothing was changed in between.
   const crossed = useRef<{ before: ChartNode; result: ChartGroup[] } | null>(null)
   const onKind = (kind: ChartKind) => {
-    if ((kind === 'scatter') === scatter) return set({ kind })
+    if (chartFamily(kind) === chartFamily(node.kind)) return set({ kind })
     const back = crossed.current
     crossed.current = null
     if (back && back.result === node.groups) {
       const b = back.before
-      return set({ kind: (b.kind === 'scatter') === (kind === 'scatter') ? kind : b.kind, groups: b.groups, brackets: b.brackets, test: b.test, refLines: b.refLines, fit: b.fit, curve: b.curve, xMin: b.xMin, xMax: b.xMax, xLog: b.xLog, pointNames: b.pointNames })
+      return set({ kind: chartFamily(b.kind) === chartFamily(kind) ? kind : b.kind, groups: b.groups, brackets: b.brackets, test: b.test, refLines: b.refLines, fit: b.fit, curve: b.curve, doseBottom: b.doseBottom, doseTop: b.doseTop, corr: b.corr, xMin: b.xMin, xMax: b.xMax, xLog: b.xLog, pointNames: b.pointNames })
     }
     const result = crossTable(node.groups, node.kind, kind)
     crossed.current = { before: node, result }
     const across = refLines.filter((l) => l.axis === 'y')
-    set({ kind, groups: result, brackets: undefined, test: undefined, fit: undefined, curve: undefined, xMin: undefined, xMax: undefined, xLog: undefined, pointNames: undefined, refLines: across.length ? across : undefined })
-    toast(kind === 'scatter' ? 'A scatter chart reads the first column of the table as the x values. Choose another kind again to get your chart back.' : 'The x values became the first group. Choose Scatter again to get your chart back.')
+    set({ kind, groups: result, brackets: undefined, test: undefined, fit: undefined, curve: undefined, doseBottom: undefined, doseTop: undefined, corr: undefined, xMin: undefined, xMax: undefined, xLog: undefined, pointNames: undefined, refLines: across.length ? across : undefined })
+    toast(
+      kind === 'scatter'
+        ? 'A scatter chart reads the first column of the table as the x values. Choose another kind again to get your chart back.'
+        : kind === 'venn'
+          ? 'A Venn diagram reads every column as the names of the members of one set. Paste your lists under “Sets”, or choose another kind again to get your chart back.'
+          : scatter
+            ? 'The x values became the first group. Choose Scatter again to get your chart back.'
+            : 'Every column is now read as the numbers of one group. Choose Venn again to get your diagram back.',
+    )
+  }
+
+  /** Survival curves are a way of drawing a table with times in its first column: the same table a scatter chart reads. */
+  const onChoice = (choice: ChartChoice) => {
+    if (choice === 'survival') {
+      if (survival) return
+      if (!scatter) onKind('scatter')
+      return set({ kind: 'scatter', survival: true, fit: undefined, curve: undefined, doseBottom: undefined, doseTop: undefined, corr: undefined, pointNames: undefined, xLog: undefined, yLog: undefined, yMin: undefined, yMax: undefined, refLines: undefined })
+    }
+    if (survival) set({ survival: undefined, logRank: undefined })
+    onKind(choice)
   }
 
   const drawing = chartLayout(node)
@@ -884,6 +1002,7 @@ function ChartProps({ node }: { node: ChartNode }) {
   const drawn = node.groups.map((group, index) => ({ group, index })).filter((c) => c.group.values.length)
   const fits = scatter ? scatterFits(node) : []
   const curveMethods = curveMethodsText(node)
+  const curvePairs = scatter ? compareCurves(node) : []
   const brackets = node.brackets ?? []
   const setBracket = (i: number, change: Partial<ChartBracket>) => set({ brackets: brackets.map((b, k) => (k === i ? { ...b, ...change } : b)) }, 'chart-bracket')
   const testing = !scatter && !!node.test?.by && !!chartAnalysis(node)?.ok
@@ -909,7 +1028,8 @@ function ChartProps({ node }: { node: ChartNode }) {
   }
   /** The mark of a series' points, beside its colour. */
   const shapeBox = (entry: (typeof series)[number]) =>
-    showsPoints && (
+    showsPoints &&
+    !isSurvival(node) && (
       <select
         className="shape-select"
         aria-label={`Shape of the points of ${entry.name}`}
@@ -935,7 +1055,14 @@ function ChartProps({ node }: { node: ChartNode }) {
     const middle = values.length ? Number(values[Math.floor(values.length / 2)].toPrecision(2)) : 1
     set({ refLines: [...refLines, { axis: 'y', value: node.yLog && middle <= 0 ? 1 : middle }] })
   }
-  const hasLegend = grouped || (scatter && series.length > 1)
+  const pie = node.kind === 'pie'
+  const survival = isSurvival(node)
+  const lives = survival ? survivalOf(node) : null
+  /** A chart with axes and groups along them: neither a pie, nor a heat map, nor a Venn diagram. */
+  const axes = !pie && !heat && !venn
+  const matrix = heat ? heatMatrix(node) : null
+  const sets = venn ? vennOf(node.groups) : null
+  const hasLegend = !heat && !venn && (grouped || pie || (scatter && series.length > 1))
   // The number written at every group: what the chart holds, as it is drawn.
   const labels = usableValueLabels(node.valueLabels)
   const setLabels = (change: Partial<ChartValueLabels>, merge?: string) => set({ valueLabels: usableValueLabels({ ...(labels ?? { show: usualValueLabel(node.kind) }), ...change }) }, merge)
@@ -961,12 +1088,111 @@ function ChartProps({ node }: { node: ChartNode }) {
     return `${count}, mean ${short(s.mean)}${s.n > 1 ? ` ± ${short(node.error === 'sem' ? s.sem : s.sd)} ${node.error === 'sem' ? 'SEM' : 'SD'}` : ''}`
   }
 
+  // The settings are sorted under headings, one open at a time.
+  const tabs = chartTabs(node.kind)
+  const [wantedTab, setWantedTab] = useState<ChartTab>(lastChartTab)
+  const tab = openTab(wantedTab, tabs)
+  const tabsId = useId()
+  const tabBar = useRef<HTMLDivElement>(null)
+  const tabBody = useRef<HTMLDivElement>(null)
+  const chooseTab = (next: ChartTab) => {
+    rememberChartTab(next)
+    setWantedTab(next)
+  }
+  useLayoutEffect(() => {
+    // A heading chosen far down a long list would open somewhere in its middle: its start is
+    // brought back under the row of headings, which stays at the top of the panel.
+    const bar = tabBar.current
+    const body = tabBody.current
+    if (!bar || !body) return
+    const covered = bar.getBoundingClientRect().bottom - body.getBoundingClientRect().top
+    const scroller = bar.closest('.panel')
+    if (covered > 0 && scroller) scroller.scrollTop -= covered + 8
+  }, [tab])
+  // A part of the chart pressed on the page: its heading is opened and its setting shown.
+  const pressed = useEditor((state) => state.chartPart)
+  const [shown, setShown] = useState<{ setting: string; nonce: number; type: boolean } | null>(null)
+  const shownDone = useRef(0)
+  useEffect(() => {
+    if (!pressed || pressed.id !== node.id) return
+    const to = settingFor(pressed.part, node.kind, survival)
+    if (!tabs.includes(to.tab)) return
+    let setting = to.setting
+    if (pressed.part.what === 'group') {
+      // A group is known by its place in the table: the list shows it in the row of its series, or of its set.
+      const place = pressed.part.at ?? -1
+      setting = `group-${sets ? sets.sets.findIndex((one) => one.group === place) : series.findIndex((entry) => entry.groups.includes(place))}`
+    }
+    chooseTab(to.tab)
+    setShown({ setting, nonce: pressed.nonce, type: pressed.part.what === 'title' || pressed.part.what === 'yTitle' || pressed.part.what === 'xTitle' })
+    // Only a new press counts: the chart and its lists are read as they are at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pressed?.nonce])
+  useEffect(() => {
+    if (!shown || shownDone.current === shown.nonce) return
+    const body = tabBody.current
+    // A row that is not there (a bracket that was not drawn as listed) leads to its list.
+    const list = shown.setting.replace(/^bracket-\d+$/, 'brackets').replace(/^line-\d+$/, 'lines')
+    const target = body?.querySelector<HTMLElement>(`[data-setting="${shown.setting}"]`) ?? body?.querySelector<HTMLElement>(`[data-setting="${list}"]`)
+    if (!target) return
+    shownDone.current = shown.nonce
+    target.scrollIntoView({ block: 'center' })
+    // The mark fades by itself; taking it off and putting it back starts the fading again.
+    body?.querySelectorAll('[data-picked]').forEach((el) => el.removeAttribute('data-picked'))
+    void target.offsetWidth
+    target.setAttribute('data-picked', '')
+    if (shown.type) target.querySelector<HTMLElement>('input')?.focus({ preventScroll: true })
+  }, [shown, tab])
+  /** Put a typed name in the chart; the words say why when it cannot be taken. Typing one name is one step to undo (`which` tells the names apart). */
+  const rename = (result: Renamed, which: string): string | undefined => {
+    if (result.change) set(result.change, `chart-name-${which}`)
+    return result.problem
+  }
+  /** The colour of a group, to tell it from the others in a list. */
+  const groupDot = (colour: string | undefined) => colour && <span className="group-dot" style={{ background: colour }} aria-hidden="true" />
+  /** How many points of a scatter series are drawn. */
+  const pointsOf = (i: number, group: ChartGroup): string => {
+    const shown = fits[i]?.points ?? 0
+    return `${shown} points${shown < group.values.length ? ` of ${group.values.length} (the rest are not above zero)` : ''}`
+  }
+  /** The line or curve fitted to a series, in words. */
+  const fitOf = (i: number): string => {
+    const found = fits[i]
+    if (node.curve === 'dose') return found?.dose ? doseText(found.dose, heldPlateaus(node)) : 'no curve could be fitted'
+    const fit = found?.fit
+    return fit ? `${node.yLog ? 'log y' : 'y'} = ${short(fit.slope)} × ${node.xLog ? 'log x' : 'x'} ${fit.intercept < 0 ? '−' : '+'} ${short(Math.abs(fit.intercept))}, R² = ${short(fit.r2)}` : 'no line could be fitted'
+  }
+  /** The correlation of a series, in words. */
+  const corrOf = (i: number): string => {
+    const found = fits[i]?.corr
+    if (!found || !node.corr) return 'cannot be worked out'
+    return `${corrText(found, node.corr).replace(/\*/g, '').replace('_{s}', 's')}${node.corr === 'spearman' ? (found.exact ? ' (exact)' : ' (t approximation)') : ''}`
+  }
+  /** One line per series with what was worked out for it. */
+  const perSeries = (label: string, text: (i: number) => string) => (
+    <ul className="chart-summary" aria-label={label}>
+      {series.map((entry, i) => (
+        <li key={i}>
+          {groupDot(entry.colour)}
+          <span>
+            <b>{entry.name}</b>: {text(i)}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+  const titleField = (
+    <Field label="Title" setting="title">
+      <input type="text" className="text-line" maxLength={120} value={node.title ?? ''} placeholder="e.g. Cell viability" onChange={(e) => set({ title: e.target.value.trim() ? e.target.value : undefined }, 'chart-title')} />
+    </Field>
+  )
+
   return (
     <Section
       title="Chart"
       info={
         <>
-          <p>Choose the kind of chart, paste your numbers, then set what the chart shows. Drag a corner of the chart on the page to resize it.</p>
+          <p>Choose the kind of chart and paste your numbers under “Data”, then set what the chart shows: tests, error bars and fitted lines under “Statistics”, colours, points and the legend under “Look”, titles and ranges under “Axes”. Drag a corner of the chart on the page to resize it.</p>
           <p>
             {node.kind === 'bar'
               ? 'A bar is the mean of its group.'
@@ -978,13 +1204,16 @@ function ChartProps({ node }: { node: ChartNode }) {
                     ? 'The box runs from the first to the third quartile with a line at the median; each whisker ends at the furthest value within 1.5 box lengths, and values beyond are drawn as rings.'
                     : node.kind === 'violin'
                       ? 'The outline is a smoothed estimate of how the values are spread, from the smallest to the largest value; the line marks the median. All violins have the same greatest width.'
+                      : heat
+                        ? 'Every number of the table is a cell, coloured by its value: one row of cells for every row of the table, one column for every column. The scale beside the cells says which colour stands for which value.'
+                        : venn
+                          ? 'Every set is a circle; the number in a part of the diagram says how many members belong to exactly the sets that overlap there. The circles all have one size: they are not drawn larger for larger sets.'
                       : 'Every pair of x and y values is a point. A fitted line is the least-squares line of y on x, drawn across the x values of its series; on a logarithmic axis it is fitted to the logarithms.'}
           </p>
           <p>Titles and names accept {MARKS}.</p>
         </>
       }
     >
-      <Segmented label="Chart type" value={node.kind} options={CHART_OPTIONS} onChange={onKind} wrap />
       <Field
         label="Describe a change"
         info={
@@ -1036,467 +1265,811 @@ function ChartProps({ node }: { node: ChartNode }) {
           </div>
         )}
       </Field>
-      <Field
-        label="Numbers"
-        info={
+      <ChartTabBar id={tabsId} tabs={tabs} tab={tab} onTab={chooseTab} barRef={tabBar} />
+      <div className="chart-tab" role="tabpanel" id={`${tabsId}-panel`} aria-labelledby={`${tabsId}-${tab}`} ref={tabBody}>
+        {[...(live ? tableNotices(live.report) : []), ...drawing.notes].map((note, i) => (
+          <p key={i} className="notice">
+            {note}
+          </p>
+        ))}
+        {tab === 'data' && (
           <>
-            <p>
-              {scatter
-                ? 'First column: the x values. Each further column: the y values of one series, with its name in the first row.'
-                : 'One column per group, with its name in the first row; one row per replicate.'}
-            </p>
-            <p>
-              {scatter
-                ? 'To write names beside points (genes, samples), put a column of names before the x values; only rows with a name are labelled.'
-                : 'For a grouped chart, add a row above with the category of each column (for example WT, WT, KO, KO).'}
-            </p>
-            <p>Paste from a spreadsheet, type with tabs, commas or spaces between the numbers, or import a .csv, .txt or .xlsx file (the first sheet).</p>
-          </>
-        }
-      >
-        <textarea
-          className="text-input table-input"
-          aria-label="Numbers for the chart"
-          rows={7}
-          wrap="off"
-          spellCheck={false}
-          value={shownText}
-          onChange={(e) => read(e.target.value, live?.head)}
-        />
-        <button className="btn small" title="Read the table from a CSV, text or Excel file" onClick={() => tableFile.current?.click()}>
-          Import a table from a file…
-        </button>
-        <input
-          ref={tableFile}
-          type="file"
-          accept={TABLE_ACCEPT}
-          hidden
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (f) void importTable(f)
-            e.target.value = ''
-          }}
-        />
-      </Field>
-      <Field
-        label="Rows of names at the top"
-        info={
-          <>
-            <p>How many rows at the top of the table hold names, not numbers. BioSketch guesses from the table.</p>
-            <p>Change it when a first row of numbers (doses, time points) is really a row of names, or when the table has no names at all.{scatter ? '' : ' With two rows the chart is grouped: categories above, series below.'}</p>
-          </>
-        }
-      >
-        <Segmented
-          label="Rows of names at the top"
-          value={String(live ? live.report.head : ownHead) as '0' | '1' | '2'}
-          options={scatter ? HEAD_OPTIONS.slice(0, 2) : HEAD_OPTIONS}
-          onChange={(v) => read(shownText, Number(v) as 0 | 1 | 2)}
-        />
-      </Field>
-      {[...(live ? tableNotices(live.report) : []), ...drawing.notes].map((note, i) => (
-        <p key={i} className="notice">
-          {note}
-        </p>
-      ))}
-      {series.length > 0 && (
-        <ul className="chart-summary" aria-label="What the chart shows">
-          {scatter || !grouped
-            ? series.map((entry, i) => {
-                const fit = fits[i]?.fit
-                const group = node.groups[entry.groups[0]]
-                return (
+            <Segmented label="Chart type" value={survival ? 'survival' : node.kind} options={CHART_OPTIONS} onChange={onChoice} wrap />
+            <Field
+              label={venn ? 'Sets' : 'Numbers'}
+                setting="table"
+              info={
+                <>
+                  <p>
+                    {venn
+                      ? 'One column for every set, with its name in the first row and the names of its members (genes, proteins, samples) under it, one in each row. BioSketch counts what the sets share; capitals make no difference (TP53 and Tp53 are one name).'
+                      : heat
+                        ? 'One column for every column of cells, with its name in the first row; one row for every row of cells. To name the rows (genes, samples), put a column of names before the numbers.'
+                        : survival
+                      ? 'First column: the time (days, weeks) at which each subject had the event or left the study. Each further column is one group, with its name in the first row: in the row of a subject write 1 if it had the event (died, relapsed) at that time, or 0 if it left the study without it. Leave the other groups empty in that row.'
+                      : scatter
+                        ? 'First column: the x values. Each further column: the y values of one series, with its name in the first row.'
+                        : 'One column per group, with its name in the first row; one row per replicate.'}
+                  </p>
+                  <p>
+                    {venn
+                      ? 'If you know the sizes and not the members, type one row of numbers instead: under the name of a set its whole size, and under two or three names joined by “&” (A & B) the size of what those sets share. A diagram is drawn for two or three sets.'
+                      : heat
+                        ? 'An empty cell of the table is drawn as an empty cell. A heat map takes up to 24 columns and draws up to 400 rows.'
+                        : survival
+                      ? 'A subject that is still alive when the study ends is written with the time the study ended and 0.'
+                      : scatter
+                        ? 'To write names beside points (genes, samples), put a column of names before the x values; only rows with a name are labelled.'
+                        : 'For a grouped chart, add a row above with the category of each column (for example WT, WT, KO, KO).'}
+                  </p>
+                  <p>Paste from a spreadsheet, type with tabs, commas or spaces between the numbers, or import a .csv, .txt or .xlsx file (the first sheet).</p>
+                </>
+              }
+            >
+              <textarea
+                className="text-input table-input"
+                aria-label="Numbers for the chart"
+                rows={7}
+                wrap="off"
+                spellCheck={false}
+                value={shownText}
+                onChange={(e) => read(e.target.value, live?.head)}
+              />
+              <button className="btn small" title="Read the table from a CSV, text or Excel file" onClick={() => tableFile.current?.click()}>
+                Import a table from a file…
+              </button>
+              <input
+                ref={tableFile}
+                type="file"
+                accept={TABLE_ACCEPT}
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) void importTable(f)
+                  e.target.value = ''
+                }}
+              />
+            </Field>
+            <Field
+              label="Rows of names at the top"
+              info={
+                <>
+                  <p>How many rows at the top of the table hold names, not numbers. BioSketch guesses from the table.</p>
+                  <p>Change it when a first row of numbers (doses, time points) is really a row of names, or when the table has no names at all.{scatter ? '' : ' With two rows the chart is grouped: categories above, series below.'}</p>
+                </>
+              }
+            >
+              <Segmented
+                label="Rows of names at the top"
+                value={String(live ? live.report.head : ownHead) as '0' | '1' | '2'}
+                options={oneHead ? HEAD_OPTIONS.slice(0, 2) : HEAD_OPTIONS}
+                onChange={(v) => read(shownText, Number(v) as 0 | 1 | 2)}
+              />
+            </Field>
+            {matrix && matrix.columns.length > 0 && <p className="hint">{heatSummary(matrix)}</p>}
+            {sets && sets.sets.length > 0 && !sets.problem && (
+              <ul className="chart-summary" aria-label="What each part of the diagram holds">
+                {sets.regions.map((region, i) => (
                   <li key={i}>
-                    {colourBox(entry)}
-                    {shapeBox(entry)}
                     <span>
-                      <b>{entry.name}</b>:{' '}
-                      {scatter
-                        ? `${fits[i]?.points ?? 0} points${(fits[i]?.points ?? 0) < group.values.length ? ` of ${group.values.length} (the rest are not above zero)` : ''}${
-                            node.fit && node.curve === 'dose'
-                              ? fits[i]?.dose
-                                ? `; ${doseText(fits[i].dose!)}`
-                                : '; no curve could be fitted'
-                              : node.fit && fit
-                                ? `; line ${node.yLog ? 'log y' : 'y'} = ${short(fit.slope)} × ${node.xLog ? 'log x' : 'x'} ${fit.intercept < 0 ? '−' : '+'} ${short(Math.abs(fit.intercept))}, R² = ${short(fit.r2)}`
-                                : ''
-                          }`
-                        : about(group)}
+                      <b>{regionName(sets, region)}</b>: {valueText(region.count)}
                     </span>
+                    {sets.lists && region.count > 0 && (
+                      <button
+                        className="btn small"
+                        title="Copy the names of these members, one in each line"
+                        onClick={async () => toast((await copyText(region.names.join('\n'))) ? `${region.count} ${region.count === 1 ? 'name' : 'names'} copied.` : 'Copying is blocked here.')}
+                      >
+                        Copy names
+                      </button>
+                    )}
                   </li>
-                )
-              })
-            : [
-                ...series.map((entry, i) => (
-                  <li key={`s${i}`}>
-                    {colourBox(entry)}
-                    {shapeBox(entry)}
-                    <span>
-                      <b>{entry.name}</b>
-                    </span>
-                  </li>
-                )),
-                ...drawn.map(({ group }, i) => (
-                  <li key={`g${i}`}>
-                    <span>
-                      <b>{groupName(group)}</b>: {about(group)}
-                    </span>
-                  </li>
-                )),
-              ]}
-        </ul>
-      )}
-      {(node.kind === 'bar' || node.kind === 'dot' || node.kind === 'line') && (
-        <Field
-          label="Error bars"
-          info={
-            <>
-              <p>
-                <b>SD</b>, the standard deviation, shows how much the values of a group scatter.
-              </p>
-              <p>
-                <b>SEM</b>, the standard error of the mean, is the SD divided by √n. It shows how precisely the mean is known and shrinks as the group grows.
-              </p>
-              <p>Say in the figure legend which of the two is drawn.</p>
-            </>
-          }
-        >
-          <Segmented label="Error bars" value={node.error ?? 'none'} options={ERROR_OPTIONS} onChange={(error) => set({ error: error === 'none' ? undefined : error })} />
-        </Field>
-      )}
-      {!scatter && (
-        <Field
-          label="Number at each group"
-          info={
-            <>
-              <p>Writes one number at every group: its mean, its median, or how many values it has (n).</p>
-              <p>
-                {node.kind === 'bar'
-                  ? 'Inside the bar, the number stands under its top, or at the foot of the bar when an error bar or dots run through it. A number that does not fit inside is written above the bar.'
-                  : 'The number stands above everything drawn for the group. In a bar chart it can also stand inside the bar.'}
-              </p>
-              <p>Left automatic, the colour is white inside a dark bar and dark everywhere else.</p>
-              <p>{node.kind === 'box' || node.kind === 'violin' ? 'The line in the middle marks the median' : 'The chart itself draws the mean'}: if you write a different number, say in the figure legend what it is.</p>
-              <p>In words: “write the mean in each bar, in white”.</p>
-            </>
-          }
-        >
-          <select
-            aria-label="Number written at each group"
-            value={labels?.show ?? 'none'}
-            onChange={(e) => (e.target.value === 'none' ? set({ valueLabels: undefined }) : setLabels({ show: e.target.value as ChartValueLabels['show'] }))}
-          >
-            <option value="none">None</option>
-            <option value="mean">Mean</option>
-            <option value="median">Median</option>
-            <option value="n">Number of values (n)</option>
-          </select>
-          {labels && node.kind === 'bar' && (
-            <Segmented
-              label="Place of the numbers"
-              value={labels.above ? 'above' : 'inside'}
-              options={[
-                { value: 'inside', label: 'Inside the bar', title: 'Inside the bar where the number fits, above it otherwise' },
-                { value: 'above', label: 'Above the bar', title: 'Above the bar and its error bar' },
-              ]}
-              onChange={(v) => setLabels({ above: v === 'above' })}
-            />
-          )}
-          {labels && (
-            <div className="row">
-              {labels.show !== 'n' && (
-                <Field label="Decimals">
-                  <select aria-label="Decimals of the numbers" value={labels.decimals ?? 'auto'} onChange={(e) => setLabels({ decimals: e.target.value === 'auto' ? undefined : Number(e.target.value) })}>
-                    <option value="auto">Automatic</option>
-                    {Array.from({ length: VALUE_DECIMALS_MAX + 1 }, (_, d) => (
-                      <option key={d} value={d}>
-                        {d}
+                ))}
+              </ul>
+            )}
+            {series.length > 0 && !heat && !venn && (
+              <ul className="chart-summary" aria-label="What the chart holds">
+                {scatter || !grouped
+                  ? series.map((entry, i) => {
+                      const group = node.groups[entry.groups[0]]
+                      const life = lives?.groups.find((g) => g.name === entry.name)
+                      return (
+                        <li key={i}>
+                          {groupDot(entry.colour)}
+                          <span>
+                            <b>{entry.name}</b>: {survival ? (life ? survivalText(life) : 'no subjects') : scatter ? pointsOf(i, group) : about(group)}
+                          </span>
+                        </li>
+                      )
+                    })
+                  : drawn.map(({ group, index }) => (
+                      <li key={index}>
+                        {groupDot(series.find((entry) => entry.groups.includes(index))?.colour)}
+                        <span>
+                          <b>{groupName(group)}</b>: {about(group)}
+                        </span>
+                      </li>
+                    ))}
+              </ul>
+            )}
+          </>
+        )}
+        {tab === 'stats' && (
+          <>
+            {heat && (
+              <Field
+                label="Correlation between the columns"
+                setting="corr"
+                info={
+                  <>
+                    <p>Instead of the values, the cells show how closely every column goes together with every other, over the rows in which both have a value: from −1 (one falls as the other rises) through 0 to 1.</p>
+                    <p>
+                      <b>Pearson</b> for a straight-line relation between two measurements; <b>Spearman</b> works on ranks, so extreme values count for less.
+                    </p>
+                    <p>Tick “Write the number in every cell” under “Look” to read r off the chart. No p values are worked out here: with many pairs they would need a correction.</p>
+                  </>
+                }
+              >
+                <Segmented
+                  label="Correlation shown in the cells"
+                  value={node.corr ?? 'none'}
+                  options={[
+                    { value: 'none', label: 'None', title: 'The cells show the values of the table' },
+                    { value: 'pearson', label: 'Pearson' },
+                    { value: 'spearman', label: 'Spearman' },
+                  ]}
+                  onChange={(v) => set({ corr: v === 'none' ? undefined : v })}
+                />
+              </Field>
+            )}
+            {heat && !node.corr && (
+              <div className="with-info">
+                <Check checked={!!node.heatByRow} onChange={(v) => set({ heatByRow: v || undefined })}>
+                  Scale every row (z-scores)
+                </Check>
+                <Info about="Scaled rows">
+                  <p>Every row is shown by its own measure: each value less the mean of its row, divided by the standard deviation of the row. A cell then says how far its value lies above or below what is usual for that row.</p>
+                  <p>Use it when rows differ a lot in size (a strongly and a weakly expressed gene): without it the large rows take all the colour.</p>
+                  <p>On a logarithmic scale the logarithms are scaled, as is usual for expression data. It is what R’s scale() does to the rows.</p>
+                </Info>
+              </div>
+            )}
+            {(node.kind === 'bar' || node.kind === 'dot' || node.kind === 'line') && (
+              <Field
+                label="Error bars"
+                setting="error"
+                info={
+                  <>
+                    <p>
+                      <b>SD</b>, the standard deviation, shows how much the values of a group scatter.
+                    </p>
+                    <p>
+                      <b>SEM</b>, the standard error of the mean, is the SD divided by √n. It shows how precisely the mean is known and shrinks as the group grows.
+                    </p>
+                    <p>Say in the figure legend which of the two is drawn.</p>
+                  </>
+                }
+              >
+                <Segmented label="Error bars" value={node.error ?? 'none'} options={ERROR_OPTIONS} onChange={(error) => set({ error: error === 'none' ? undefined : error })} />
+              </Field>
+            )}
+            {scatter && !survival && (
+              <Field
+                label="Fitted line"
+                setting="fit"
+                info={
+                  <>
+                    <p>
+                      <b>Straight line.</b> The least-squares line through each series, on the values as they are plotted (their logarithms on a logarithmic axis).
+                    </p>
+                    <p>
+                      <b>Dose-response curve.</b> The response moves from one plateau to the other along the logarithm of the dose (x): y = bottom + (top − bottom) / (1 + 10^((log EC50 − log x) × Hill
+                      slope)), fitted by least squares. The EC50 (IC50 for a falling curve) is the dose halfway between the plateaus; its 95 % interval comes from the standard error of log EC50.
+                      It is the curve R fits with nls and the model SSfpl, and GraphPad Prism calls “log(agonist) vs. response, variable slope (four parameters)”.
+                    </p>
+                    <p>A curve needs at least five points at four doses above zero. Where the points do not settle on one curve, none is drawn.</p>
+                  </>
+                }
+              >
+                <Segmented
+                  label="Line fitted to each series"
+                  value={!node.fit ? 'none' : node.curve === 'dose' ? 'dose' : 'line'}
+                  options={[
+                    { value: 'none', label: 'None' },
+                    { value: 'line', label: 'Straight line' },
+                    { value: 'dose', label: 'Dose-response curve' },
+                  ]}
+                  onChange={(v) => set({ fit: v === 'none' ? undefined : true, curve: v === 'dose' ? 'dose' : undefined, ...(v === 'dose' ? {} : { doseBottom: undefined, doseTop: undefined }) })}
+                  wrap
+                />
+                {node.fit && perSeries(node.curve === 'dose' ? 'The curve of each series' : 'The line of each series', fitOf)}
+                {node.fit && node.curve === 'dose' && (
+                  <>
+                    <div className="row">
+                      <OptionalNumber label="Bottom of the curve held at" value={node.doseBottom} placeholder="bottom: fitted" onChange={(doseBottom) => set({ doseBottom }, 'dose-bottom')} />
+                      <OptionalNumber label="Top of the curve held at" value={node.doseTop} placeholder="top: fitted" onChange={(doseTop) => set({ doseTop }, 'dose-top')} />
+                    </div>
+                    <p className="hint">Type a value to hold a plateau there (0 for a response that starts at nothing, 100 for one given in per cent of a control). Empty: it is fitted.</p>
+                    {curvePairs.length > 0 && (
+                      <div className="test-result" aria-label="Comparison of the EC50 of the curves">
+                        <p>
+                          <b>Same EC50?</b> (extra sum-of-squares F test)
+                        </p>
+                        <ul className="chart-summary">
+                          {curvePairs.map((c, i) => (
+                            <li key={i}>
+                              <span>{comparisonText(c)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        {curvePairs.length > 1 && <p className="hint">The p values are not corrected for the number of pairs.</p>}
+                      </div>
+                    )}
+                  </>
+                )}
+                {curveMethods && (
+                  <div className="with-info">
+                    <button
+                      className="btn small"
+                      onClick={async () => toast((await copyText(curveMethods)) ? 'Copied. Paste it into your methods or figure legend.' : 'Copying is blocked here. Open the “i” beside the button and copy the text from there.')}
+                    >
+                      Copy a text for the methods
+                    </button>
+                    <Info about="The text for the methods">
+                      <p>{curveMethods}</p>
+                    </Info>
+                  </div>
+                )}
+              </Field>
+            )}
+            {scatter && !survival && (
+              <Field
+                label="Correlation"
+                setting="corr"
+                info={
+                  <>
+                    <p>How closely x and y go together in each series, written on the chart with its p value (two-sided, for “no correlation”).</p>
+                    <p>
+                      <b>Pearson.</b> For a straight-line relation between two measurements that each scatter roughly normally. It is worked out on the values as plotted: on their logarithms on a logarithmic axis.
+                    </p>
+                    <p>
+                      <b>Spearman.</b> Works on ranks, so it asks only whether y rises (or falls) with x, whatever the shape, and extreme values count for less. Written as r with a small s.
+                    </p>
+                    <p>A correlation says that two things go together, not that one causes the other.</p>
+                  </>
+                }
+              >
+                <Segmented
+                  label="Correlation written on the chart"
+                  value={node.corr ?? 'none'}
+                  options={[
+                    { value: 'none', label: 'None' },
+                    { value: 'pearson', label: 'Pearson' },
+                    { value: 'spearman', label: 'Spearman' },
+                  ]}
+                  onChange={(v) => set({ corr: v === 'none' ? undefined : v })}
+                />
+                {node.corr && perSeries('The correlation of each series', corrOf)}
+              </Field>
+            )}
+            {survival && lives && (
+              <Field
+                label="Log-rank test"
+                setting="log-rank"
+                info={
+                  <>
+                    <p>It asks whether the groups differ over the whole course of the curves: at every time with an event, the events of each group are compared with what its share of the subjects still followed would lead one to expect.</p>
+                    <p>With more than two groups, pairs are compared by log-rank tests of their own, with Holm’s correction. It is the test of R’s survival package (survdiff).</p>
+                    <p>The median is the time by which half of a group has had the event; “not reached” when its curve stays above one half.</p>
+                  </>
+                }
+              >
+                {lives.test ? (
+                  <div className="test-result" aria-label="Result of the log-rank test">
+                    <p>
+                      <b>Log-rank test</b>: {logRankText(lives.test)}
+                    </p>
+                    {lives.pairs.length > 0 && (
+                      <>
+                        <p className="hint">Pairs (log-rank tests, Holm’s correction):</p>
+                        <ul className="chart-summary">
+                          {lives.pairs.map((x, i) => (
+                            <li key={i}>
+                              <span>
+                                {x.a} and {x.b}: {x.p === null ? 'cannot be worked out' : `${pText(x.p)} (${stars(x.p)})`}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    <Check checked={!!node.logRank} onChange={(v) => set({ logRank: v || undefined })}>
+                      Write the p value on the chart
+                    </Check>
+                  </div>
+                ) : (
+                  <p className="hint">The test needs at least two groups, and an event while more than one group was still followed.</p>
+                )}
+                {curveMethods && (
+                  <div className="with-info">
+                    <button
+                      className="btn small"
+                      onClick={async () => toast((await copyText(curveMethods)) ? 'Copied. Paste it into your methods or figure legend.' : 'Copying is blocked here. Open the “i” beside the button and copy the text from there.')}
+                    >
+                      Copy a text for the methods
+                    </button>
+                    <Info about="The text for the methods">
+                      <p>{curveMethods}</p>
+                    </Info>
+                  </div>
+                )}
+              </Field>
+            )}
+            {!scatter && axes && <ChartTestProps node={node} set={set} />}
+            {!scatter && axes && (
+              <Field
+                label="Significance brackets"
+                setting="brackets"
+                info={
+                  <>
+                    <p>A bracket joins two groups and carries a label above them.</p>
+                    <p>Type the label yourself (for example p = 0.03, ** or ns), or choose a test above and let the bracket show its result for these two groups: it then changes with the numbers.</p>
+                    <p>Typing in the box of a bracket that follows the test replaces the result with your own label.</p>
+                  </>
+                }
+              >
+                {brackets.map((b, i) => (
+                  <div key={i} className="bracket-row" data-setting={`bracket-${i}`}>
+                    <select aria-label="First group" value={b.from} onChange={(e) => setBracket(i, { from: Number(e.target.value) })}>
+                      {drawn.map((c) => (
+                        <option key={c.index} value={c.index}>
+                          {groupName(c.group)}
+                        </option>
+                      ))}
+                    </select>
+                    <select aria-label="Second group" value={b.to} onChange={(e) => setBracket(i, { to: Number(e.target.value) })}>
+                      {drawn.map((c) => (
+                        <option key={c.index} value={c.index}>
+                          {groupName(c.group)}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      className="text-line"
+                      aria-label="Label of the bracket"
+                      value={bracketLabel(node, b)}
+                      placeholder={b.auto ? 'not compared by the test' : 'e.g. p = 0.03'}
+                      onChange={(e) => setBracket(i, { label: e.target.value.slice(0, 40), auto: undefined })}
+                    />
+                    <button className="icon-only" aria-label="Remove this bracket" title="Remove this bracket" onClick={() => set({ brackets: brackets.length > 1 ? brackets.filter((_, k) => k !== i) : undefined })}>
+                      <Icon name="close" size={14} />
+                    </button>
+                    {b.auto ? (
+                      <span className="bracket-source">Follows the test. Type in the box to write your own label.</span>
+                    ) : (
+                      testing && (
+                        <button className="btn small bracket-source" onClick={() => setBracket(i, { auto: true, label: '' })}>
+                          Use the result of the test
+                        </button>
+                      )
+                    )}
+                  </div>
+                ))}
+                <button
+                  className="btn small"
+                  disabled={drawn.length < 2 || brackets.length >= MAX_BRACKETS}
+                  onClick={() => set({ brackets: [...brackets, { from: drawn[0].index, to: drawn[Math.min(1, drawn.length - 1)].index, ...(testing ? { label: '', auto: true } : { label: '*' }) }] })}
+                >
+                  Add a bracket
+                </button>
+              </Field>
+            )}
+          </>
+        )}
+        {tab === 'look' && (
+          <>
+            {matrix && (
+              <Field
+                label="Colour scale"
+                setting="heat-scale"
+                info={
+                  <>
+                    <p>{matrix.scale.about}</p>
+                    <p>A scale from low to high suits amounts; two colours around a white middle suit values on both sides of zero.</p>
+                  </>
+                }
+              >
+                <select aria-label="Colour scale of the cells" value={matrix.scale.id} onChange={(e) => set({ heatScale: e.target.value as HeatScale })}>
+                  <optgroup label="From low to high">
+                    {HEAT_SCALES.filter((h) => !h.diverging).map((h) => (
+                      <option key={h.id} value={h.id}>
+                        {h.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Two colours around a middle">
+                    {HEAT_SCALES.filter((h) => h.diverging).map((h) => (
+                      <option key={h.id} value={h.id}>
+                        {h.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
+                <div className="palette-strip" aria-hidden="true">
+                  {Array.from({ length: 24 }, (_, i) => heatColour(matrix.scale, i / 23)).map((c, i) => (
+                    <span key={i} style={{ background: c }} />
+                  ))}
+                </div>
+              </Field>
+            )}
+            {heat && !node.corr && (
+              <AxisRange
+                title="Range of the colours"
+                colours
+                min={node.yMin}
+                max={node.yMax}
+                log={!!node.yLog}
+                onMin={(yMin) => set({ yMin }, 'chart-range')}
+                onMax={(yMax) => set({ yMax }, 'chart-range')}
+                onLog={(v) => set({ yLog: v || undefined })}
+              />
+            )}
+            {heat && (
+              <div data-setting="heat-numbers">
+                <Check checked={!!node.heatNumbers} onChange={(v) => set({ heatNumbers: v || undefined })}>
+                  Write the number in every cell
+                </Check>
+                <Check checked={node.legend !== 'none'} onChange={(v) => set({ legend: v ? undefined : 'none' })}>
+                  Show the colour scale beside the cells
+                </Check>
+              </div>
+            )}
+            {!heat && (
+            <Field
+              label="Colours"
+              info={
+                <>
+                  <p>{PALETTES.find((p) => p.id === (node.palette ?? 'biosketch'))?.about}</p>
+                  <p>Choosing a palette recolours every group. A single group can still be given its own colour, under “{grouped ? 'Series' : 'Groups'}”.</p>
+                </>
+              }
+            >
+              <select
+                aria-label="Colour palette"
+                value={node.palette ?? 'biosketch'}
+                onChange={(e) => set({ palette: e.target.value === 'biosketch' ? undefined : e.target.value, groups: node.groups.map(({ color: _own, ...g }) => g) })}
+              >
+                <optgroup label="Colour-blind friendly">
+                  {PALETTES.filter((p) => p.safe).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Common">
+                  {PALETTES.filter((p) => !p.safe).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+              <div className="palette-strip" aria-hidden="true">
+                {paletteColours(node.palette).map((c) => (
+                  <span key={c} style={{ background: c }} />
+                ))}
+              </div>
+            </Field>
+            )}
+            {sets && sets.sets.length > 0 && (
+              <Field label="Sets" info={<p>The colour and the name of each set. Type over a name to change it, on the diagram and in the table under “Data”. Names accept {MARKS}.</p>}>
+                <ul className="chart-summary names" aria-label="Colour and name of each set">
+                  {sets.sets.map((one, i) => {
+                    const entry = series.find((e) => e.groups[0] === one.group)
+                    return (
+                      <li key={i} data-setting={`group-${i}`}>
+                        {entry && colourBox(entry)}
+                        <NameInput value={one.name} label={`Name of ${one.name}`} onName={(typed) => rename(renameVenn(node, i, typed), `v${i}`)} />
+                      </li>
+                    )
+                  })}
+                </ul>
+              </Field>
+            )}
+            {venn && (
+              <Field label="Numbers in the diagram" setting="numbers">
+                <Segmented
+                  label="What is written in each part of the diagram"
+                  value={node.vennLabels ?? 'count'}
+                  options={[
+                    { value: 'count', label: 'Count', title: 'How many members each part holds' },
+                    { value: 'percent', label: 'Per cent', title: 'The share of each part in all members of all sets together' },
+                    { value: 'none', label: 'None', title: 'No numbers in the diagram' },
+                  ]}
+                  onChange={(v) => set({ vennLabels: v === 'count' ? undefined : v })}
+                />
+              </Field>
+            )}
+            {series.length > 0 && !venn && (
+              <Field
+                label={grouped ? 'Series' : heat ? 'Columns' : 'Groups'}
+                info={
+                  <>
+                    <p>
+                      {heat ? 'The' : 'The colour'}
+                      {showsPoints && !survival ? ', the shape of the points' : ''}
+                      {heat ? '' : ' and the'} name of each {grouped ? 'series' : heat ? 'column' : 'group'}.
+                    </p>
+                    <p>Type over a name to change it: on the chart{hasLegend ? ', in the legend' : ''} and in the table under “Data”. Names accept {MARKS}.</p>
+                    {grouped && <p>The categories are named under the series.</p>}
+                  </>
+                }
+              >
+                <ul className="chart-summary names" aria-label={`${heat ? 'Name' : 'Colour and name'} of each ${grouped ? 'series' : heat ? 'column' : 'group'}`}>
+                  {series.map((entry, i) => (
+                    <li key={i} data-setting={`group-${i}`}>
+                      {!heat && colourBox(entry)}
+                      {shapeBox(entry)}
+                      <NameInput value={entry.name} label={`Name of ${entry.name}`} onName={(typed) => rename(renameSeries(node, i, typed), `s${i}`)} />
+                    </li>
+                  ))}
+                </ul>
+                {grouped && (
+                  <>
+                    <span className="sub-label">Categories</span>
+                    <ul className="chart-summary names" aria-label="Name of each category">
+                      {chartCategories(node).map((category, i) => (
+                        <li key={i} data-setting={`category-${i}`}>
+                          <NameInput value={category} label={category ? `Name of the category ${category}` : 'Name of the category without a name'} placeholder="no name" onName={(typed) => rename(renameCategory(node, i, typed), `c${i}`)} />
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </Field>
+            )}
+            {showsPoints && !survival && (
+              <Field
+                label="Points"
+                info={
+                  <>
+                    {series.length > 1 && <p>Change all points, or choose one group to give it a size and transparency of its own.</p>}
+                    <p>The shape of a group’s points is chosen beside its colour, under “{grouped ? 'Series' : 'Groups'}”.</p>
+                    <p>Transparent points show where many lie on top of each other.</p>
+                  </>
+                }
+              >
+                {series.length > 1 && (
+                  <select aria-label="Which points to change" value={one ? pointsFor : -1} onChange={(e) => setPointsFor(Number(e.target.value))}>
+                    <option value={-1}>All groups</option>
+                    {series.map((entry, i) => (
+                      <option key={i} value={i}>
+                        Only {entry.name}
+                        {entry.pointSize !== undefined || entry.pointOpacity !== undefined ? ' (has its own)' : ''}
                       </option>
                     ))}
                   </select>
-                </Field>
-              )}
-              <Field label={labels.color ? 'Colour' : 'Colour (automatic)'}>
-                <ColorInput label="Colour of the numbers" value={labels.color ?? '#2b2f36'} onChange={(color) => setLabels({ color }, 'chart-value-colour')} />
-              </Field>
-              {labels.color && (
-                <button className="btn small" onClick={() => setLabels({ color: undefined })}>
-                  Automatic colour
-                </button>
-              )}
-            </div>
-          )}
-        </Field>
-      )}
-      {node.kind !== 'dot' && !scatter && (
-        <Check checked={!!node.points} onChange={(v) => set({ points: v || undefined })}>
-          Show every value as a dot
-        </Check>
-      )}
-      {node.kind === 'bar' && isGrouped(node) && (
-        <div className="with-info">
-          <Check checked={!!node.stacked} onChange={(v) => set({ stacked: v || undefined })}>
-            Stack the bars of each category
-          </Check>
-          <Info about="Stacked bars">
-            <p>The bars of one category stand on top of each other, in the order of the legend, instead of side by side. Each part is as tall as the mean of its series, so the whole bar is the sum of the means.</p>
-            <p>Error bars and single values are not drawn in stacked bars. A number at each group is written inside its part where it fits.</p>
-          </Info>
-        </div>
-      )}
-      {scatter && (
-        <Field
-          label="Fitted line"
-          info={
-            <>
-              <p>
-                <b>Straight line.</b> The least-squares line through each series, on the values as they are plotted (their logarithms on a logarithmic axis).
-              </p>
-              <p>
-                <b>Dose-response curve.</b> The response moves from one plateau to the other along the logarithm of the dose (x): y = bottom + (top − bottom) / (1 + 10^((log EC50 − log x) × Hill
-                slope)), fitted by least squares. The EC50 (IC50 for a falling curve) is the dose halfway between the plateaus; its 95 % interval comes from the standard error of log EC50.
-                It is the curve R fits with nls and the model SSfpl, and GraphPad Prism calls “log(agonist) vs. response, variable slope (four parameters)”.
-              </p>
-              <p>A curve needs at least five points at four doses above zero. Where the points do not settle on one curve, none is drawn.</p>
-            </>
-          }
-        >
-          <Segmented
-            label="Line fitted to each series"
-            value={!node.fit ? 'none' : node.curve === 'dose' ? 'dose' : 'line'}
-            options={[
-              { value: 'none', label: 'None' },
-              { value: 'line', label: 'Straight line' },
-              { value: 'dose', label: 'Dose-response curve' },
-            ]}
-            onChange={(v) => set({ fit: v === 'none' ? undefined : true, curve: v === 'dose' ? 'dose' : undefined })}
-            wrap
-          />
-          {curveMethods && (
-            <div className="with-info">
-              <button
-                className="btn small"
-                onClick={async () => toast((await copyText(curveMethods)) ? 'Copied. Paste it into your methods or figure legend.' : 'Copying is blocked here. Open the “i” beside the button and copy the text from there.')}
-              >
-                Copy a text for the methods
-              </button>
-              <Info about="The text for the methods">
-                <p>{curveMethods}</p>
-              </Info>
-            </div>
-          )}
-        </Field>
-      )}
-      {scatter && <PointNamesField node={node} set={set} />}
-      {showsPoints && (
-        <Field
-          label="Points"
-          info={
-            <>
-              {series.length > 1 && <p>Change all points, or choose one group to give it a size and transparency of its own.</p>}
-              <p>The shape of a group’s points is chosen beside its colour, in the list above.</p>
-              <p>Transparent points show where many lie on top of each other.</p>
-            </>
-          }
-        >
-          {series.length > 1 && (
-            <select aria-label="Which points to change" value={one ? pointsFor : -1} onChange={(e) => setPointsFor(Number(e.target.value))}>
-              <option value={-1}>All groups</option>
-              {series.map((entry, i) => (
-                <option key={i} value={i}>
-                  Only {entry.name}
-                  {entry.pointSize !== undefined || entry.pointOpacity !== undefined ? ' (has its own)' : ''}
-                </option>
-              ))}
-            </select>
-          )}
-          <span className="sub-label">Size {Math.round((shownPoints.pointSize ?? 1) * 100)}%</span>
-          <Range label={`Size of the points${one ? ` of ${one.name}` : ''}`} value={shownPoints.pointSize ?? 1} min={POINT_SIZE_MIN} max={POINT_SIZE_MAX} step={0.25} onChange={(v) => setPoints({ pointSize: v }, 'chart-point-size')} />
-          <span className="sub-label">{Math.round((1 - (shownPoints.pointOpacity ?? 1)) * 100)}% transparent</span>
-          <Range
-            label={`Transparency of the points${one ? ` of ${one.name}` : ''}`}
-            value={1 - (shownPoints.pointOpacity ?? 1)}
-            min={0}
-            max={1 - POINT_OPACITY_MIN}
-            step={0.05}
-            onChange={(v) => setPoints({ pointOpacity: Math.round((1 - v) * 100) / 100 }, 'chart-point-opacity')}
-          />
-          {one && (one.pointSize !== undefined || one.pointOpacity !== undefined) && (
-            <button className="btn small" onClick={() => set({ groups: node.groups.map((g, k) => (one.groups.includes(k) ? (({ pointSize: _s, pointOpacity: _o, ...rest }) => rest)(g) : g)) })}>
-              Same as the other groups
-            </button>
-          )}
-        </Field>
-      )}
-      <Field
-        label="Colours"
-        info={
-          <>
-            <p>{PALETTES.find((p) => p.id === (node.palette ?? 'biosketch'))?.about}</p>
-            <p>Choosing a palette recolours every group. A single group can still be given its own colour, in the list above.</p>
-          </>
-        }
-      >
-        <select
-          aria-label="Colour palette"
-          value={node.palette ?? 'biosketch'}
-          onChange={(e) => set({ palette: e.target.value === 'biosketch' ? undefined : e.target.value, groups: node.groups.map(({ color: _own, ...g }) => g) })}
-        >
-          <optgroup label="Colour-blind friendly">
-            {PALETTES.filter((p) => p.safe).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label="Common">
-            {PALETTES.filter((p) => !p.safe).map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </optgroup>
-        </select>
-        <div className="palette-strip" aria-hidden="true">
-          {paletteColours(node.palette).map((c) => (
-            <span key={c} style={{ background: c }} />
-          ))}
-        </div>
-      </Field>
-      {hasLegend && (
-        <Field label="Legend">
-          <select aria-label="Place of the legend" value={node.legend ?? 'right'} onChange={(e) => set({ legend: e.target.value === 'right' ? undefined : (e.target.value as LegendPlace) })}>
-            {LEGEND_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
-      <AxisRange
-        title={scatter ? 'Range of the y axis' : 'Range of the value axis'}
-        zero={!scatter}
-        min={node.yMin}
-        max={node.yMax}
-        log={!!node.yLog}
-        onMin={(yMin) => set({ yMin }, 'chart-range')}
-        onMax={(yMax) => set({ yMax }, 'chart-range')}
-        onLog={(v) => set({ yLog: v || undefined })}
-      />
-      {scatter && (
-        <AxisRange
-          title="Range of the x axis"
-          min={node.xMin}
-          max={node.xMax}
-          log={!!node.xLog}
-          onMin={(xMin) => set({ xMin }, 'chart-range')}
-          onMax={(xMax) => set({ xMax }, 'chart-range')}
-          onLog={(v) => set({ xLog: v || undefined })}
-        />
-      )}
-      <Field
-        label="Reference lines"
-        info={
-          <>
-            <p>A dashed line across the plot at a value you choose, for example a threshold or a detection limit.{scatter ? ' In a scatter chart a line can also stand upright at an x value.' : ''}</p>
-            <p>The axis always reaches the line. A label is written on the line at its right end.</p>
-            <p>In words: “dotted line at 1.3 labelled cut-off”.</p>
-          </>
-        }
-      >
-        {refLines.map((l, i) => (
-          <div key={i} className="bracket-row">
-            {scatter ? (
-              <select aria-label="Direction of the line" value={l.axis} onChange={(e) => setLine(i, { axis: e.target.value === 'x' ? 'x' : 'y' })}>
-                <option value="y">Across, at y =</option>
-                <option value="x">Upright, at x =</option>
-              </select>
-            ) : (
-              <span className="between">Across, at</span>
-            )}
-            <OptionalNumber label="Value the line is drawn at" value={l.value} placeholder="value" onChange={(value) => value !== undefined && setLine(i, { value })} />
-            <input type="text" className="text-line" aria-label="Label of the line" value={l.label ?? ''} placeholder="label, e.g. p = 0.05" onChange={(e) => setLine(i, { label: e.target.value.trim() ? e.target.value.slice(0, 40) : undefined })} />
-            <button className="icon-only" aria-label="Remove this line" title="Remove this line" onClick={() => set({ refLines: refLines.length > 1 ? refLines.filter((_, k) => k !== i) : undefined })}>
-              <Icon name="close" size={14} />
-            </button>
-          </div>
-        ))}
-        <button className="btn small" disabled={refLines.length >= MAX_REF_LINES} onClick={addLine}>
-          Add a line
-        </button>
-      </Field>
-      {!scatter && <ChartTestProps node={node} set={set} />}
-      {!scatter && (
-        <Field
-          label="Significance brackets"
-          info={
-            <>
-              <p>A bracket joins two groups and carries a label above them.</p>
-              <p>Type the label yourself (for example p = 0.03, ** or ns), or choose a test above and let the bracket show its result for these two groups: it then changes with the numbers.</p>
-              <p>Typing in the box of a bracket that follows the test replaces the result with your own label.</p>
-            </>
-          }
-        >
-          {brackets.map((b, i) => (
-            <div key={i} className="bracket-row">
-              <select aria-label="First group" value={b.from} onChange={(e) => setBracket(i, { from: Number(e.target.value) })}>
-                {drawn.map((c) => (
-                  <option key={c.index} value={c.index}>
-                    {groupName(c.group)}
-                  </option>
-                ))}
-              </select>
-              <select aria-label="Second group" value={b.to} onChange={(e) => setBracket(i, { to: Number(e.target.value) })}>
-                {drawn.map((c) => (
-                  <option key={c.index} value={c.index}>
-                    {groupName(c.group)}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="text"
-                className="text-line"
-                aria-label="Label of the bracket"
-                value={bracketLabel(node, b)}
-                placeholder={b.auto ? 'not compared by the test' : 'e.g. p = 0.03'}
-                onChange={(e) => setBracket(i, { label: e.target.value.slice(0, 40), auto: undefined })}
-              />
-              <button className="icon-only" aria-label="Remove this bracket" title="Remove this bracket" onClick={() => set({ brackets: brackets.length > 1 ? brackets.filter((_, k) => k !== i) : undefined })}>
-                <Icon name="close" size={14} />
-              </button>
-              {b.auto ? (
-                <span className="bracket-source">Follows the test. Type in the box to write your own label.</span>
-              ) : (
-                testing && (
-                  <button className="btn small bracket-source" onClick={() => setBracket(i, { auto: true, label: '' })}>
-                    Use the result of the test
+                )}
+                <span className="sub-label">Size {Math.round((shownPoints.pointSize ?? 1) * 100)}%</span>
+                <Range label={`Size of the points${one ? ` of ${one.name}` : ''}`} value={shownPoints.pointSize ?? 1} min={POINT_SIZE_MIN} max={POINT_SIZE_MAX} step={0.25} onChange={(v) => setPoints({ pointSize: v }, 'chart-point-size')} />
+                <span className="sub-label">{Math.round((1 - (shownPoints.pointOpacity ?? 1)) * 100)}% transparent</span>
+                <Range
+                  label={`Transparency of the points${one ? ` of ${one.name}` : ''}`}
+                  value={1 - (shownPoints.pointOpacity ?? 1)}
+                  min={0}
+                  max={1 - POINT_OPACITY_MIN}
+                  step={0.05}
+                  onChange={(v) => setPoints({ pointOpacity: Math.round((1 - v) * 100) / 100 }, 'chart-point-opacity')}
+                />
+                {one && (one.pointSize !== undefined || one.pointOpacity !== undefined) && (
+                  <button className="btn small" onClick={() => set({ groups: node.groups.map((g, k) => (one.groups.includes(k) ? (({ pointSize: _s, pointOpacity: _o, ...rest }) => rest)(g) : g)) })}>
+                    Same as the other groups
                   </button>
-                )
-              )}
-            </div>
-          ))}
-          <button
-            className="btn small"
-            disabled={drawn.length < 2 || brackets.length >= MAX_BRACKETS}
-            onClick={() => set({ brackets: [...brackets, { from: drawn[0].index, to: drawn[Math.min(1, drawn.length - 1)].index, ...(testing ? { label: '', auto: true } : { label: '*' }) }] })}
-          >
-            Add a bracket
-          </button>
-        </Field>
-      )}
-      <Field label="Title">
-        <input type="text" className="text-line" maxLength={120} value={node.title ?? ''} placeholder="e.g. Cell viability" onChange={(e) => set({ title: e.target.value.trim() ? e.target.value : undefined }, 'chart-title')} />
-      </Field>
-      <Field label={scatter ? 'Title of the y axis' : 'Title of the value axis'}>
-        <input type="text" className="text-line" maxLength={120} value={node.yLabel ?? ''} placeholder="e.g. Viable cells (%)" onChange={(e) => set({ yLabel: e.target.value.trim() ? e.target.value : undefined }, 'chart-ylabel')} />
-      </Field>
-      <Field label="Title of the x axis">
-        <input type="text" className="text-line" maxLength={120} value={node.xLabel ?? ''} placeholder={scatter ? 'e.g. Dose (µM)' : 'e.g. Genotype'} onChange={(e) => set({ xLabel: e.target.value.trim() ? e.target.value : undefined }, 'chart-xlabel')} />
-      </Field>
-      <Field label="Text size">
-        <NumberInput label="Size of the chart's text" value={node.fontSize ?? 13} min={6} max={60} onChange={(fontSize) => set({ fontSize }, 'chart-font')} />
-      </Field>
+                )}
+              </Field>
+            )}
+            {node.kind !== 'dot' && !scatter && axes && (
+              <Check checked={!!node.points} onChange={(v) => set({ points: v || undefined })}>
+                Show every value as a dot
+              </Check>
+            )}
+            {node.kind === 'bar' && isGrouped(node) && (
+              <div className="with-info">
+                <Check checked={!!node.stacked} onChange={(v) => set({ stacked: v || undefined, percent: v ? node.percent : undefined })}>
+                  Stack the bars of each category
+                </Check>
+                <Info about="Stacked bars">
+                  <p>The bars of one category stand on top of each other, in the order of the legend, instead of side by side. Each part is as tall as the mean of its series, so the whole bar is the sum of the means.</p>
+                  <p>Error bars and single values are not drawn in stacked bars. A number at each group is written inside its part where it fits.</p>
+                  <p>
+                    <b>Scale every bar to 100 %.</b> Each part becomes its share of the total of its category, so the bars are equally tall and compositions can be compared. A number written in a part is then
+                    its share in per cent.
+                  </p>
+                </Info>
+              </div>
+            )}
+            {node.kind === 'bar' && isGrouped(node) && node.stacked && (
+              <Check checked={!!node.percent} onChange={(v) => set({ percent: v || undefined })}>
+                Scale every bar to 100 %
+              </Check>
+            )}
+            {pie && (
+              <Field label="Numbers on the slices" setting="numbers">
+                <Segmented
+                  label="What is written on the slices"
+                  value={node.pieLabels ?? 'percent'}
+                  options={[
+                    { value: 'percent', label: 'Per cent', title: 'The share of each slice in the whole' },
+                    { value: 'value', label: 'Value', title: 'The mean of the group, as in the table' },
+                    { value: 'none', label: 'None', title: 'No numbers on the slices' },
+                  ]}
+                  onChange={(v) => set({ pieLabels: v === 'percent' ? undefined : v })}
+                />
+              </Field>
+            )}
+            {!scatter && axes && (
+              <Field
+                label="Number at each group"
+                setting="numbers"
+                info={
+                  <>
+                    <p>Writes one number at every group: its mean, its median, or how many values it has (n).</p>
+                    <p>
+                      {node.kind === 'bar'
+                        ? 'Inside the bar, the number stands under its top, or at the foot of the bar when an error bar or dots run through it. A number that does not fit inside is written above the bar.'
+                        : 'The number stands above everything drawn for the group. In a bar chart it can also stand inside the bar.'}
+                    </p>
+                    <p>Left automatic, the colour is white inside a dark bar and dark everywhere else.</p>
+                    <p>{node.kind === 'box' || node.kind === 'violin' ? 'The line in the middle marks the median' : 'The chart itself draws the mean'}: if you write a different number, say in the figure legend what it is.</p>
+                    <p>In words: “write the mean in each bar, in white”.</p>
+                  </>
+                }
+              >
+                <select
+                  aria-label="Number written at each group"
+                  value={labels?.show ?? 'none'}
+                  onChange={(e) => (e.target.value === 'none' ? set({ valueLabels: undefined }) : setLabels({ show: e.target.value as ChartValueLabels['show'] }))}
+                >
+                  <option value="none">None</option>
+                  <option value="mean">Mean</option>
+                  <option value="median">Median</option>
+                  <option value="n">Number of values (n)</option>
+                </select>
+                {labels && node.kind === 'bar' && (
+                  <Segmented
+                    label="Place of the numbers"
+                    value={labels.above ? 'above' : 'inside'}
+                    options={[
+                      { value: 'inside', label: 'Inside the bar', title: 'Inside the bar where the number fits, above it otherwise' },
+                      { value: 'above', label: 'Above the bar', title: 'Above the bar and its error bar' },
+                    ]}
+                    onChange={(v) => setLabels({ above: v === 'above' })}
+                  />
+                )}
+                {labels && (
+                  <div className="row">
+                    {labels.show !== 'n' && (
+                      <Field label="Decimals">
+                        <select aria-label="Decimals of the numbers" value={labels.decimals ?? 'auto'} onChange={(e) => setLabels({ decimals: e.target.value === 'auto' ? undefined : Number(e.target.value) })}>
+                          <option value="auto">Automatic</option>
+                          {Array.from({ length: VALUE_DECIMALS_MAX + 1 }, (_, d) => (
+                            <option key={d} value={d}>
+                              {d}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    )}
+                    <Field label={labels.color ? 'Colour' : 'Colour (automatic)'}>
+                      <ColorInput label="Colour of the numbers" value={labels.color ?? '#2b2f36'} onChange={(color) => setLabels({ color }, 'chart-value-colour')} />
+                    </Field>
+                    {labels.color && (
+                      <button className="btn small" onClick={() => setLabels({ color: undefined })}>
+                        Automatic colour
+                      </button>
+                    )}
+                  </div>
+                )}
+              </Field>
+            )}
+            {hasLegend && (
+              <Field label="Legend" setting="legend">
+                <select aria-label="Place of the legend" value={node.legend ?? 'right'} onChange={(e) => set({ legend: e.target.value === 'right' ? undefined : (e.target.value as LegendPlace) })}>
+                  {LEGEND_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            {(pie || venn) && titleField}
+            <Field label="Text size">
+              <NumberInput label="Size of the chart's text" value={node.fontSize ?? 13} min={6} max={60} onChange={(fontSize) => set({ fontSize }, 'chart-font')} />
+            </Field>
+          </>
+        )}
+        {tab === 'axes' && (
+          <>
+            {titleField}
+            {!pie && (
+              <>
+                <Field label={scatter ? 'Title of the y axis' : heat ? 'Title beside the rows' : 'Title of the value axis'} setting="y-title">
+                  <input type="text" className="text-line" maxLength={120} value={node.yLabel ?? ''} placeholder="e.g. Viable cells (%)" onChange={(e) => set({ yLabel: e.target.value.trim() ? e.target.value : undefined }, 'chart-ylabel')} />
+                </Field>
+                <Field label={heat ? 'Title under the columns' : 'Title of the x axis'} setting="x-title">
+                  <input type="text" className="text-line" maxLength={120} value={node.xLabel ?? ''} placeholder={scatter ? 'e.g. Dose (µM)' : 'e.g. Genotype'} onChange={(e) => set({ xLabel: e.target.value.trim() ? e.target.value : undefined }, 'chart-xlabel')} />
+                </Field>
+              </>
+            )}
+            {axes && !survival && (
+              <AxisRange
+                title={scatter ? 'Range of the y axis' : 'Range of the value axis'}
+                setting="y-range"
+                zero={!scatter}
+                min={node.yMin}
+                max={node.yMax}
+                log={!!node.yLog}
+                onMin={(yMin) => set({ yMin }, 'chart-range')}
+                onMax={(yMax) => set({ yMax }, 'chart-range')}
+                onLog={(v) => set({ yLog: v || undefined })}
+              />
+            )}
+            {scatter && (
+              <AxisRange
+                title="Range of the x axis"
+                setting="x-range"
+                min={node.xMin}
+                max={node.xMax}
+                log={!!node.xLog}
+                onMin={(xMin) => set({ xMin }, 'chart-range')}
+                onMax={(xMax) => set({ xMax }, 'chart-range')}
+                onLog={(v) => set({ xLog: v || undefined })}
+              />
+            )}
+            {axes && !survival && (
+              <Field
+                label="Reference lines"
+                setting="lines"
+                info={
+                  <>
+                    <p>A dashed line across the plot at a value you choose, for example a threshold or a detection limit.{scatter ? ' In a scatter chart a line can also stand upright at an x value.' : ''}</p>
+                    <p>The axis always reaches the line. A label is written on the line at its right end.</p>
+                    <p>In words: “dotted line at 1.3 labelled cut-off”.</p>
+                  </>
+                }
+              >
+                {refLines.map((l, i) => (
+                  <div key={i} className="bracket-row" data-setting={`line-${i}`}>
+                    {scatter ? (
+                      <select aria-label="Direction of the line" value={l.axis} onChange={(e) => setLine(i, { axis: e.target.value === 'x' ? 'x' : 'y' })}>
+                        <option value="y">Across, at y =</option>
+                        <option value="x">Upright, at x =</option>
+                      </select>
+                    ) : (
+                      <span className="between">Across, at</span>
+                    )}
+                    <OptionalNumber label="Value the line is drawn at" value={l.value} placeholder="value" onChange={(value) => value !== undefined && setLine(i, { value })} />
+                    <input type="text" className="text-line" aria-label="Label of the line" value={l.label ?? ''} placeholder="label, e.g. p = 0.05" onChange={(e) => setLine(i, { label: e.target.value.trim() ? e.target.value.slice(0, 40) : undefined })} />
+                    <button className="icon-only" aria-label="Remove this line" title="Remove this line" onClick={() => set({ refLines: refLines.length > 1 ? refLines.filter((_, k) => k !== i) : undefined })}>
+                      <Icon name="close" size={14} />
+                    </button>
+                  </div>
+                ))}
+                <button className="btn small" disabled={refLines.length >= MAX_REF_LINES} onClick={addLine}>
+                  Add a line
+                </button>
+              </Field>
+            )}
+            {scatter && !survival && (
+              <div data-setting="point-names">
+                <PointNamesField node={node} set={set} />
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </Section>
   )
 }
@@ -1780,7 +2353,22 @@ function ConnectorProps({ node }: { node: ConnectorNode }) {
         </>
       }
     >
-      <Segmented label="Arrow type" value={node.kind} options={KIND_OPTIONS} onChange={(kind) => patch<ConnectorNode>('connector', { kind })} />
+      <Segmented label="Arrow type" value={node.kind} options={KIND_OPTIONS} onChange={(kind) => patch<ConnectorNode>('connector', { kind, ...(kind === 'double' ? { startMark: undefined } : {}) })} />
+      {node.kind !== 'double' && (
+        <Field label="At its start" info={<p>A second mark, at the end the arrow starts from: a head, a bar or a dot. “Reverse” turns the arrow round, each mark going with its end.</p>}>
+          <Segmented
+            label="Mark at the start of the arrow"
+            value={node.startMark ?? 'none'}
+            options={[
+              { value: 'none', label: 'Nothing', title: 'No mark at the start' },
+              { value: 'arrow', label: 'Head', title: 'An arrowhead at the start' },
+              { value: 'inhibit', label: 'Bar', title: 'A flat bar at the start' },
+              { value: 'dot', label: 'Dot', title: 'A round dot at the start' },
+            ]}
+            onChange={(v) => patch<ConnectorNode>('connector', v === 'none' ? { startMark: undefined } : node.kind === 'arrow' && v === 'arrow' ? { kind: 'double', startMark: undefined } : { startMark: v })}
+          />
+        </Field>
+      )}
       <Field label="Line shape">
         <Segmented
           label="Line shape"
@@ -1816,7 +2404,7 @@ function ConnectorProps({ node }: { node: ConnectorNode }) {
       <div className="row">
         <button
           className="btn small"
-          onClick={() => patchSelection((n) => (n.type === 'connector' ? { ...n, from: n.to, to: n.from } : n))}
+          onClick={() => patchSelection((n) => (n.type === 'connector' ? reversed(n) : n))}
         >
           <Icon name="swap" size={14} /> Reverse
         </button>

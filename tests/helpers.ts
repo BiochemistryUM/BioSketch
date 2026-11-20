@@ -5,6 +5,7 @@
 import indexRaw from '../public/icon-packs/index.json?raw'
 import { iconsUsed, type IconLookup } from '../src/ai/scene'
 import type { PackInfo } from '../src/icons/packs'
+import { everyNode } from '../src/model/slides'
 import type { FigDoc, IconDef } from '../src/model/types'
 import type { Template } from '../src/templates'
 
@@ -35,5 +36,5 @@ export const loadStub = async (pack: PackInfo): Promise<IconDef[]> => pack.names
 /** An example figure, complete with (stand-in) drawings, as the app builds it once its packs are fetched. */
 export function example(template: Template): FigDoc {
   const doc = template.build(packIcons)
-  return { ...doc, customIcons: iconsUsed(doc.nodes, packIcons) }
+  return { ...doc, customIcons: iconsUsed(everyNode(doc), packIcons) }
 }

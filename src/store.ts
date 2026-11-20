@@ -2,6 +2,8 @@
 
 import { create } from 'zustand'
 import { emptyDoc } from './model/doc'
+import type { ChartPart } from './model/chart'
+import type { PartBox } from './model/chartParts'
 import type { LineStyle } from './model/dash'
 import type { ConnectorFade, ConnectorKind, FigDoc, FigNode, IconDef, ShapeKind } from './model/types'
 
@@ -60,6 +62,16 @@ export interface EditorState {
   toast: string | null
   /** Bumped to ask the canvas to zoom so the whole page is visible. */
   fitRequest: number
+  /** The row of slides under the page was opened by hand (a figure with several slides always shows it). */
+  slidesShown: boolean
+  /** The slides are being shown full screen, one after the other. */
+  presenting: boolean
+  /**
+   * The part of a chart pressed last: which chart and part, a box round the part in the chart's own
+   * box, and the chart as it was then. It is let go of as soon as that chart changes or something
+   * else is selected, so the box is never one of a chart that looks different by now.
+   */
+  chartPart: { id: string; part: ChartPart; box: PartBox; node: FigNode; nonce: number } | null
 
   /** Change the figure and record one undo step. Changes sharing a `merge` key in quick succession become one step. */
   commit: (fn: (doc: FigDoc) => FigDoc, opts?: { merge?: string; select?: string[] }) => void
@@ -106,6 +118,9 @@ export const useEditor = create<EditorState>((set, get) => ({
   dialog: null,
   toast: null,
   fitRequest: 0,
+  slidesShown: false,
+  presenting: false,
+  chartPart: null,
 
   commit: (fn, opts) => {
     const s = get()
@@ -197,6 +212,12 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   set: (patch) => set(patch),
 }))
+
+// The part of a chart that was pressed belongs to the chart as it was and to a selection of that chart alone.
+useEditor.subscribe((s) => {
+  const pick = s.chartPart
+  if (pick && (s.selection.length !== 1 || s.selection[0] !== pick.id || !s.doc.nodes.includes(pick.node))) useEditor.setState({ chartPart: null })
+})
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 

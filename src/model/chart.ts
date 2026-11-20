@@ -8,10 +8,13 @@
 //    example the treatment);
 //  - scatter: the first column holds x, every further column the y values of one series.
 
-import { bandwidth, boxStats, density, doseResponseAt, fitDose, fitLine, type BoxStats, type DoseFit, type Fit } from './chartStats'
+import { bandwidth, boxStats, compareEc50, correlation, density, doseResponseAt, fitDose, fitLine, type BoxStats, type Correlation, type DoseFit, type Fit } from './chartStats'
 import { tCritical } from './distributions'
+import { cellColour, heatColour, heatMatrix } from './heatmap'
+import { renameVennSet, vennOf, vennParts } from './venn'
+import { kaplanMeier, logRank, type KaplanMeier, type Subject } from './survival'
 import { analyseTwoWay, suggestTwoWay, type Factors } from './twoWay'
-import { STARS_KEY, analyse, pText, stars, suggest, type Advice, type Outcome, type TestId } from './chartTests'
+import { STARS_KEY, analyse, holm, pText, stars, suggest, type Advice, type Outcome, type TestId } from './chartTests'
 import { measureText, wrapText } from './nodes'
 import { PALETTES, paletteColours } from './palettes'
 import type { ChartBracket, ChartGroup, ChartKind, ChartNode, ChartPointNames, ChartRefLine, ChartTest, ChartValueLabels, LegendPlace, PointShape, Rect, TextNode } from './types'
@@ -25,7 +28,7 @@ export const MAX_VALUES = 5000
  */
 export const MAX_POINTS = 25000
 /** The most values a group of this kind of chart keeps. */
-export const maxValues = (kind: ChartKind): number => (kind === 'scatter' ? MAX_POINTS : MAX_VALUES)
+export const maxValues = (kind: ChartKind): number => (kind === 'scatter' || kind === 'venn' ? MAX_POINTS : MAX_VALUES)
 /** The furthest row of a table whose place is remembered (see `rows` of a group). */
 export const MAX_ROWS = 20000
 export const MAX_BRACKETS = 30
@@ -153,8 +156,10 @@ export function readTable(text: string, kind: ChartKind = 'bar', header?: 0 | 1 
   const named = cells[0].some(isWord)
   const width = Math.max(...cells.map((row) => row.length))
   const scatter = kind === 'scatter'
-  const guessed = scatter ? (named ? 1 : 0) : named ? (allWords(cells[1]) ? 2 : 1) : 0
-  const head = Math.min(header ?? guessed, scatter ? 1 : 2, cells.length) as 0 | 1 | 2
+  // A scatter table and the lists of a Venn diagram have one row of names at most.
+  const oneHead = scatter || kind === 'venn'
+  const guessed = oneHead ? (named ? 1 : 0) : named ? (allWords(cells[1]) ? 2 : 1) : 0
+  const head = Math.min(header ?? guessed, oneHead ? 1 : 2, cells.length) as 0 | 1 | 2
   report.head = head
   const rows = cells.slice(head)
   const nameOf = (col: number): string => (head ? (cells[head - 1][col] ?? '') : '').slice(0, 60)
@@ -166,6 +171,26 @@ export function readTable(text: string, kind: ChartKind = 'bar', header?: 0 | 1 
       report.example ??= (cell ?? '').trim().slice(0, 20)
     }
     return v
+  }
+
+  if (kind === 'venn') {
+    // One row of numbers under the names holds sizes: of each set, and of what sets share. Anything
+    // else is lists: every column holds the names of the members of one set, numbers included.
+    const sizes = rows.length === 1 && rows[0].some((c) => c !== '') && rows[0].every((c) => c === '' || !isWord(c))
+    for (let col = 0; col < width; col++) {
+      const name = nameOf(col)
+      const members = sizes ? [] : rows.map((row) => (row[col] ?? '').trim()).filter(Boolean)
+      const size = sizes ? read(rows[0][col]) : NaN
+      if (!members.length && !Number.isFinite(size) && !name) continue
+      if (report.groups.length >= MAX_GROUPS) {
+        report.droppedGroups++
+        continue
+      }
+      report.droppedValues += Math.max(0, members.length - MAX_POINTS)
+      const kept = members.slice(0, MAX_POINTS).map((m) => m.slice(0, 40))
+      report.groups.push({ name: name || `Set ${report.groups.length + 1}`, values: sizes ? (Number.isFinite(size) ? [size] : []) : kept.map(() => 1), ...(kept.length ? { labels: kept } : {}) })
+    }
+    return report
   }
 
   if (scatter) {
@@ -199,8 +224,11 @@ export function readTable(text: string, kind: ChartKind = 'bar', header?: 0 | 1 
     return report
   }
 
+  // A heat map: a first column of words, without a single number, names the rows.
+  const firstCells = rows.map((row) => (row[0] ?? '').trim())
+  const rowNames = kind === 'heatmap' && width > 1 && firstCells.some(isWord) && firstCells.every((c) => c === '' || isWord(c))
   let category = ''
-  for (let col = 0; col < width; col++) {
+  for (let col = rowNames ? 1 : 0; col < width; col++) {
     if (head === 2 && cells[0][col]) category = cells[0][col].slice(0, 60)
     const read1 = rows.map((row, r) => ({ r, v: read(row[col]) })).filter((c) => Number.isFinite(c.v))
     const name = nameOf(col)
@@ -214,7 +242,13 @@ export function readTable(text: string, kind: ChartKind = 'bar', header?: 0 | 1 
     const kept = read1.slice(0, MAX_VALUES)
     // A column with gaps remembers the row of each value, so that paired tests still compare row with row.
     const gaps = kept.some((c, i) => c.r !== i) && kept[kept.length - 1].r < MAX_ROWS
-    report.groups.push({ name: name || `Group ${report.groups.length + 1}`, values: kept.map((c) => c.v), ...(head === 2 && category ? { category } : {}), ...(gaps ? { rows: kept.map((c) => c.r) } : {}) })
+    report.groups.push({
+      name: name || `Group ${report.groups.length + 1}`,
+      values: kept.map((c) => c.v),
+      ...(head === 2 && category ? { category } : {}),
+      ...(gaps ? { rows: kept.map((c) => c.r) } : {}),
+      ...(rowNames && kept.some((c) => firstCells[c.r]) ? { labels: kept.map((c) => firstCells[c.r].slice(0, 40)) } : {}),
+    })
   }
   return report
 }
@@ -234,11 +268,18 @@ export function thinEvenly<T>(items: T[], limit: number, keep: (item: T) => bool
   return items.filter((_, i) => chosen.has(i))
 }
 
+/**
+ * The three ways a table is read: with x in the first column (scatter), as lists of names or
+ * sizes of sets (Venn), or as one column of numbers per group (every other kind). Going from one
+ * to another reads the table again, see `crossTable`.
+ */
+export const chartFamily = (kind: ChartKind): 'scatter' | 'venn' | 'columns' => (kind === 'scatter' ? 'scatter' : kind === 'venn' ? 'venn' : 'columns')
+
 /** The groups of a pasted table: `readTable` without its report. */
 export const parseTable = (text: string, kind: ChartKind = 'bar', header?: 0 | 1 | 2): ChartGroup[] => readTable(text, kind, header).groups
 
 /** How many rows of names `tableText` writes for these groups: two for a grouped chart, otherwise one. */
-export const headRows = (groups: ChartGroup[], kind: ChartKind): 1 | 2 => (kind !== 'scatter' && groups.some((g) => g.category) ? 2 : 1)
+export const headRows = (groups: ChartGroup[], kind: ChartKind): 1 | 2 => (kind !== 'scatter' && kind !== 'venn' && groups.some((g) => g.category) ? 2 : 1)
 
 /** The groups written back as a tab-separated table, for the box the scientist edits. Read it again with `headRows`. */
 export function tableText(groups: ChartGroup[], kind: ChartKind = 'bar'): string {
@@ -263,13 +304,24 @@ export function tableText(groups: ChartGroup[], kind: ChartKind = 'bar'): string
     })
     return [[...(named ? ['Name'] : []), 'x', ...groups.map((g) => g.name)].join('\t'), ...rows.map((r) => [...(named ? [r.name] : []), r.x, ...groups.map((_, col) => r.ys[col] ?? '')].join('\t'))].join('\n')
   }
+  if (kind === 'venn') {
+    // Lists of members side by side, or the one row of sizes.
+    const names = groups.map((g) => g.name).join('\t')
+    if (!groups.some((g) => g.labels?.some(Boolean))) return [names, groups.map((g) => (g.values.length ? String(g.values[0]) : '')).join('\t')].join('\n')
+    const longest = Math.max(0, ...groups.map((g) => g.labels?.length ?? 0))
+    return [names, ...Array.from({ length: longest }, (_, r) => groups.map((g) => g.labels?.[r] ?? '').join('\t'))].join('\n')
+  }
   const count = Math.max(0, ...groups.map((g) => (g.values.length ? rowOf(g, g.values.length - 1) + 1 : 0)))
-  const lines = headRows(groups, kind) === 2 ? [groups.map((g) => g.category ?? '').join('\t')] : []
-  lines.push(groups.map((g) => g.name).join('\t'))
+  // A heat map whose rows have names writes them in a first column.
+  const rowNames: string[] = []
+  if (kind === 'heatmap') for (const g of groups) g.labels?.forEach((name, k) => name && (rowNames[rowOf(g, k)] ??= name))
+  const lead = (cell: string): string[] => (rowNames.length ? [cell] : [])
+  const lines = headRows(groups, kind) === 2 ? [[...lead(''), ...groups.map((g) => g.category ?? '')].join('\t')] : []
+  lines.push([...lead('Name'), ...groups.map((g) => g.name)].join('\t'))
   // Every value goes back to the row it was read from; `next` is the value of each group still to be written.
   const next = groups.map(() => 0)
   for (let r = 0; r < count; r++) {
-    lines.push(groups.map((g, col) => (next[col] < g.values.length && rowOf(g, next[col]) === r ? String(g.values[next[col]++]) : '')).join('\t'))
+    lines.push([...lead(rowNames[r] ?? ''), ...groups.map((g, col) => (next[col] < g.values.length && rowOf(g, next[col]) === r ? String(g.values[next[col]++]) : ''))].join('\t'))
   }
   return lines.join('\n')
 }
@@ -386,6 +438,7 @@ function compare(node: ChartNode): Comparison {
   const design = { paired: !!test.paired, versusFirst: !!test.versusFirst }
   const compared: Compared = { indexes: [], names: [], samples: [], leftOut: 0 }
   if (node.kind === 'scatter') compared.problem = 'Tests compare groups; a scatter chart has series of points instead.'
+  else if (node.kind === 'pie') compared.problem = 'A pie chart shows shares of a whole. To test the groups, choose another kind of chart.'
   else if (isGrouped(node)) {
     // Two factors: every column of the table is one combination of a category and a series.
     const drawn = drawnGroups(node).filter((c) => shownValues(node, c.group).length)
@@ -685,26 +738,41 @@ export function axisFor(lo: number, hi: number, opts: { min?: number; max?: numb
 
 // ---------- where everything is drawn ----------
 
+/**
+ * What a mark of a chart belongs to, so that a press on it can lead to the settings of that part.
+ * `at` says which one: the place of the group in the table, of the series in the legend, or of
+ * the bracket or line in its list.
+ */
+export interface ChartPart {
+  what: 'group' | 'category' | 'cells' | 'error' | 'fit' | 'bracket' | 'refLine' | 'yAxis' | 'xAxis' | 'title' | 'yTitle' | 'xTitle' | 'legend' | 'number' | 'pointName' | 'result' | 'scale'
+  at?: number
+}
+
+/** A mark can be given its part where it is added to a drawing; the part is then kept beside the drawing, see `partOf`. */
+interface Tagged {
+  part?: ChartPart
+}
+
 export interface ChartDrawing {
-  /** Marks that show data. They are cut off at the edge of the plot when an axis range leaves some outside. */
-  rects: { x: number; y: number; w: number; h: number; fill: string }[]
-  lines: { x1: number; y1: number; x2: number; y2: number; width: number }[]
+  /** Marks that show data. They are cut off at the edge of the plot when an axis range leaves some outside. `edge` is the colour of the outline when it is not the usual dark one (the cells of a heat map). */
+  rects: ({ x: number; y: number; w: number; h: number; fill: string; edge?: string } & Tagged)[]
+  lines: ({ x1: number; y1: number; x2: number; y2: number; width: number } & Tagged)[]
   /** Outlines and joining lines: a violin (filled), the line of a line chart, a fitted line. */
-  paths: { d: string; stroke: string; width: number; fill?: string }[]
+  paths: ({ d: string; stroke: string; width: number; fill?: string } & Tagged)[]
   /**
    * Points. A `ring` is drawn hollow (an outlier of a box plot). `shape` is the mark (absent = a
    * circle; `r` is then the radius of the circle with the same area, see `pointPath`), `opacity`
    * how solid it is (absent = fully).
    */
-  circles: { cx: number; cy: number; r: number; fill: string; ring?: boolean; shape?: PointShape; opacity?: number }[]
+  circles: ({ cx: number; cy: number; r: number; fill: string; ring?: boolean; shape?: PointShape; opacity?: number } & Tagged)[]
   /** Dashed lines at chosen values (thresholds), cut off at the edge of the plot like the data. */
-  dashes: { x1: number; y1: number; x2: number; y2: number; style?: 'dotted' | 'solid' }[]
+  dashes: ({ x1: number; y1: number; x2: number; y2: number; style?: 'dotted' | 'solid' } & Tagged)[]
   /** Axes, tick marks and brackets: never cut off. */
-  rules: { x1: number; y1: number; x2: number; y2: number; width: number }[]
+  rules: ({ x1: number; y1: number; x2: number; y2: number; width: number } & Tagged)[]
   /** Colour squares of the legend. With a `shape` the entry stands for points and shows their mark instead. */
-  swatches: { x: number; y: number; size: number; fill: string; shape?: PointShape }[]
+  swatches: ({ x: number; y: number; size: number; fill: string; shape?: PointShape } & Tagged)[]
   /** Words, as labels the label renderer draws (so superscripts and other marks work in them). */
-  texts: TextNode[]
+  texts: (TextNode & Tagged)[]
   /** The plot area, in the chart's own box. */
   clip: { x: number; y: number; w: number; h: number }
   /** The scientist set the end of an axis, so data marks may lie outside the plot and must be cut off at its edge. */
@@ -931,7 +999,7 @@ function errorOf(node: ChartNode, s: Stats): number {
 const drawnGroups = (node: ChartNode): { group: ChartGroup; index: number }[] => node.groups.map((group, index) => ({ group, index })).filter((c) => c.group.values.length)
 
 /** True when the chart has categories: several series side by side in each. */
-export const isGrouped = (node: ChartNode): boolean => node.kind !== 'scatter' && drawnGroups(node).some((c) => c.group.category)
+export const isGrouped = (node: ChartNode): boolean => node.kind !== 'scatter' && node.kind !== 'venn' && drawnGroups(node).some((c) => c.group.category)
 
 /**
  * What the colours of a chart stand for, in order: the series of a grouped or scatter chart (one
@@ -964,11 +1032,88 @@ export function chartSeries(node: ChartNode): { name: string; colour: string; sh
   })
 }
 
+// ---------- names typed over in the panel ----------
+
+/** The longest name of a group, a series or a category: what a cell of the table is cut to when it is read. */
+export const NAME_MAX = 60
+
+/**
+ * A name as it can stand in a cell of the table: one line without tabs, at most `NAME_MAX`
+ * characters, with the minus signs and dashes written the way `readTable` reads them. So the name
+ * is the one the table gives back, and it does not change by itself when a number is edited later.
+ */
+export const tidyName = (typed: string): string =>
+  typed
+    .replace(/−/g, '-')
+    .replace(/[–—](?=\s*\d)/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, NAME_MAX)
+
+/** The categories of a grouped chart in the order they are drawn; a group without one is under ''. */
+export const chartCategories = (node: ChartNode): string[] => (isGrouped(node) ? unique(drawnGroups(node).map((c) => c.group.category ?? '')) : [])
+
+/** What a typed name leads to: a change to the chart, words about why it cannot be taken, or neither when there is nothing to do. */
+export interface Renamed {
+  change?: Partial<ChartNode>
+  problem?: string
+}
+
+/**
+ * One series of the chart under another name: `series` is its place in `chartSeries` (in a chart
+ * without categories, that is one group). The name changes in the table, and with it in the legend,
+ * along the axis and in the list of series whose points are named. Nothing happens for an empty
+ * name or the name it has. In a grouped chart a name another series has is refused: a series is
+ * its name there, so the two would become one.
+ */
+export function renameSeries(node: ChartNode, series: number, typed: string): Renamed {
+  const all = chartSeries(node)
+  const entry = all[series]
+  const name = tidyName(typed)
+  if (!entry || !name || name === entry.name) return {}
+  if (isGrouped(node) && all.some((other, i) => i !== series && other.name === name)) return { problem: `Another series is called “${name}”. Two series with one name would be drawn as one.` }
+  const before = unique(entry.groups.map((k) => node.groups[k].name))
+  const groups = node.groups.map((g, k) => (entry.groups.includes(k) ? { ...g, name } : g))
+  // Points are named for the series listed by name: the list follows the series.
+  const listed = node.pointNames?.series
+  const stillThere = new Set(groups.map((g) => g.name))
+  const follows = listed?.some((n) => before.includes(n)) ? unique(listed.flatMap((n) => (before.includes(n) ? (stillThere.has(n) ? [n, name] : [name]) : [n]))) : undefined
+  return { change: { groups, ...(follows && node.pointNames ? { pointNames: { ...node.pointNames, series: follows } } : {}) } }
+}
+
+/**
+ * One set of a Venn diagram under another name: `set` is its place among the sets drawn. Two sets
+ * cannot share a name (the table of sizes tells them apart by it), and in a table of sizes a name
+ * cannot hold "&", which joins the names of sets that share members.
+ */
+export function renameVenn(node: ChartNode, set: number, typed: string): Renamed {
+  const data = vennOf(node.groups)
+  const name = tidyName(typed)
+  const old = data.sets[set]
+  if (!old || !name || name === old.name) return {}
+  if (data.sets.some((other, i) => i !== set && other.name.toLowerCase() === name.toLowerCase())) return { problem: `Another set is called “${name}”.` }
+  if (!data.lists && vennParts(name).length !== 1) return { problem: 'In a table of sizes “&” joins the names of sets that share members, so a name cannot hold it.' }
+  return { change: { groups: renameVennSet(node.groups, set, name) } }
+}
+
+/**
+ * One category of a grouped chart under another name: `category` is its place in `chartCategories`.
+ * Nothing happens for an empty name or the name it has, and a name another category has is
+ * refused, because the two would become one category.
+ */
+export function renameCategory(node: ChartNode, category: number, typed: string): Renamed {
+  const all = chartCategories(node)
+  const name = tidyName(typed)
+  if (category < 0 || category >= all.length || !name || name === all[category]) return {}
+  if (all.includes(name)) return { problem: `Another category is called “${name}”. The two would become one.` }
+  return { change: { groups: node.groups.map((g) => ((g.category ?? '') === all[category] ? { ...g, category: name } : g)) } }
+}
+
 /** A shape as it is kept on a mark: nothing for a circle, the usual one. */
 const markOf = (shape: PointShape | undefined): { shape?: PointShape } => (shape && shape !== 'circle' ? { shape } : {})
 
 /** True when the chart draws a point for single values or means, so that the shape and size of points matter. */
-export const hasPoints = (node: ChartNode): boolean => node.kind === 'scatter' || node.kind === 'dot' || node.kind === 'line' || !!node.points
+export const hasPoints = (node: ChartNode): boolean => node.kind !== 'pie' && node.kind !== 'heatmap' && node.kind !== 'venn' && (node.kind === 'scatter' || node.kind === 'dot' || node.kind === 'line' || !!node.points)
 
 /** The values of a group that the chart can show and that its statistics are worked out from: on a logarithmic axis, those above zero. */
 export const shownValues = (node: ChartNode, group: ChartGroup): number[] => (node.yLog && node.kind !== 'scatter' ? group.values.filter((v) => v > 0) : group.values)
@@ -986,7 +1131,44 @@ function sharedNotes(node: ChartNode, axes: { axis: Axis; name: string }[]): str
   return notes
 }
 
-const empty = (): ChartDrawing => ({ rects: [], lines: [], paths: [], circles: [], dashes: [], rules: [], swatches: [], texts: [], clip: { x: 0, y: 0, w: 0, h: 0 }, clipped: false, notes: [] })
+// The part of every mark, kept beside the marks so that what is drawn (and compared in tests,
+// and written to files) is the marks alone.
+const PARTS = new WeakMap<object, ChartPart>()
+const CURRENT = new WeakMap<ChartDrawing, { part: ChartPart | null }>()
+const MARK_LISTS = ['rects', 'lines', 'paths', 'circles', 'dashes', 'rules', 'swatches', 'texts'] as const
+
+/** The part of a chart a mark of its drawing belongs to, if any. */
+export const partOf = (mark: object): ChartPart | undefined => PARTS.get(mark)
+
+/**
+ * An empty drawing. Every mark added to one of its lists is noted with the part it belongs to:
+ * the one it carries (`part`, taken off the mark), or the one said last with `nowPart`.
+ */
+const empty = (): ChartDrawing => {
+  const out: ChartDrawing = { rects: [], lines: [], paths: [], circles: [], dashes: [], rules: [], swatches: [], texts: [], clip: { x: 0, y: 0, w: 0, h: 0 }, clipped: false, notes: [] }
+  const current = { part: null as ChartPart | null }
+  CURRENT.set(out, current)
+  for (const key of MARK_LISTS) {
+    const list = out[key] as Tagged[]
+    Object.defineProperty(list, 'push', {
+      value: (...items: Tagged[]): number => {
+        for (const item of items) {
+          const part = item.part ?? current.part
+          if (item.part) delete item.part
+          if (part) PARTS.set(item, part)
+        }
+        return Array.prototype.push.apply(list, items)
+      },
+    })
+  }
+  return out
+}
+
+/** Say which part the marks added to a drawing from now on belong to; null for none. */
+const nowPart = (out: ChartDrawing, part: ChartPart | null): void => {
+  const current = CURRENT.get(out)
+  if (current) current.part = part
+}
 
 /** The reference lines of a chart that can be drawn: finite values, above zero on a logarithmic axis, along x only in a scatter chart. The same rule decides what is saved. */
 export function usableRefLines(lines: unknown, kind: ChartKind, xLog: boolean, yLog: boolean): ChartRefLine[] {
@@ -1054,6 +1236,7 @@ function frame(node: ChartNode, out: ChartDrawing, yAxis: Axis, legend: { name: 
 
   legend.forEach((entry, i) => {
     if (place === 'none') return
+    nowPart(out, { what: 'legend', at: i })
     let x: number
     let y: number
     if (place === 'top' || place === 'bottom') {
@@ -1068,12 +1251,13 @@ function frame(node: ChartNode, out: ChartDrawing, yAxis: Axis, legend: { name: 
     out.swatches.push({ x: r1(x), y: r1(y + fs * 0.2), size: r1(fs * 0.8), fill: entry.colour, ...(entry.shape ? { shape: entry.shape } : {}) })
     out.texts.push(words(entry.name, x + mark, y, { align: 'left' }))
   })
-  if (node.title) out.texts.push(words(node.title, px + pw / 2, 2, { bold: true }))
+  nowPart(out, null)
+  if (node.title) out.texts.push({ ...words(node.title, px + pw / 2, 2, { bold: true }), part: { what: 'title' } })
   if (node.yLabel) {
     const label = words(node.yLabel, fs * 0.9, 0, { rotation: -90 })
-    out.texts.push({ ...label, y: r1(py + ph / 2 - measureText(label).h / 2) })
+    out.texts.push({ ...label, y: r1(py + ph / 2 - measureText(label).h / 2), part: { what: 'yTitle' } })
   }
-  if (node.xLabel) out.texts.push(words(node.xLabel, px + pw / 2, py + ph + below))
+  if (node.xLabel) out.texts.push({ ...words(node.xLabel, px + pw / 2, py + ph + below), part: { what: 'xTitle' } })
   return { fs, words, rule, widthOf, px, py, pw, ph }
 }
 
@@ -1085,6 +1269,7 @@ const textWidth = (text: string, fs: number): number => measureText({ id: '', ty
  * page. On a chart too short for all of them, numbers that would run into the one below are left out.
  */
 function drawValueAxis(f: ReturnType<typeof frame>, axis: Axis, y: (v: number) => number, out: ChartDrawing, topY: number) {
+  nowPart(out, { what: 'yAxis' })
   f.rule(f.px, topY, f.px, f.py + f.ph)
   let last = Infinity
   for (const tick of axis.ticks) {
@@ -1094,6 +1279,7 @@ function drawValueAxis(f: ReturnType<typeof frame>, axis: Axis, y: (v: number) =
     f.rule(f.px - 4, at, f.px, at)
     out.texts.push(f.words(tick.label, f.px - 7, at - (f.fs * 1.25) / 2, { align: 'right' }))
   }
+  nowPart(out, null)
 }
 
 interface Column {
@@ -1120,6 +1306,8 @@ interface Column {
   from?: number
   to?: number
   top?: number
+  /** Bars scaled to 100 %: its share of the category's total, in per cent. */
+  share?: number
 }
 
 /**
@@ -1128,6 +1316,10 @@ interface Column {
  */
 export const isStacked = (node: ChartNode): boolean => node.kind === 'bar' && !!node.stacked && !node.yLog && isGrouped(node)
 
+/** True when stacked bars are scaled to 100 % each. */
+export const isPercent = (node: ChartNode): boolean => isStacked(node) && !!node.percent
+
+const STACK_NEGATIVE_NOTE = 'A share of a whole cannot be below zero: with a mean below zero the bars are stacked as they are, not scaled to 100 %.'
 const STACK_LOG_NOTE = 'Bars cannot be stacked on a logarithmic axis, which has no zero to stack from: they stand side by side.'
 const STACK_MEANS_NOTE = 'Stacked bars show the mean of each series only: error bars and single values are left out.'
 
@@ -1222,19 +1414,26 @@ function columnLayout(node: ChartNode): ChartDrawing {
 
   // Stacked bars: within a category every series stands on the one before it, in the order of
   // the legend; means below zero hang under the base line, one below the other.
+  // Scaled to 100 %: each part is its share of the total of its category. A mean below zero has no share.
+  const percent = stacked && !!node.percent && live.every((c) => c.s.mean >= 0)
   if (stacked) {
     for (const cat of cats) {
       const stack = series.flatMap((x) => live.filter((c) => (c.group.category ?? '') === cat && x.groups.includes(c.index)))
+      const whole = stack.reduce((a, c) => a + c.s.mean, 0)
       let up = 0
       let down = 0
       for (const c of stack) {
-        c.from = c.s.mean >= 0 ? up : down
-        c.to = c.from + c.s.mean
-        if (c.s.mean >= 0) up = c.to
+        const part = percent ? (whole > 0 ? (c.s.mean / whole) * 100 : 0) : c.s.mean
+        c.share = percent ? part : undefined
+        c.from = part >= 0 ? up : down
+        c.to = c.from + part
+        if (part >= 0) up = c.to
         else down = c.to
         c.lo = Math.min(c.from, c.to)
         c.hi = Math.max(c.from, c.to)
       }
+      // The last part of a bar scaled to 100 % ends at 100 exactly, whatever the rounding on the way.
+      if (percent && stack.length && whole > 0) stack[stack.length - 1].to = stack[stack.length - 1].hi = up = 100
       for (const c of stack) c.top = up
     }
   }
@@ -1251,6 +1450,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
   if (node.kind === 'violin' && live.some((c) => !violinOf(c.group.values, log))) notes.push(VIOLIN_NOTE)
   if (node.kind === 'bar' && node.stacked && grouped && log) notes.push(STACK_LOG_NOTE)
   if (stacked && (node.error || node.points)) notes.push(STACK_MEANS_NOTE)
+  if (stacked && node.percent && !percent) notes.push(STACK_NEGATIVE_NOTE)
 
   const valueLabels = usableValueLabels(node.valueLabels)
   const names = grouped ? cats : cols.map((c) => c.group.name)
@@ -1298,6 +1498,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
     }
 
     for (const c of live) {
+      nowPart(out, { what: 'group', at: c.index })
       const { cx, s } = c
       const cap = Math.min(10, c.width * 0.12)
       let dots = showPoints
@@ -1339,6 +1540,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
       if (c.err > 0 && (node.kind === 'bar' || node.kind === 'dot' || node.kind === 'line') && (!log || s.mean > 0)) {
         // On a logarithmic axis an error bar that would reach zero or below stops at the bottom of the axis.
         const low = log && s.mean - c.err <= 0 ? null : s.mean - c.err
+        nowPart(out, { what: 'error', at: c.index })
         line(cx, low === null ? py + ph : y(low), cx, y(s.mean + c.err))
         line(cx - cap, y(s.mean + c.err), cx + cap, y(s.mean + c.err))
         if (low !== null) line(cx - cap, y(low), cx + cap, y(low))
@@ -1352,9 +1554,10 @@ function columnLayout(node: ChartNode): ChartDrawing {
         const ok = run.filter((c) => !log || c.s.mean > 0)
         if (!ok.length) continue
         const colour = ok[0].colour
+        nowPart(out, { what: 'group', at: ok[0].index })
         out.paths.push({ d: ok.map((c, i) => `${i ? 'L' : 'M'}${r1(c.cx)} ${r1(y(c.s.mean))}`).join(''), stroke: colour, width: 2 })
         // The marks of the means take the shape and size of the points, and stay solid.
-        for (const c of ok) out.circles.push({ cx: r1(c.cx), cy: r1(y(c.s.mean)), r: r1(dot * 1.5 * c.scale), fill: colour, ...(c.shape ? { shape: c.shape } : {}) })
+        for (const c of ok) out.circles.push({ cx: r1(c.cx), cy: r1(y(c.s.mean)), r: r1(dot * 1.5 * c.scale), fill: colour, ...(c.shape ? { shape: c.shape } : {}), part: { what: 'group', at: c.index } })
       }
     }
 
@@ -1367,6 +1570,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
     // foot when an error bar or dots run through the bar. Where it does not fit, and in every
     // other kind of chart, it stands above everything drawn for the group.
     const labelTops = new Map<number, number>()
+    nowPart(out, { what: 'number' })
     if (valueLabels) {
       const lh = fs * 1.25
       let outside = 0
@@ -1374,7 +1578,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
       let wide = false
       let leftOut = 0
       for (const c of live) {
-        const text = valueLabelText(valueLabels, c.s, c.box)
+        const text = c.share !== undefined && valueLabels.show !== 'n' ? `${valueText(c.share, valueLabels.decimals ?? 0)} %` : valueLabelText(valueLabels, c.s, c.box)
         if (text === null) continue
         const w = f.widthOf(text)
         if (stacked) {
@@ -1429,27 +1633,29 @@ function columnLayout(node: ChartNode): ChartDrawing {
       }
     }
 
-    for (const l of refs) {
+    refs.forEach((l, i) => {
+      nowPart(out, { what: 'refLine', at: i })
       const at = y(l.value)
       out.dashes.push({ x1: r1(px), y1: r1(at), x2: r1(px + pw), y2: r1(at), ...(l.dash ? { style: l.dash } : {}) })
       // The label sits on the line at its right end, unless the line lies outside the range that was set.
       if (l.label && axis.at(l.value) >= 0 && axis.at(l.value) <= 1) out.texts.push(words(l.label, px + pw - 3, at - fs * 1.25 - 1, { align: 'right' }))
-    }
+    })
+    nowPart(out, null)
 
     // Names along the bottom: the categories of a grouped chart, otherwise every group. A name
     // wider than its place is broken into lines.
     const labels = fitNames(pw, fs)
-    if (grouped) cats.forEach((_, i) => out.texts.push(words(labels[i], px + slot * (i + 0.5), py + ph + 5)))
-    else cols.forEach((c, i) => out.texts.push(words(labels[i], c.cx, py + ph + 5)))
+    if (grouped) cats.forEach((_, i) => out.texts.push({ ...words(labels[i], px + slot * (i + 0.5), py + ph + 5), part: { what: 'category', at: i } }))
+    else cols.forEach((c, i) => out.texts.push({ ...words(labels[i], c.cx, py + ph + 5), part: { what: 'group', at: c.index } }))
 
     // Brackets stand a little above what is drawn for the columns they span, and above a number
     // written over a column. A wider bracket goes over a narrower one.
     const step = fs * 1.25 + fs * 0.35 + 5
     const placed: { x1: number; x2: number; y: number }[] = []
     const wanted = (node.brackets ?? [])
-      .map((b) => ({ a: live.find((c) => c.index === b.from), b: live.find((c) => c.index === b.to), label: bracketLabel(node, b) }))
-      .filter((b): b is { a: Column; b: Column; label: string } => !!b.a && !!b.b && b.a !== b.b)
-      .map((b) => ({ x1: Math.min(b.a.cx, b.b.cx), x2: Math.max(b.a.cx, b.b.cx), label: b.label }))
+      .map((b, place) => ({ a: live.find((c) => c.index === b.from), b: live.find((c) => c.index === b.to), label: bracketLabel(node, b), place }))
+      .filter((b): b is { a: Column; b: Column; label: string; place: number } => !!b.a && !!b.b && b.a !== b.b)
+      .map((b) => ({ x1: Math.min(b.a.cx, b.b.cx), x2: Math.max(b.a.cx, b.b.cx), label: b.label, place: b.place }))
       // Two parts of one stacked bar stand in the same place: there is nothing to span.
       .filter((b) => b.x2 - b.x1 > 1)
       .sort((p, q) => p.x2 - p.x1 - (q.x2 - q.x1) || p.x1 - q.x1)
@@ -1467,6 +1673,7 @@ function columnLayout(node: ChartNode): ChartDrawing {
       }
       placed.push({ x1: b.x1, x2: b.x2, y: at })
       const tick = fs * 0.35
+      nowPart(out, { what: 'bracket', at: b.place })
       rule(b.x1, at, b.x2, at)
       rule(b.x1, at, b.x1, at + tick)
       rule(b.x2, at, b.x2, at + tick)
@@ -1476,7 +1683,9 @@ function columnLayout(node: ChartNode): ChartDrawing {
 
     // Axes last: the value axis on the left (as tall as the data), the base line under the columns.
     drawValueAxis(f, axis, y, out, top)
+    nowPart(out, { what: 'xAxis' })
     rule(px, base, px + pw, base)
+    nowPart(out, null)
     if (!live.length) out.texts.push(words('Paste your numbers in the panel', px + pw / 2, py + ph / 2 - fs, { fill: '#8a93a3', italic: true }))
     return { out, short: py - highest, room: ph }
   }
@@ -1511,10 +1720,15 @@ interface Series {
   dose: DoseFit | null
   /** Points the curve leaves out: a dose of zero or below has no logarithm. */
   noDose: number
+  /** The correlation of its points, when the chart asks for one and it is defined. */
+  corr: Correlation | null
 }
 
 /** True when the chart draws a dose-response curve through each series of points. */
 export const fitsDose = (node: ChartNode): boolean => node.kind === 'scatter' && !!node.fit && node.curve === 'dose'
+
+/** The plateaus the chart holds at a stated value. */
+const heldOf = (node: ChartNode): { bottom?: number; top?: number } => ({ ...(usable(node.doseBottom) ? { bottom: node.doseBottom } : {}), ...(usable(node.doseTop) ? { top: node.doseTop } : {}) })
 
 /** Dose-response curves already worked out, by the list of values they were fitted to: the search takes a moment, a chart is laid out often. */
 const doseFits = new WeakMap<number[], Map<string, DoseFit | null>>()
@@ -1535,45 +1749,111 @@ function scatterSeries(node: ChartNode): { series: Series[]; hidden: number } {
     if (fitsDose(node)) {
       let known = doseFits.get(c.group.values)
       if (!known) doseFits.set(c.group.values, (known = new Map()))
-      const key = `${!!node.xLog}|${!!node.yLog}|${(c.group.xs ?? []).join(',')}`
-      if (!known.has(key)) known.set(key, fitDose(dosed.map(([x, v]) => [Math.log10(x), v])))
+      const key = `${!!node.xLog}|${!!node.yLog}|${node.doseBottom ?? ''}|${node.doseTop ?? ''}|${(c.group.xs ?? []).join(',')}`
+      if (!known.has(key)) known.set(key, fitDose(dosed.map(([x, v]) => [Math.log10(x), v]), heldOf(node)))
       dose = known.get(key) ?? null
     }
-    return { name: c.group.name, colour: groupColour(c.group, i, node.palette), ...markOf(c.group.shape), ...pointsOf(node, c.group), points, names: shown.map((s) => s.name), fit: fitLine(plotted), dose, noDose: points.length - dosed.length }
+    return { name: c.group.name, colour: groupColour(c.group, i, node.palette), ...markOf(c.group.shape), ...pointsOf(node, c.group), points, names: shown.map((s) => s.name), fit: fitLine(plotted), dose, noDose: points.length - dosed.length, corr: node.corr ? correlation(plotted, node.corr) : null }
   })
   return { series, hidden }
 }
 
 /** For the panel: every series of a scatter chart with the number of points shown, its fitted line and its dose-response curve (null where none can be fitted, or none is asked for). */
-export const scatterFits = (node: ChartNode): { name: string; points: number; fit: Fit | null; dose: DoseFit | null }[] =>
-  scatterSeries(node).series.map((s) => ({ name: s.name, points: s.points.length, fit: s.fit, dose: s.dose }))
+export const scatterFits = (node: ChartNode): { name: string; points: number; fit: Fit | null; dose: DoseFit | null; corr: Correlation | null }[] =>
+  scatterSeries(node).series.map((s) => ({ name: s.name, points: s.points.length, fit: s.fit, dose: s.dose, corr: s.corr }))
+
+/** A correlation in words, with the label marks: "*r* = 0.98, *p* < 0.0001" (Spearman's is written *r*_{s}). */
+export const corrText = (c: Correlation, method: 'pearson' | 'spearman'): string => `*r*${method === 'spearman' ? '_{s}' : ''} = ${Number(c.r.toFixed(2))}, ${pText(c.p).replace(/^p/, '*p*')}`
 
 const sig3 = (v: number): string => String(Number(v.toPrecision(3)))
 
 /** The EC50 of a curve with its 95 % confidence interval (from the standard error of its logarithm); the interval is null when it cannot be worked out. */
 export function ec50Of(fit: DoseFit): { ec50: number; low: number | null; high: number | null } {
   const ec50 = 10 ** fit.logEc50
-  const reach = fit.seLogEc50 !== null && fit.n > 4 ? tCritical(0.05, fit.n - 4) * fit.seLogEc50 : NaN
+  const reach = fit.seLogEc50 !== null && fit.df > 0 ? tCritical(0.05, fit.df) * fit.seLogEc50 : NaN
   return Number.isFinite(reach) ? { ec50, low: 10 ** (fit.logEc50 - reach), high: 10 ** (fit.logEc50 + reach) } : { ec50, low: null, high: null }
 }
 
-/** A dose-response curve in words: "EC50 = 1.93 (95 % CI 1.83 to 2.04), Hill slope 1.19, bottom 2.07, top 96.9, R² = 0.9999". A falling curve has an IC50. */
-export function doseText(fit: DoseFit): string {
-  const { ec50, low, high } = ec50Of(fit)
-  return `${fit.hill < 0 ? 'IC50' : 'EC50'} = ${sig3(ec50)}${low !== null && high !== null ? ` (95 % CI ${sig3(low)} to ${sig3(high)})` : ''}, Hill slope ${sig3(fit.hill)}, bottom ${sig3(fit.bottom)}, top ${sig3(fit.top)}, R² = ${Number(fit.r2.toFixed(4))}`
+export interface Ec50Comparison {
+  a: string
+  b: string
+  /** The extra sum-of-squares F test for "the same EC50": F with 1 and `df` degrees of freedom. */
+  f: number
+  df: number
+  p: number
 }
 
-/** What a methods section can say about the chart's dose-response curves; null when it draws none. */
+/** Comparisons already worked out, by the chart's table (each takes several fits). */
+const ec50Comparisons = new WeakMap<ChartGroup[], Map<string, Ec50Comparison[]>>()
+
+/**
+ * Do the dose-response curves of the chart have the same EC50? Every pair of fitted series, up to
+ * four series (six pairs); the p values are not corrected for the number of pairs.
+ */
+export function compareCurves(node: ChartNode): Ec50Comparison[] {
+  if (!fitsDose(node)) return []
+  const key = `${!!node.xLog}|${!!node.yLog}|${node.doseBottom ?? ''}|${node.doseTop ?? ''}|${node.groups.map((g) => g.name).join('\u0001')}`
+  let known = ec50Comparisons.get(node.groups)
+  if (!known) ec50Comparisons.set(node.groups, (known = new Map()))
+  const done = known.get(key)
+  if (done) return done
+  const fitted = scatterSeries(node).series.filter((s) => s.dose).slice(0, 4)
+  const logged = (s: Series): [number, number][] => s.points.filter(([x]) => x > 0).map(([x, v]) => [Math.log10(x), v])
+  const out: Ec50Comparison[] = []
+  for (let i = 0; i < fitted.length; i++) {
+    for (let j = i + 1; j < fitted.length; j++) {
+      const test = compareEc50(logged(fitted[i]), logged(fitted[j]), heldOf(node))
+      if (test) out.push({ a: fitted[i].name, b: fitted[j].name, ...test })
+    }
+  }
+  known.set(key, out)
+  return out
+}
+
+/** A comparison in words: "Agonist and Inhibitor: F(1, 40) = 93, p < 0.0001". */
+export const comparisonText = (c: Ec50Comparison): string => `${c.a} and ${c.b}: F(1, ${c.df}) = ${sig3(c.f)}, ${pText(c.p)}`
+
+/** A dose-response curve in words: "EC50 = 1.93 (95 % CI 1.83 to 2.04), Hill slope 1.19, bottom 2.07, top 96.9, R² = 0.9999". A falling curve has an IC50. */
+export function doseText(fit: DoseFit, held: { bottom?: number; top?: number } = {}): string {
+  const { ec50, low, high } = ec50Of(fit)
+  return `${fit.hill < 0 ? 'IC50' : 'EC50'} = ${sig3(ec50)}${low !== null && high !== null ? ` (95 % CI ${sig3(low)} to ${sig3(high)})` : ''}, Hill slope ${sig3(fit.hill)}, bottom ${sig3(fit.bottom)}${held.bottom !== undefined ? ' (held)' : ''}, top ${sig3(fit.top)}${held.top !== undefined ? ' (held)' : ''}, R² = ${Number(fit.r2.toFixed(4))}`
+}
+
+/** The plateaus a chart's dose-response curves are held at, for the words that describe them. */
+export const heldPlateaus = (node: ChartNode): { bottom?: number; top?: number } => heldOf(node)
+
+/** What a methods section can say about a scatter chart's dose-response curves and correlations; null when it has neither. */
 export function curveMethodsText(node: ChartNode): string | null {
-  if (!fitsDose(node)) return null
-  const fitted = scatterSeries(node).series.filter((s) => s.dose)
-  if (!fitted.length) return null
-  const each = fitted.map((s) => `${fitted.length > 1 || s.name.trim() ? `${s.name}: ` : ''}${doseText(s.dose!)}, n = ${s.dose!.n}`).join('; ')
-  return (
-    'Dose-response curves were fitted by least squares to the response against the logarithm of the dose, with the four-parameter logistic equation ' +
-    'y = bottom + (top − bottom) / (1 + 10^((log EC50 − log x) × Hill slope)). Confidence intervals of the EC50 are asymptotic 95 % intervals from the standard error of log EC50. ' +
-    `${each}. Curves were fitted in BioSketch, which gives the results of R 4.4 (nls with the model SSfpl).`
-  )
+  if (node.kind !== 'scatter') return null
+  if (isSurvival(node)) return survivalMethodsText(node)
+  const all = scatterSeries(node).series
+  const parts: string[] = []
+  const fitted = fitsDose(node) ? all.filter((s) => s.dose) : []
+  if (fitted.length) {
+    const held = heldOf(node)
+    const each = fitted.map((s) => `${fitted.length > 1 || s.name.trim() ? `${s.name}: ` : ''}${doseText(s.dose!, held)}, n = ${s.dose!.n}`).join('; ')
+    const kept = [held.bottom !== undefined ? `the bottom was held at ${sig3(held.bottom)}` : '', held.top !== undefined ? `the top was held at ${sig3(held.top)}` : ''].filter(Boolean)
+    const pairs = compareCurves(node)
+    parts.push(
+      'Dose-response curves were fitted by least squares to the response against the logarithm of the dose, with the four-parameter logistic equation ' +
+        `y = bottom + (top − bottom) / (1 + 10^((log EC50 − log x) × Hill slope))${kept.length ? `; ${kept.join(' and ')}` : ''}. Confidence intervals of the EC50 are asymptotic 95 % intervals from the standard error of log EC50. ` +
+        `${each}. ` +
+        (pairs.length ? `EC50 values were compared by the extra sum-of-squares F test (curves fitted with one shared log EC50 against curves fitted separately${pairs.length > 1 ? '; p values not corrected for the number of comparisons' : ''}): ${pairs.map(comparisonText).join('; ')}. ` : '') +
+        'Curves were fitted in BioSketch, which gives the results of R 4.4 (nls).',
+    )
+  }
+  const related = node.corr ? all.filter((s) => s.corr) : []
+  if (node.corr && related.length) {
+    const plain = (s: Series): string => corrText(s.corr!, node.corr!).replace(/\*/g, '').replace('_{s}', 's')
+    const each = related.map((s) => `${related.length > 1 || s.name.trim() ? `${s.name}: ` : ''}${plain(s)}, n = ${s.corr!.n}`).join('; ')
+    const logged = node.corr === 'pearson' && (node.xLog || node.yLog) ? ` It was worked out on the values as plotted (logarithms on ${node.xLog && node.yLog ? 'both axes' : node.xLog ? 'the x axis' : 'the y axis'}).` : ''
+    parts.push(
+      node.corr === 'pearson'
+        ? `Correlation is Pearson’s r, with a two-sided test of no correlation (t distribution, n − 2 degrees of freedom).${logged} ${each}. Worked out in BioSketch, which gives the results of R 4.4 (cor.test).`
+        : `Correlation is Spearman’s rank correlation (rs), with a two-sided test of no correlation: ${related.every((s) => s.corr!.exact) ? 'exact p values' : related.some((s) => s.corr!.exact) ? 'exact p values for up to nine points without ties, the t approximation otherwise' : 'p values from the t approximation'}. ${each}. Worked out in BioSketch, which gives the results of R 4.4 (cor.test, method "spearman"${related.every((s) => s.corr!.exact) ? '' : ', exact = FALSE'}).`,
+    )
+  }
+  return parts.length ? parts.join(' ') : null
 }
 
 /** An axis for scattered values: it starts at zero when the smallest value is near zero, otherwise near the data. */
@@ -1741,7 +2021,8 @@ function scatterLayout(node: ChartNode): ChartDrawing {
   const y = (v: number): number => py + (1 - yAxis.at(v)) * ph
   const dot = Math.max(2.2, fs * 0.26)
 
-  for (const l of refs) {
+  refs.forEach((l, i) => {
+    nowPart(out, { what: 'refLine', at: i })
     const axis = l.axis === 'x' ? xAxis : yAxis
     const inside = axis.at(l.value) >= 0 && axis.at(l.value) <= 1
     if (l.axis === 'x') {
@@ -1751,15 +2032,32 @@ function scatterLayout(node: ChartNode): ChartDrawing {
       out.dashes.push({ x1: r1(px), y1: r1(y(l.value)), x2: r1(px + pw), y2: r1(y(l.value)), ...(l.dash ? { style: l.dash } : {}) })
       if (l.label && inside) out.texts.push(words(l.label, px + pw - 3, y(l.value) - fs * 1.25 - 1, { align: 'right' }))
     }
-  }
+  })
 
+  // The place of each series in the chart's table.
+  const places = drawnGroups(node).map((c) => c.index)
   series.forEach((s, i) => {
+    nowPart(out, { what: 'fit', at: i })
     const ends = lineEnds[i].map(([vx, vy]) => [x(vx), y(vy)])
     if (ends.length === 2 && ends.flat().every((v) => Number.isFinite(v))) out.paths.push({ d: `M${ends.map((e) => `${r1(e[0])} ${r1(e[1])}`).join('L')}`, stroke: s.colour, width: 2 })
     const curve = curves[i].map(([vx, vy]) => [x(vx), y(vy)]).filter((p) => p.every((v) => Number.isFinite(v)))
     if (curve.length > 1) out.paths.push({ d: `M${curve.map((p) => `${r1(p[0])} ${r1(p[1])}`).join('L')}`, stroke: s.colour, width: 2 })
+    nowPart(out, { what: 'group', at: places[i] ?? i })
     for (const [vx, vy] of s.points) out.circles.push({ cx: r1(x(vx)), cy: r1(y(vy)), r: r1(dot * s.scale), fill: s.colour, ...(s.shape ? { shape: s.shape } : {}), ...s.solid })
   })
+
+  // The correlation of each series, written in an upper corner of the plot: the left one, unless the legend stands there.
+  nowPart(out, { what: 'result' })
+  if (node.corr) {
+    const told = series.filter((s) => s.corr)
+    const atRight = node.legend === 'insideLeft'
+    told.forEach((s, i) => {
+      const text = `${told.length > 1 || series.length > 1 ? `${s.name}: ` : ''}${corrText(s.corr!, node.corr!)}`
+      out.texts.push(words(text, atRight ? px + pw - 6 : px + 8, py + 4 + i * fs * 1.3, { align: atRight ? 'right' : 'left', ...(told.length > 1 ? { fill: s.colour } : {}) }))
+    })
+    const none = series.filter((s) => s.points.length && !s.corr).map((s) => s.name || 'the points')
+    if (none.length) out.notes.push(`No correlation can be worked out for ${listed(none)}: it needs at least three points, and both x and y must vary.`)
+  }
 
   // Names of points, a little smaller than the rest of the lettering. Points outside the range
   // that was set get none.
@@ -1783,12 +2081,14 @@ function scatterLayout(node: ChartNode): ChartDrawing {
     out.circles,
     { x: px, y: py, w: pw, h: ph },
   )
+  nowPart(out, { what: 'pointName' })
   for (const p of placed) {
     if (p.leader) out.paths.push({ d: `M${r1(p.leader[0])} ${r1(p.leader[1])}L${r1(p.leader[2])} ${r1(p.leader[3])}`, stroke: '#6b7280', width: 0.75 })
     out.texts.push(words(p.name, p.x, p.y, { align: 'left', fontSize: small }))
   }
 
   drawValueAxis(f, yAxis, y, out, py)
+  nowPart(out, { what: 'xAxis' })
   rule(px, py + ph, px + pw, py + ph)
   // Numbers along the bottom that would run into the one before are left out.
   let edge = -Infinity
@@ -1800,6 +2100,7 @@ function scatterLayout(node: ChartNode): ChartDrawing {
     rule(at, py + ph, at, py + ph + 4)
     out.texts.push(words(tick.label, at, py + ph + 6))
   }
+  nowPart(out, null)
   if (!all.length) out.texts.push(words('Paste your numbers in the panel', px + pw / 2, py + ph / 2 - fs, { fill: '#8a93a3', italic: true }))
   return out
 }
@@ -1809,6 +2110,416 @@ function scatterLayout(node: ChartNode): ChartDrawing {
  * The value axis of bars, dots, boxes, violins and lines includes zero unless it is logarithmic
  * or the scientist set its ends.
  */
+/**
+ * A pie: the share of each group in the whole. The size of a slice is the mean of its group's
+ * values (one value per group is the usual table); slices run clockwise from the top in the order
+ * of the table. A table with categories and series gives one pie per category, with the series as
+ * slices. A mean of zero or below has no share and gets no slice.
+ */
+function pieLayout(node: ChartNode): ChartDrawing {
+  const out = empty()
+  const drawn = drawnGroups(node)
+  const grouped = isGrouped(node)
+  const cats = grouped ? unique(drawn.map((c) => c.group.category ?? '')) : ['']
+  const series = chartSeries(node)
+  const cells = drawn
+    .filter((c) => c.group.values.length)
+    .map(({ group, index }) => ({ category: group.category ?? '', index, value: stats(group.values).mean, place: series.findIndex((x) => x.groups.includes(index)) }))
+  const live = cells.filter((c) => c.value > 0 && usable(c.value))
+  const shown = series.filter((_, i) => live.some((c) => c.place === i))
+  // No axes: the frame only places the title and the legend. A legend inside the plot would lie on the pie.
+  const blank: Axis = { min: 0, max: 1, log: false, ticks: [{ value: 0, label: '' }], at: (v) => v, ignored: false }
+  const plain: ChartNode = { ...node, yLabel: undefined, xLabel: undefined, yMin: undefined, yMax: undefined, yLog: undefined, xMin: undefined, xMax: undefined, xLog: undefined, legend: node.legend === 'inside' || node.legend === 'insideLeft' ? undefined : node.legend }
+  const f = frame(plain, out, blank, shown.map((x) => ({ name: x.name, colour: x.colour })), 8, () => 0)
+  const { fs, words, px, py, pw, ph } = f
+  out.clipped = false
+  if (cells.length - live.length) {
+    const none = cells.length - live.length
+    out.notes.push(`${none === 1 ? 'One group has' : `${none} groups have`} a mean of zero or below and no slice: a pie shows shares of a whole.`)
+  }
+  if (!live.length) {
+    out.texts.push(words('Paste your numbers in the panel', px + pw / 2, py + ph / 2 - fs, { fill: '#8a93a3', italic: true }))
+    return out
+  }
+
+  // As many pies side by side and above each other as gives the largest ones.
+  const pies = cats.filter((cat) => live.some((c) => c.category === cat))
+  const nameLine = grouped ? fs * 1.6 : 0
+  let cols = 1
+  let radius = 0
+  for (let k = 1; k <= pies.length; k++) {
+    const r = Math.min(pw / k, ph / Math.ceil(pies.length / k) - nameLine) / 2 - 3
+    if (r > radius) [cols, radius] = [k, r]
+  }
+  radius = Math.max(4, radius)
+  const cellW = pw / cols
+  const cellH = ph / Math.ceil(pies.length / cols)
+  const lh = fs * 1.25
+  pies.forEach((cat, i) => {
+    const cx = px + cellW * ((i % cols) + 0.5)
+    const cy = py + cellH * Math.floor(i / cols) + (cellH - nameLine) / 2
+    const slices = live.filter((c) => c.category === cat).sort((a, b) => a.place - b.place)
+    const whole = slices.reduce((a, c) => a + c.value, 0)
+    let from = -Math.PI / 2
+    for (const slice of slices) {
+      nowPart(out, { what: 'group', at: slice.index })
+      const share = slice.value / whole
+      const to = from + share * 2 * Math.PI
+      const colour = series[slice.place].colour
+      const at = (angle: number, r: number): [number, number] => [cx + r * Math.cos(angle), cy + r * Math.sin(angle)]
+      if (share > 0.99999) out.circles.push({ cx: r1(cx), cy: r1(cy), r: r1(radius), fill: colour })
+      else {
+        const [a, b] = [at(from, radius), at(to, radius)]
+        out.paths.push({ d: `M${r1(cx)} ${r1(cy)}L${r1(a[0])} ${r1(a[1])}A${r1(radius)} ${r1(radius)} 0 ${share > 0.5 ? 1 : 0} 1 ${r1(b[0])} ${r1(b[1])}Z`, stroke: '#ffffff', width: 1.2, fill: colour })
+      }
+      // The number of a slice stands inside it, where the slice is wide enough for it.
+      if (node.pieLabels !== 'none') {
+        const text = node.pieLabels === 'value' ? valueText(slice.value) : `${valueText(share * 100, 0)} %`
+        const out2 = share > 0.99999 ? 0 : radius * 0.64
+        const room = share > 0.99999 ? radius * 2 : 2 * out2 * Math.sin(Math.min(Math.PI, to - from) / 2)
+        if (f.widthOf(text) + 4 <= room && lh <= radius * 0.6) {
+          const [x, y] = at((from + to) / 2, out2)
+          out.texts.push({ ...words(text, x, y - lh / 2, { fill: readableOn(colour) }), part: { what: 'number' } })
+        }
+      }
+      from = to
+    }
+    nowPart(out, null)
+    if (grouped) out.texts.push({ ...words(fitName(cat, cellW * 0.94, fs), cx, cy + radius + 4), part: { what: 'category', at: cats.indexOf(cat) } })
+  })
+  return out
+}
+
+// ---------- survival curves ----------
+
+/** True when the chart draws survival curves from a table of times and events. */
+export const isSurvival = (node: ChartNode): boolean => node.kind === 'scatter' && !!node.survival
+
+export interface SurvivalGroup {
+  name: string
+  colour: string
+  subjects: Subject[]
+  km: KaplanMeier
+  /** Rows left out: a time below zero, or something other than 1 (the event) or 0 (left without it). */
+  leftOut: number
+}
+
+export interface SurvivalSummary {
+  groups: SurvivalGroup[]
+  /** The log-rank test over all groups; null with fewer than two groups or no events. */
+  test: { chi2: number; df: number; p: number } | null
+  /** Every pair of groups by a log-rank test of its own, corrected by Holm; empty with two groups. */
+  pairs: { a: string; b: string; p: number | null }[]
+}
+
+const survivals = new WeakMap<ChartGroup[], Map<string, SurvivalSummary>>()
+
+/** The survival curves of a chart with their test; worked out once per table. */
+export function survivalOf(node: ChartNode): SurvivalSummary {
+  const key = `${node.palette ?? ''}|${node.groups.map((g) => `${g.name}\u0001${g.color ?? ''}`).join('\u0002')}`
+  let known = survivals.get(node.groups)
+  if (!known) survivals.set(node.groups, (known = new Map()))
+  const done = known.get(key)
+  if (done) return done
+  const groups: SurvivalGroup[] = drawnGroups(node).map((c, i) => {
+    const rows = c.group.values.map((v, k) => ({ time: c.group.xs?.[k] ?? NaN, v }))
+    const subjects = rows.filter((r) => Number.isFinite(r.time) && r.time >= 0 && (r.v === 0 || r.v === 1)).map((r) => ({ time: r.time, event: r.v === 1 }))
+    return { name: c.group.name, colour: groupColour(c.group, i, node.palette), subjects, km: kaplanMeier(subjects), leftOut: rows.length - subjects.length }
+  })
+  const live = groups.filter((g) => g.subjects.length)
+  const test = logRank(live.map((g) => g.subjects))
+  const pairs: SurvivalSummary['pairs'] = []
+  if (live.length > 2) {
+    for (let i = 0; i < live.length; i++) for (let j = i + 1; j < live.length; j++) pairs.push({ a: live[i].name, b: live[j].name, p: logRank([live[i].subjects, live[j].subjects])?.p ?? null })
+    const known2 = pairs.flatMap((x, i) => (x.p === null ? [] : [{ v: x.p, i }]))
+    holm(known2.map((x) => x.v)).forEach((v, k) => (pairs[known2[k].i].p = v))
+  }
+  const out = { groups, test: test ? { chi2: test.chi2, df: test.df, p: test.p } : null, pairs }
+  known.set(key, out)
+  return out
+}
+
+/** The log-rank test in words: "log-rank test, χ² = 4.44, df = 1, p = 0.0351". */
+export const logRankText = (t: { chi2: number; df: number; p: number }): string => `χ² = ${sig3(t.chi2)}, df = ${t.df}, ${pText(t.p)}`
+
+/** One group's survival in words: "n = 10, 7 events, median 25". */
+export const survivalText = (g: SurvivalGroup): string => `n = ${g.km.n}, ${g.km.events} ${g.km.events === 1 ? 'event' : 'events'}, median ${g.km.median === null ? 'not reached' : sig3(g.km.median)}`
+
+/** What a methods section can say about a chart's survival curves; null when it draws none. */
+export function survivalMethodsText(node: ChartNode): string | null {
+  if (!isSurvival(node)) return null
+  const { groups, test, pairs } = survivalOf(node)
+  const live = groups.filter((g) => g.subjects.length)
+  if (!live.length) return null
+  return [
+    'Survival was estimated by the Kaplan–Meier method; ticks on the curves mark subjects that left the study without the event (censored).',
+    `${live.map((g) => `${g.name ? `${g.name}: ` : ''}${survivalText(g)}`).join('; ')}.`,
+    test ? `Groups were compared with the log-rank test: ${logRankText(test)}.` : '',
+    pairs.length ? `Pairs of groups were compared by log-rank tests with Holm’s correction for multiple comparisons: ${pairs.map((x) => `${x.a} and ${x.b}, ${x.p === null ? 'not defined' : pText(x.p)}`).join('; ')}.` : '',
+    'Worked out in BioSketch, which gives the results of the survival package of R (survfit, survdiff).',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
+/**
+ * Survival curves: time along the bottom, the share still without the event (in per cent) up the
+ * side. Each curve starts at 100 %, steps down at every time with an event, and ends at the last
+ * time its group was followed; a tick marks every subject that left without the event.
+ */
+function survivalLayout(node: ChartNode): ChartDrawing {
+  const out = empty()
+  const { groups, test } = survivalOf(node)
+  const live = groups.filter((g) => g.subjects.length)
+  const last = Math.max(0, ...live.flatMap((g) => g.subjects.map((s) => s.time)))
+  const xAxis = axisFor(0, last > 0 ? last : 10, { min: node.xMin, max: node.xMax })
+  const yAxis = axisFor(0, 100, {})
+  out.notes = sharedNotes({ ...node, yMin: undefined, yMax: undefined, yLog: undefined }, [{ axis: xAxis, name: 'time axis' }])
+  const leftOut = groups.reduce((a, g) => a + g.leftOut, 0)
+  if (leftOut) out.notes.push(`${leftOut} ${leftOut === 1 ? 'row is' : 'rows are'} left out: a survival table has the time in the first column and, in the column of its group, 1 for the event or 0 for a subject that left the study without it.`)
+  const fs = node.fontSize ?? CHART_FONT
+  const widest = Math.max(...xAxis.ticks.map((t) => textWidth(t.label, fs)))
+  const plain: ChartNode = { ...node, yLabel: node.yLabel ?? 'Survival (%)', yMin: undefined, yMax: undefined, yLog: undefined, xLog: undefined }
+  const f = frame(plain, out, yAxis, live.length > 1 ? live.map((g) => ({ name: g.name, colour: g.colour })) : [], Math.max(fs, widest / 2 + 2), () => 1)
+  const { words, rule, px, py, pw, ph } = f
+  // Only a range set for the time axis cuts anything off.
+  out.clipped = node.xMin !== undefined || node.xMax !== undefined
+  const x = (v: number): number => px + xAxis.at(v) * pw
+  const y = (v: number): number => py + (1 - yAxis.at(v)) * ph
+  const tick = Math.max(3, fs * 0.3)
+  for (const g of live) {
+    nowPart(out, { what: 'group', at: node.groups.findIndex((own) => own.name === g.name && own.values.length > 0) })
+    let d = `M${r1(x(0))} ${r1(y(100))}`
+    let share = 100
+    const marks: string[] = []
+    for (const step of g.km.steps) {
+      d += `H${r1(x(step.time))}`
+      if (step.events) {
+        share = step.survival * 100
+        d += `V${r1(y(share))}`
+      }
+      if (step.censored) marks.push(`M${r1(x(step.time))} ${r1(y(share) - tick)}V${r1(y(share) + tick)}`)
+    }
+    out.paths.push({ d, stroke: g.colour, width: 2 })
+    if (marks.length) out.paths.push({ d: marks.join(''), stroke: g.colour, width: 1.4 })
+  }
+  nowPart(out, { what: 'result' })
+  if (node.logRank && test) out.texts.push(words(`Log-rank ${pText(test.p).replace(/^p/, '*p*')}`, px + 8, py + ph - fs * 1.25 - 6, { align: 'left' }))
+  if (node.logRank && !test && live.length) out.notes.push('The log-rank test needs at least two groups, and an event while more than one group was still followed.')
+
+  drawValueAxis(f, yAxis, y, out, py)
+  nowPart(out, { what: 'xAxis' })
+  rule(px, py + ph, px + pw, py + ph)
+  let edge = -Infinity
+  for (const step of xAxis.ticks) {
+    const at = x(step.value)
+    const half = textWidth(step.label, fs) / 2
+    if (!Number.isFinite(at) || at - half < edge + 4) continue
+    edge = at + half
+    rule(at, py + ph, at, py + ph + 4)
+    out.texts.push(words(step.label, at, py + ph + 6))
+  }
+  nowPart(out, null)
+  if (!live.length) out.texts.push(words('Paste times and events in the panel', px + pw / 2, py + ph / 2 - fs, { fill: '#8a93a3', italic: true }))
+  return out
+}
+
+// ---------- heat maps ----------
+
+/** The colour of a cell the table has no number for. */
+const NO_VALUE = '#eef0f3'
+
+/** `text` cut to fit `room`, with an ellipsis in place of what was cut. */
+function cutToFit(text: string, room: number, fs: number): string {
+  if (textWidth(text, fs) <= room) return text
+  let keep = text.length
+  while (keep > 1 && textWidth(`${text.slice(0, keep)}…`, fs) > room) keep--
+  return `${text.slice(0, keep)}…`
+}
+
+/**
+ * A heat map: one cell for every number of the table, coloured by its value (see heatmap.ts for
+ * what the colours stand for). Row names at the left, column names below, the colour scale with
+ * its ends at the right.
+ */
+function heatmapLayout(node: ChartNode): ChartDrawing {
+  const out = empty()
+  const m = heatMatrix(node)
+  out.notes = [...m.notes]
+  const fs = node.fontSize ?? CHART_FONT
+  const small = Math.max(6, r1(fs * 0.85))
+  const words = (text: string, x: number, top: number, extra: Partial<TextNode> & Tagged = {}): TextNode & Tagged => ({ id: node.id, type: 'text', x: r1(x), y: r1(top), text, fontSize: fs, fill: INK, align: 'center', rotation: 0, ...extra })
+  const [nRows, nCols] = [m.cells.length, m.columns.length]
+  if (node.title) out.texts.push(words(node.title, node.w / 2, 2, { bold: true, part: { what: 'title' } }))
+  if (!nRows || !nCols) {
+    out.texts.push(words('Paste a table of numbers in the panel', node.w / 2, node.h / 2 - fs, { fill: '#8a93a3', italic: true }))
+    return out
+  }
+
+  // What the ends and the middle of the scale are called: on a logarithmic scale, the values themselves.
+  const scaleText = (v: number): string => (m.unit === 'log' ? valueText(10 ** v) : valueText(Number(v.toPrecision(3))))
+  const ends = [scaleText(m.hi), scaleText((m.lo + m.hi) / 2), scaleText(m.lo)]
+  const showScale = node.legend !== 'none'
+  const bar = 12
+  const scaleWidth = showScale ? 10 + bar + 5 + Math.max(...ends.map((t) => textWidth(t, small))) + 4 : 4
+
+  // Room around the cells: title on top, row names at the left, column names below, the scale at the right.
+  const top = node.title ? fs * 2 : fs * 0.6
+  const named = m.rows.some(Boolean)
+  const nameRoom = named ? Math.min(node.w * 0.35, Math.max(...m.rows.map((n) => textWidth(n, small)))) : 0
+  const px = (node.yLabel ? fs * 1.7 : 2) + nameRoom + (named ? 7 : 2)
+  const pw = Math.max(10, node.w - px - scaleWidth)
+  const cw = pw / nCols
+  // A column's name stands under it on one line where it fits, otherwise it is turned upright.
+  const widestColumn = Math.max(...m.columns.map((n) => textWidth(n, small)))
+  const upright = widestColumn > cw - 4
+  const columnRoom = upright ? Math.min(node.h * 0.3, widestColumn) + 6 : small * 1.25 + 5
+  const py = top
+  const ph = Math.max(10, node.h - top - columnRoom - (node.xLabel ? fs * 1.5 : 0) - 3)
+  const ch = ph / nRows
+  out.clip = { x: r1(px), y: r1(py), w: r1(pw), h: r1(ph) }
+
+  // Cells large enough are parted by a white line; small ones touch, with an edge of their own colour so that no gap shows.
+  const parted = cw >= 8 && ch >= 8
+  const cellsPart: ChartPart = { what: 'cells' }
+  // The place of each column in the chart's table.
+  const columnPlaces = drawnGroups(node).map((c) => c.index)
+  const numberWidth = node.heatNumbers ? Math.max(0, ...m.shown.flat().map((v) => (v === null ? 0 : textWidth(cellText(m.unit, v), small)))) : 0
+  const numbersFit = node.heatNumbers && numberWidth + 4 <= cw && small * 1.2 <= ch
+  if (node.heatNumbers && !numbersFit) out.notes.push('The numbers do not fit in the cells: make the chart larger or its text smaller.')
+  for (let r = 0; r < nRows; r++) {
+    for (let c = 0; c < nCols; c++) {
+      const v = m.cells[r][c]
+      const fill = v === null ? NO_VALUE : cellColour(m, v)
+      const [x, y] = [px + c * cw, py + r * ch]
+      out.rects.push({ x: r1(x), y: r1(y), w: r1(cw), h: r1(ch), fill, edge: parted ? '#ffffff' : fill, part: cellsPart })
+      const written = m.shown[r][c]
+      if (numbersFit && written !== null) out.texts.push(words(cellText(m.unit, written), x + cw / 2, y + ch / 2 - (small * 1.25) / 2, { fontSize: small, fill: v === null ? INK : readableOn(fill), part: { what: 'number' } }))
+    }
+  }
+
+  if (named) {
+    const size = Math.min(small, r1(ch * 0.9))
+    if (size >= 5) m.rows.forEach((name, r) => name && out.texts.push(words(cutToFit(name, nameRoom, size), px - 5, py + r * ch + ch / 2 - (size * 1.25) / 2, { align: 'right', fontSize: size, part: { what: 'yAxis' } })))
+    else out.notes.push('The rows are too thin for their names: make the chart taller, or show fewer rows.')
+  }
+  const columnSize = upright ? Math.min(small, r1(cw * 0.9)) : small
+  if (columnSize >= 5) {
+    m.columns.forEach((name, c) => {
+      const cx = px + (c + 0.5) * cw
+      const column: ChartPart = node.corr ? cellsPart : { what: 'group', at: columnPlaces[c] ?? c }
+      if (!upright) return out.texts.push(words(name, cx, py + ph + 4, { fontSize: small, part: column }))
+      // Turned a quarter: the box of the words is as long as the room below the cells, and ends at the cells.
+      const label = words(cutToFit(name, columnRoom - 6, columnSize), cx, 0, { fontSize: columnSize, rotation: -90, part: column })
+      const box = measureText(label)
+      out.texts.push({ ...label, y: r1(py + ph + 4 + box.w / 2 - box.h / 2) })
+    })
+  } else out.notes.push('The columns are too narrow for their names: make the chart wider.')
+  if (node.yLabel) {
+    const label = words(node.yLabel, fs * 0.9, 0, { rotation: -90, part: { what: 'yTitle' } })
+    out.texts.push({ ...label, y: r1(py + ph / 2 - measureText(label).h / 2) })
+  }
+  if (node.xLabel) out.texts.push(words(node.xLabel, px + pw / 2, py + ph + columnRoom, { part: { what: 'xTitle' } }))
+
+  if (showScale) {
+    // The scale: a bar of even steps from the lowest colour at the bottom to the highest at the top, with its ends and its middle written beside it.
+    const caption = m.unit === 'z' ? 'z-score' : m.unit === 'r' ? (node.corr === 'spearman' ? '*r*_{s}' : '*r*') : ''
+    const bx = px + pw + 10
+    const by = py + (caption ? small * 1.5 : 0)
+    const bh = Math.max(20, Math.min(ph - (caption ? small * 1.5 : 0), fs * 9))
+    const steps = 32
+    const scale: ChartPart = { what: 'scale' }
+    for (let i = 0; i < steps; i++) {
+      const fill = heatColour(m.scale, (i + 0.5) / steps)
+      out.rects.push({ x: r1(bx), y: r1(by + bh * (1 - (i + 1) / steps)), w: bar, h: r1(bh / steps), fill, edge: fill, part: scale })
+    }
+    const outline: [number, number, number, number][] = [[bx, by, bx + bar, by], [bx + bar, by, bx + bar, by + bh], [bx + bar, by + bh, bx, by + bh], [bx, by + bh, bx, by]]
+    for (const [x1, y1, x2, y2] of outline) out.rules.push({ x1: r1(x1), y1: r1(y1), x2: r1(x2), y2: r1(y2), width: 0.8, part: scale })
+    if (caption) out.texts.push(words(caption, bx, py - 1, { align: 'left', fontSize: small, part: scale }))
+    const line = small * 1.25
+    const at = [by - 1, by + bh / 2 - line / 2, by + bh - line + 1]
+    ends.forEach((text, i) => (i !== 1 || bh >= line * 3.4) && out.texts.push(words(text, bx + bar + 5, at[i], { align: 'left', fontSize: small, part: scale })))
+  }
+  return out
+}
+
+/** The number of a cell as it is written: correlations and z-scores to two decimals, values as elsewhere in a chart. */
+const cellText = (unit: 'value' | 'log' | 'z' | 'r', v: number): string => (unit === 'r' || unit === 'z' ? valueText(v, 2) : valueText(v))
+
+// ---------- Venn diagrams ----------
+
+/** Half the distance between the centres of two circles, as a share of their radius. */
+const VENN_APART = 0.55
+
+/**
+ * A Venn diagram of two or three sets (see venn.ts for the counting): circles of one size, each in
+ * the colour of its set and see-through, with the count of every region in it and the name of
+ * every set, with its size, beside its circle. The circles are not sized by the counts.
+ */
+function vennLayout(node: ChartNode): ChartDrawing {
+  const out = empty()
+  const v = vennOf(node.groups)
+  out.notes = [...v.notes]
+  if (v.problem) out.notes.push(v.problem)
+  const fs = node.fontSize ?? CHART_FONT
+  const words = (text: string, x: number, top: number, extra: Partial<TextNode> & Tagged = {}): TextNode & Tagged => ({ id: node.id, type: 'text', x: r1(x), y: r1(top), text, fontSize: fs, fill: INK, align: 'center', rotation: 0, ...extra })
+  if (node.title) out.texts.push(words(node.title, node.w / 2, 2, { bold: true, part: { what: 'title' } }))
+  if (!v.sets.length || v.problem) {
+    out.texts.push(words(v.problem ? 'These sizes do not fit together' : 'Paste one column of names for each set in the panel', node.w / 2, node.h / 2 - fs, { fill: '#8a93a3', italic: true }))
+    return out
+  }
+  const n = v.sets.length
+  const line = fs * 1.25
+  const top = (node.title ? fs * 2 : fs * 0.6) + line + 4
+  const roomW = node.w - 12
+  const roomH = node.h - top - (n === 3 ? line + 6 : 4)
+  // How wide and how high the circles are together, in radii.
+  const wide = n === 1 ? 2 : 2 + 2 * VENN_APART
+  const high = n === 3 ? 2 + VENN_APART * Math.sqrt(3) : 2
+  const R = Math.max(6, Math.min(roomW / wide, roomH / high))
+  const cx = node.w / 2
+  const y0 = top + Math.max(0, (roomH - high * R) / 2)
+  const apart = VENN_APART * R
+  const centres: [number, number][] = n === 1 ? [[cx, y0 + R]] : n === 2 ? [[cx - apart, y0 + R], [cx + apart, y0 + R]] : [[cx - apart, y0 + R], [cx + apart, y0 + R], [cx, y0 + R + apart * Math.sqrt(3)]]
+  out.clip = { x: r1(cx - (wide * R) / 2), y: r1(y0), w: r1(wide * R), h: r1(high * R) }
+  // The colour a set has in the panel's list: by its place among the columns that hold something.
+  const places = drawnGroups(node).map((c) => c.index)
+  const colours = v.sets.map((s) => groupColour(node.groups[s.group], places.indexOf(s.group), node.palette))
+  centres.forEach(([x, y], i) => out.circles.push({ cx: r1(x), cy: r1(y), r: r1(R), fill: colours[i], opacity: 0.4, part: { what: 'group', at: v.sets[i].group } }))
+  centres.forEach(([x, y], i) => out.circles.push({ cx: r1(x), cy: r1(y), r: r1(R), fill: colours[i], ring: true, part: { what: 'group', at: v.sets[i].group } }))
+
+  // The name of a set with its size: over its circle, towards the outside; the third one under its circle.
+  v.sets.forEach((set, i) => {
+    const room = n === 1 ? roomW : n === 2 || i < 2 ? roomW / 2 - 4 : roomW
+    const text = cutToFit(`${set.name} (${valueText(set.total)})`, room, fs)
+    const x = n === 1 || i === 2 ? cx : centres[i][0] + (i === 0 ? -1 : 1) * R * 0.2
+    out.texts.push(words(text, x, i === 2 ? centres[2][1] + R + 4 : y0 - line - 2, { bold: true, part: { what: 'group', at: set.group } }))
+  })
+
+  if (node.vennLabels !== 'none') {
+    if (line > R * 0.42) out.notes.push('The circles are small for their numbers: make the chart larger or its text smaller.')
+    const middle: [number, number] = [centres.reduce((a, c) => a + c[0], 0) / n, centres.reduce((a, c) => a + c[1], 0) / n]
+    const away = (from: [number, number], by: number): [number, number] => {
+      const [dx, dy] = [from[0] - middle[0], from[1] - middle[1]]
+      const far = Math.hypot(dx, dy) || 1
+      return [from[0] + (dx / far) * by, from[1] + (dy / far) * by]
+    }
+    for (const region of v.regions) {
+      // Where the number of a region stands: in a part of one circle away from the others, between two circles away from the third, or in the middle of all.
+      const own = region.sets.map((i) => centres[i])
+      const mid: [number, number] = [own.reduce((a, c) => a + c[0], 0) / own.length, own.reduce((a, c) => a + c[1], 0) / own.length]
+      const at = n === 1 || own.length === n ? mid : own.length === 1 ? away(mid, R * 0.48) : away(mid, R * 0.28)
+      const share = v.union ? (region.count / v.union) * 100 : 0
+      const text = node.vennLabels === 'percent' ? `${valueText(share, share >= 10 || share === 0 ? 0 : 1)} %` : valueText(region.count)
+      out.texts.push(words(text, at[0], at[1] - line / 2, { part: { what: 'number' } }))
+    }
+  }
+  return out
+}
+
 export function chartLayout(node: ChartNode): ChartDrawing {
-  return node.kind === 'scatter' ? scatterLayout(node) : columnLayout(node)
+  if (isSurvival(node)) return survivalLayout(node)
+  if (node.kind === 'heatmap') return heatmapLayout(node)
+  if (node.kind === 'venn') return vennLayout(node)
+  return node.kind === 'scatter' ? scatterLayout(node) : node.kind === 'pie' ? pieLayout(node) : columnLayout(node)
 }

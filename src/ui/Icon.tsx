@@ -57,6 +57,10 @@ const PATHS = {
   figures: 'M8 8h12v12H8zM4 16V4h12',
   pdf: 'M6 3h8l4 4v14H6zM14 3v4h4M9 13h6M9 17h6',
   pathway: 'M4 4h7v4H4zM13 16h7v4h-7zM7.5 8v7a3 3 0 0 0 3 3H13M11 16l2 2-2 2',
+  slides: 'M7 4h13v10H7zM4 8v10h13',
+  play: 'M8 5l11 7-11 7z',
+  chevronLeft: 'M14 6l-6 6 6 6',
+  chevronRight: 'M10 6l6 6-6 6',
 } as const
 
 export type IconName = keyof typeof PATHS

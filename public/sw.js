@@ -1,6 +1,6 @@
 // Offline support: keeps the app's own files so BioSketch opens without a connection.
 // Figures are stored separately (IndexedDB) and are never touched here.
-const CACHE = 'biosketch-v3'
+const CACHE = 'biosketch-v5'
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon.svg']
 
 self.addEventListener('install', (event) => {

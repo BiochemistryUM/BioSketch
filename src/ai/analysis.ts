@@ -25,7 +25,7 @@ export interface AnalysisPlan {
 }
 
 const three = (v: number): string => String(Number(v.toPrecision(3)))
-const KIND: Record<ChartNode['kind'], string> = { bar: 'bar chart', dot: 'dot chart', line: 'line chart', box: 'box plot', violin: 'violin plot', scatter: 'scatter chart' }
+const KIND: Record<ChartNode['kind'], string> = { bar: 'bar chart', dot: 'dot chart', line: 'line chart', box: 'box plot', violin: 'violin plot', scatter: 'scatter chart', pie: 'pie chart', heatmap: 'heat map', venn: 'Venn diagram' }
 
 /** One line per group: how many values, and where they lie. */
 function summary(names: string[], samples: number[][]): string {
@@ -90,9 +90,11 @@ export function analysisRequest(node: ChartNode, description: string): string {
       summary(compared.names, compared.samples),
       f
         ? ''
-        : sameSize
-          ? `Every group has ${sizes[0]} values, so each row of the table could be one sample measured in every group. Only the scientist knows whether it is.`
-          : 'The groups hold different numbers of values. If rows are one sample each, only rows with a value in every group can be used.',
+        : node.test?.paired
+          ? `The scientist has ticked “each row is one sample measured in every group”, so the rows are taken as pairs (${compared.samples[0].length} complete ${compared.samples[0].length === 1 ? 'row' : 'rows'}${compared.leftOut ? `; ${compared.leftOut} left out because a value is missing` : ''}). Question it only if the description speaks against it.`
+          : sameSize
+            ? `Every group has ${sizes[0]} values, so each row of the table could be one sample measured in every group. The scientist has not said so: ask, unless the description settles it.`
+            : 'The groups hold different numbers of values. If rows are one sample each, only rows with a value in every group can be used.',
       node.yLog ? 'The chart has a logarithmic value axis; BioSketch still analyses the values as typed.' : '',
       advice.test ? `BioSketch’s own suggestion, from the table alone: ${TEST_NAMES[advice.test]}. Its reasons: ${advice.why.join(' ')}` : `BioSketch has no suggestion: ${advice.why.join(' ')}`,
     ]

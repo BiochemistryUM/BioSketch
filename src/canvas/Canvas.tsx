@@ -9,9 +9,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { MAX_ZOOM, MIN_ZOOM, addIcon, addText, fitView, zoomBy } from '../actions'
 import { addNodes, expandGroups, labelPartner, nodesInRect, removeNodes, selectionRect, uid, updateNodes } from '../model/doc'
-import { clamp, dist, mid, normalizeRect, pointInRect, polylineLength, rectCenter, round, simplify, snapTo, snapToGuides } from '../model/geometry'
+import { chartLayout } from '../model/chart'
+import { partAt } from '../model/chartParts'
+import { clamp, dist, mid, normalizeRect, pointInRect, polylineLength, rectCenter, rotate, round, simplify, snapTo, snapToGuides } from '../model/geometry'
 import { bendThrough, canAttach, dragHandle, findNode, getBox, getRect, resizeNode, rotateNode, rotateNodeAbout, scaleNode, translateNode } from '../model/nodes'
-import type { Box, ConnectorNode, Endpoint, FigDoc, FigNode, MembraneNode, Point, Rect, ShapeNode, StrokeNode } from '../model/types'
+import type { Box, ChartNode, ConnectorNode, Endpoint, FigDoc, FigNode, MembraneNode, Point, Rect, ShapeNode, StrokeNode } from '../model/types'
 import { isPickable } from '../model/types'
 import { DocNodes, strokePath } from '../render/DocNodes'
 import { membraneShape } from '../model/membrane'
@@ -28,6 +30,9 @@ export const ICON_MIME = 'application/x-biosketch-icon'
 interface GestureBase {
   pointerId: number
   pointerType: string
+  /** Where the press began, on the screen: a press that ends where it began is a tap, not a drag. */
+  downX: number
+  downY: number
 }
 
 type Gesture = GestureBase &
@@ -98,6 +103,24 @@ function shapeFromDrag(id: string, a: Point, b: Point, square: boolean, kind: Sh
     stroke: '#2f6fb5',
     strokeWidth: 2,
   }
+}
+
+/**
+ * Note which part of a chart lies under a press, so that the panel can show the settings of that
+ * part. A finger reaches further than a pen, a pen further than a mouse.
+ */
+function pickChartPart(node: ChartNode, world: Point, pointerType: string): void {
+  const s = useEditor.getState()
+  const reach = (pointerType === 'touch' ? 14 : pointerType === 'pen' ? 8 : 5) / s.view.zoom
+  // The place in the chart's own box: the chart is turned about its middle.
+  const local = rotate({ x: world.x - node.x - node.w / 2, y: world.y - node.y - node.h / 2 }, -node.rotation)
+  let hit: ReturnType<typeof partAt> = null
+  try {
+    hit = partAt(chartLayout(node), local.x + node.w / 2, local.y + node.h / 2, reach)
+  } catch {
+    // A chart that cannot be laid out has no parts to press.
+  }
+  s.set({ chartPart: hit ? { id: node.id, part: hit.part, box: hit.box, node, nonce: performance.now() } : null })
 }
 
 export function Canvas() {
@@ -285,7 +308,7 @@ export function Canvas() {
       /* the pointer may already be gone */
     }
     const world = toWorld(local)
-    const base: GestureBase = { pointerId: e.pointerId, pointerType: e.pointerType }
+    const base: GestureBase = { pointerId: e.pointerId, pointerType: e.pointerType, downX: e.clientX, downY: e.clientY }
     const fingerPans = e.pointerType === 'touch' && penSeen.current && s.tool !== 'select'
 
     if (e.button === 1 || s.tool === 'pan' || input.space || fingerPans) {
@@ -617,6 +640,9 @@ export function Canvas() {
           return
         }
         const clicked = expandGroups(s.doc, [g.hitId])
+        // A press on a chart that was selected already, alone, asks which part of it was meant.
+        const chart = findNode(s.doc, g.hitId)
+        if (chart?.type === 'chart' && g.wasSelected && !g.shift && s.selection.length === 1) pickChartPart(chart, world, g.pointerType)
         if (!g.shift && g.wasSelected && s.selection.length > clicked.length) s.set({ selection: clicked })
         const now = performance.now()
         if (lastTap.current.id === g.hitId && now - lastTap.current.time < 420) {
@@ -637,6 +663,11 @@ export function Canvas() {
         return
       }
       case 'resize':
+        s.endGesture()
+        // A handle lies over the chart it belongs to (the top one over the title): a tap on it
+        // that drags nothing means the part of the chart under it.
+        if (g.node.type === 'chart' && Math.hypot(e.clientX - g.downX, e.clientY - g.downY) < 3) pickChartPart(g.node, world, g.pointerType)
+        return
       case 'rotate':
       case 'multi-resize':
       case 'multi-rotate':

@@ -2,7 +2,7 @@
 // (quantile type 7, boxplot fences on those quartiles, bw.nrd0, dnorm kernel, lm).
 
 import { describe, expect, it } from 'vitest'
-import { doseResponseAt, fitDose, bandwidth, boxStats, density, fitLine, quantile } from '../src/model/chartStats'
+import { compareEc50, correlation, doseResponseAt, fitDose, bandwidth, boxStats, density, fitLine, quantile } from '../src/model/chartStats'
 import { tCritical } from '../src/model/distributions'
 import doseRef from './stats-reference.json'
 
@@ -151,5 +151,100 @@ describe('the factor of a confidence interval', () => {
     got.forEach((g, i) => expect(Math.abs(g - want[i])).toBeLessThan(1e-8 * want[i]))
     expect(tCritical(0, 5)).toBeNaN()
     expect(tCritical(0.05, 0)).toBeNaN()
+  })
+})
+
+// Reference: R 4.4, cor.test, written by scripts/stats-reference.R.
+describe('correlation', () => {
+  type Pair = { r: number; p: number }
+  const c = doseRef.corr as unknown as Record<'x' | 'y' | 'sx' | 'sy' | 'tx' | 'ty', number[]> & Record<'pearson' | 'pearsonNoisy' | 'spearmanExact' | 'spearmanExactFall' | 'spearmanLarge' | 'spearmanTies', Pair>
+  const pairs = (x: number[], y: number[]): [number, number][] => x.map((v, i) => [v, y[i]])
+  const same = (got: { r: number; p: number } | null, want: Pair, what: string) => {
+    expect(got, what).not.toBeNull()
+    expect(Math.abs(got!.r - want.r), `${what} r`).toBeLessThan(1e-12)
+    expect(Math.abs(got!.p - want.p), `${what} p: ${got!.p} against ${want.p}`).toBeLessThan(1e-9 * Math.max(1, want.p / 1e-9) * 1e-3 + 1e-12)
+  }
+
+  it('is Pearson’s r with R’s p value', () => {
+    same(correlation(pairs(c.x, c.y), 'pearson'), c.pearson, 'ten points')
+    same(correlation(pairs(c.sx, c.sy), 'pearson'), c.pearsonNoisy, 'eight points')
+    expect(correlation(pairs(c.x, c.y), 'pearson')!.n).toBe(10)
+  })
+
+  it('is Spearman’s rank correlation with the exact p value for up to nine points without ties', () => {
+    const rise = correlation(pairs(c.sx, c.sy), 'spearman')!
+    same(rise, c.spearmanExact, 'rising')
+    expect(rise.exact).toBe(true)
+    const fall = correlation(pairs(c.sx, c.sy.map((v, i) => -v + (i === 1 ? 3 : 0))), 'spearman')!
+    same(fall, c.spearmanExactFall, 'falling')
+    // A perfect order among five points: 2 of the 120 orders are as extreme.
+    expect(correlation([[1, 1], [2, 2], [3, 3], [4, 4], [5, 5]], 'spearman')!.p).toBeCloseTo(2 / 120, 12)
+  })
+
+  it('uses the t approximation for more points and for equal values, as R does with exact = FALSE', () => {
+    const large = correlation(pairs(c.x, c.y.map((v, i) => v + (i === 2 ? 3 : i === 5 ? 2 : 0))), 'spearman')!
+    same(large, c.spearmanLarge, 'ten points')
+    expect(large.exact).toBe(false)
+    const ties = correlation(pairs(c.tx, c.ty), 'spearman')!
+    same(ties, c.spearmanTies, 'ties')
+    expect(ties.exact).toBe(false)
+  })
+
+  it('is not defined for fewer than three points or a measurement that does not vary', () => {
+    expect(correlation([[1, 2], [3, 4]], 'pearson')).toBeNull()
+    expect(correlation([[1, 2], [1, 4], [1, 7]], 'pearson')).toBeNull()
+    expect(correlation([[1, 5], [2, 5], [3, 5]], 'spearman')).toBeNull()
+    expect(correlation([[1, 2], [2, 4], [3, 6]], 'pearson')).toMatchObject({ r: 1, p: 0 })
+    expect(correlation([[1, 2], [NaN, 4], [3, 6], [4, 9]], 'pearson')!.n).toBe(3)
+  })
+})
+
+// Reference: R 4.4, nls with the plateau written into the model, and the extra sum-of-squares F test.
+describe('a dose-response curve with a plateau held, and two curves compared', () => {
+  type Held = { top: number | null; m: number; s: number; seM: number; r2: number; tcrit: number }
+  type Data = { x: number[]; y: number[] }
+  const d = doseRef.dose as unknown as { rise: Data; fall: Data; fall2: number[]; heldBoth: Held; heldBottom: Held; compare: { f: number; df: number; p: number; m1: number; m2: number }; compareHeld: { f: number; df: number; p: number } }
+  const pts = (x: number[], y: number[]): [number, number][] => x.map((v, i) => [Math.log10(v), y[i]])
+  const near = (got: number, want: number, rel: number, what: string) => expect(Math.abs(got - want), `${what}: ${got} against ${want}`).toBeLessThanOrEqual(rel * Math.max(1, Math.abs(want)))
+
+  it('keeps a held plateau where it was put and fits the rest as R does', () => {
+    const both = fitDose(pts(d.fall.x, d.fall.y), { bottom: 0, top: 100 })!
+    expect([both.bottom, both.top]).toEqual([0, 100])
+    near(both.logEc50, d.heldBoth.m, 1e-5, 'middle')
+    near(both.hill, d.heldBoth.s, 1e-5, 'slope')
+    near(both.seLogEc50!, d.heldBoth.seM, 1e-4, 'standard error')
+    near(both.r2, d.heldBoth.r2, 1e-7, 'R²')
+    expect(both.df).toBe(d.fall.x.length - 2)
+    near(tCritical(0.05, both.df), d.heldBoth.tcrit, 1e-8, 'factor of the interval')
+    const bottom = fitDose(pts(d.rise.x, d.rise.y), { bottom: 0 })!
+    expect(bottom.bottom).toBe(0)
+    near(bottom.top, d.heldBottom.top!, 1e-5, 'top')
+    near(bottom.logEc50, d.heldBottom.m, 1e-5, 'middle')
+    near(bottom.hill, d.heldBottom.s, 1e-5, 'slope')
+    near(bottom.seLogEc50!, d.heldBottom.seM, 1e-4, 'standard error')
+    expect(bottom.df).toBe(d.rise.x.length - 3)
+    // With nothing held it is the fit of before, with four fitted values.
+    expect(fitDose(pts(d.rise.x, d.rise.y))!.df).toBe(d.rise.x.length - 4)
+    // A top held below the data cannot be the higher plateau of any curve through them.
+    expect(fitDose(pts(d.rise.x, d.rise.y), { top: -50 })).toBeNull()
+  })
+
+  it('compares the EC50 of two curves by the extra sum-of-squares F test, as worked out in R', () => {
+    const [a, b] = [pts(d.fall.x, d.fall.y), pts(d.fall.x, d.fall2)]
+    near(fitDose(a)!.logEc50, d.compare.m1, 1e-5, 'first middle')
+    near(fitDose(b)!.logEc50, d.compare.m2, 1e-5, 'second middle')
+    const free = compareEc50(a, b)!
+    near(free.f, d.compare.f, 1e-5, 'F')
+    expect(free.df).toBe(d.compare.df)
+    near(free.p / d.compare.p, 1, 1e-4, 'p')
+    const held = compareEc50(a, b, { bottom: 0, top: 100 })!
+    near(held.f, d.compareHeld.f, 1e-5, 'F, plateaus held')
+    expect(held.df).toBe(d.compareHeld.df)
+    // A curve compared with itself has the same middle: F is zero, p is one.
+    const self = compareEc50(a, a)!
+    expect(self.f).toBeLessThan(1e-6)
+    expect(self.p).toBeGreaterThan(0.999)
+    // No comparison where a curve cannot be fitted.
+    expect(compareEc50(a, [[0, 1], [1, 2], [2, 3]])).toBeNull()
   })
 })

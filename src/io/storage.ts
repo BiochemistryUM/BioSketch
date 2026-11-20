@@ -1,6 +1,7 @@
 // Saved figures. Every figure is kept in the browser (IndexedDB, falling back to localStorage in
 // private windows), so a reload or a closed tab loses nothing and several figures can be kept.
 
+import { everyNode, slideCount } from '../model/slides'
 import type { FigDoc } from '../model/types'
 import { parseDoc, serializeDoc } from './files'
 
@@ -9,8 +10,10 @@ export interface FigureMeta {
   name: string
   /** Time of the last save, in milliseconds since 1970. */
   updated: number
-  /** Number of objects on the page, shown in the list of figures. */
+  /** Number of objects in the figure (on all its slides), shown in the list of figures. */
   objects: number
+  /** Number of slides; absent for a figure saved before slides existed, which has one. */
+  slides?: number
 }
 
 const DB_NAME = 'biosketch'
@@ -104,7 +107,7 @@ export async function listFigures(): Promise<FigureMeta[]> {
 /** Save a figure under its id. Returns false when the browser refuses to store it. */
 export async function saveFigure(id: string, doc: FigDoc): Promise<boolean> {
   if (!(await kvSet(figKey(id), serializeDoc(doc)))) return false
-  const meta: FigureMeta = { id, name: doc.name, updated: Date.now(), objects: doc.nodes.length }
+  const meta: FigureMeta = { id, name: doc.name, updated: Date.now(), objects: everyNode(doc).length, slides: slideCount(doc) }
   const others = (await listFigures()).filter((m) => m.id !== id)
   return kvSet(INDEX, JSON.stringify([meta, ...others]))
 }

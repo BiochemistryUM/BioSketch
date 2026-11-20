@@ -44,6 +44,7 @@ export function FiguresDialog() {
               <div className="figure-info">
                 <strong>{f.name || 'Untitled figure'}</strong>
                 <small>
+                  {(f.slides ?? 1) > 1 ? `${f.slides} slides · ` : ''}
                   {f.objects} {f.objects === 1 ? 'object' : 'objects'} · saved {when(f.updated)}
                   {f.id === current ? ' · open now' : ''}
                 </small>

@@ -8,7 +8,7 @@ import { parseScene } from '../src/ai/scene'
 import { attributionLines, exportRect, printPage, renderSvg } from '../src/io/export'
 import { isImageDataUrl, validateDoc } from '../src/io/files'
 import { fitImage } from '../src/io/images'
-import { connectorShape, fadeStops } from '../src/model/connector'
+import { connectorShape, fadeStops, fromMarks, marksOf, reversed } from '../src/model/connector'
 import { emptyDoc, expandGroups, nextPanelLetter } from '../src/model/doc'
 import { snapToGuides } from '../src/model/geometry'
 import { nodeLabel } from '../src/model/describe'
@@ -476,5 +476,61 @@ describe('words on an arrow', () => {
     expect(connectorLabelNode(upright, r)).toMatchObject({ id: 'c', x: 110, align: 'left', text: 'down', fontSize: 14, fill: '#123456' })
     expect(connectorLabelNode(arrow('   '), r)).toBeNull()
     expect(texts(arrow(''))).toHaveLength(0)
+  })
+})
+
+describe('a mark at each end of an arrow', () => {
+  const arrow = (extra: Partial<ConnectorNode> = {}): ConnectorNode => ({ id: 'c', type: 'connector', from: { x: 10, y: 20 }, to: { x: 210, y: 20 }, kind: 'arrow', stroke: '#2b2f36', strokeWidth: 2, ...extra })
+  const shapeOf = (node: ConnectorNode) => connectorShape(node.kind, node.strokeWidth, resolveConnector(node, docOf(node)), false, node.startMark)
+  const svgOf = (node: ConnectorNode): string => renderSvg(docOf(node), { area: 'page', transparent: false, includeSketch: true }).svg
+
+  it('draws a dot, a bar or a head at the start, beside whatever stands at the end', () => {
+    const dotToHead = shapeOf(arrow({ startMark: 'dot' }))
+    expect(dotToHead.heads).toHaveLength(1)
+    expect(dotToHead.dots).toEqual([{ c: { x: 10, y: 20 }, r: 4.5 }])
+    const barToBar = shapeOf(arrow({ kind: 'inhibit', startMark: 'inhibit' }))
+    expect(barToBar.bars).toHaveLength(2)
+    expect(barToBar.bars.map(([a]) => a.x).sort((p, q) => p - q)).toEqual([10, 210])
+    const lineWithHead = shapeOf(arrow({ kind: 'line', startMark: 'arrow' }))
+    expect(lineWithHead.heads).toHaveLength(1)
+    // The head at the start points away from the line: its tip is the start point.
+    expect(lineWithHead.heads[0].startsWith('10,20 ')).toBe(true)
+    // A head at both ends is the same picture as a "double" arrow.
+    expect(shapeOf(arrow({ startMark: 'arrow' }))).toEqual(shapeOf(arrow({ kind: 'double' })))
+    // Nothing changes for an arrow without a start mark.
+    expect(shapeOf(arrow())).toEqual(connectorShape('arrow', 2, resolveConnector(arrow(), docOf(arrow()))))
+  })
+
+  it('is exported, and stays faintly visible on a line that fades in', () => {
+    const svg = svgOf(arrow({ startMark: 'dot' }))
+    expect(svg).toMatch(/<circle cx="10" cy="20" r="4.5" fill="#2b2f36"/)
+    expect(svg).toMatch(/<polygon /)
+    expect(fadeStops('arrow', 'in', 'dot')).toEqual({ start: 0.25, end: 1 })
+    expect(fadeStops('arrow', 'in')).toEqual({ start: 0, end: 1 })
+    expect(fadeStops('line', 'out', 'dot')).toEqual({ start: 1, end: 0 })
+  })
+
+  it('is kept in a saved figure, except where the arrow has a head at both ends anyway', () => {
+    const save = (node: object): ConnectorNode => validateDoc(JSON.parse(JSON.stringify({ ...emptyDoc(), nodes: [node] }))).nodes[0] as ConnectorNode
+    expect(save(arrow({ startMark: 'inhibit' })).startMark).toBe('inhibit')
+    expect(save(arrow({ kind: 'double', startMark: 'dot' })).startMark).toBeUndefined()
+    expect(save({ ...arrow(), startMark: 'star' }).startMark).toBeUndefined()
+  })
+
+  it('goes with its end when the arrow is turned round', () => {
+    expect(marksOf('inhibit', 'dot')).toEqual({ start: 'dot', end: 'inhibit' })
+    expect(marksOf('line')).toEqual({})
+    expect(marksOf('double', 'dot')).toEqual({ start: 'arrow', end: 'arrow' })
+    expect(fromMarks('arrow', 'arrow')).toEqual({ kind: 'double' })
+    expect(fromMarks('dot', undefined)).toEqual({ kind: 'line', startMark: 'dot' })
+    const turned = reversed(arrow({ kind: 'inhibit', startMark: 'dot' }))
+    expect(turned).toMatchObject({ from: { x: 210, y: 20 }, to: { x: 10, y: 20 }, kind: 'dot', startMark: 'inhibit' })
+    // A plain arrow turned round has its head at the other end, which is its end again.
+    const plain = reversed(arrow())
+    expect(plain.kind).toBe('line')
+    expect(plain.startMark).toBe('arrow')
+    expect(shapeOf(plain).heads[0].startsWith('210,20 ')).toBe(true)
+    expect(reversed(reversed(arrow({ kind: 'dot', startMark: 'arrow' })))).toEqual(arrow({ kind: 'dot', startMark: 'arrow' }))
+    expect(reversed(arrow({ kind: 'double' }))).toMatchObject({ kind: 'double' })
   })
 })

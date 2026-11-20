@@ -22,6 +22,19 @@ export async function exampleDoc(template: Template): Promise<FigDoc | null> {
   }
 }
 
+/**
+ * The tour of the features as a new figure of several slides. It is a file of its own, fetched when
+ * first asked for (and, like the dialogs, in the background after the editor is on screen).
+ */
+export async function tourDoc(): Promise<FigDoc | null> {
+  try {
+    return await exampleDoc((await import('./tutorial')).TUTORIAL)
+  } catch {
+    toast('The tour could not be loaded. Check the connection and try again.')
+    return null
+  }
+}
+
 /** True for a figure nobody has touched: still exactly a new, empty one. */
 const untouched = (doc: FigDoc): boolean => JSON.stringify(doc) === JSON.stringify(emptyDoc())
 

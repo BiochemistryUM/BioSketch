@@ -2,6 +2,7 @@
 // those placed from a collection (see packs.ts), those imported from a file, and the pieces of a
 // split or reshaped icon. BioSketch has no drawings of its own.
 
+import { everyNode } from '../model/slides'
 import type { FigDoc, IconDef } from '../model/types'
 
 /**
@@ -25,7 +26,8 @@ export const nameFromId = (id: string): string => id.replace(/^.*--/, '').replac
 
 /** What to tell the scientist about a figure with icons it does not hold; null when it holds them all. */
 export function missingIconsNote(doc: FigDoc): string | null {
-  const boxes = doc.nodes.filter((n) => n.type === 'icon' && !doc.customIcons[n.iconId]).length
+  // Counted on every slide of the figure, not only the open one.
+  const boxes = everyNode(doc).filter((n) => n.type === 'icon' && !doc.customIcons[n.iconId]).length
   if (!boxes) return null
   return `${boxes === 1 ? 'One icon of this figure is' : `${boxes} icons of this figure are`} no longer available and ${boxes === 1 ? 'shows as a dashed box' : 'show as dashed boxes'} with a question mark. Select ${boxes === 1 ? 'it' : 'one'}, then tap an icon in the library to put that in its place.`
 }

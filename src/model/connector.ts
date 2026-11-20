@@ -3,7 +3,7 @@
 
 import { add, dist, mul, norm, round, sub } from './geometry'
 import type { ResolvedConnector } from './nodes'
-import type { ConnectorFade, ConnectorKind, Point } from './types'
+import type { ConnectorFade, ConnectorKind, ConnectorNode, EndMark, Point } from './types'
 
 export interface ConnectorShape {
   /** SVG path data for the line. */
@@ -23,10 +23,29 @@ export const BAR_WIDTH = 1.3
  * How see-through a fading line is at its start and at its end (1 = solid). An end that carries
  * a head, bar or dot stays faintly visible, so the mark is not lost; a bare end fades away.
  */
-export function fadeStops(kind: ConnectorKind, fade: ConnectorFade | undefined): { start: number; end: number } | null {
+export function fadeStops(kind: ConnectorKind, fade: ConnectorFade | undefined, startMark?: EndMark): { start: number; end: number } | null {
   if (!fade) return null
   const marked = 0.25
-  return fade === 'in' ? { start: kind === 'double' ? marked : 0, end: 1 } : { start: 1, end: kind === 'line' ? 0 : marked }
+  return fade === 'in' ? { start: marksOf(kind, startMark).start ? marked : 0, end: 1 } : { start: 1, end: kind === 'line' ? 0 : marked }
+}
+
+/** The mark at each end of a line: the end's comes from the kind of arrow, the start's is chosen apart ('double' has a head at both). */
+export function marksOf(kind: ConnectorKind, startMark?: EndMark): { start?: EndMark; end?: EndMark } {
+  if (kind === 'double') return { start: 'arrow', end: 'arrow' }
+  return { ...(startMark ? { start: startMark } : {}), ...(kind === 'line' ? {} : { end: kind }) }
+}
+
+/** The kind of arrow and the start mark that put these marks at the two ends. */
+export function fromMarks(start: EndMark | undefined, end: EndMark | undefined): { kind: ConnectorKind; startMark?: EndMark } {
+  if (start === 'arrow' && end === 'arrow') return { kind: 'double' }
+  return { kind: end ?? 'line', ...(start ? { startMark: start } : {}) }
+}
+
+/** The arrow turned round: its ends change places, and each mark goes with its end. */
+export function reversed<T extends Pick<ConnectorNode, 'from' | 'to' | 'kind' | 'startMark'>>(c: T): T {
+  const marks = marksOf(c.kind, c.startMark)
+  const { startMark: _was, ...rest } = c
+  return { ...rest, from: c.to, to: c.from, ...fromMarks(marks.end, marks.start) } as T
 }
 
 const f = (p: Point): string => `${round(p.x, 1)},${round(p.y, 1)}`
@@ -41,7 +60,7 @@ function neighbour(end: Point, candidates: Point[]): Point {
  * `flush` ends the line where a head, bar or dot begins instead of running into it. A fading line
  * needs that: two see-through shapes on top of each other would show as a darker patch.
  */
-export function connectorShape(kind: ConnectorKind, strokeWidth: number, r: ResolvedConnector, flush = false): ConnectorShape {
+export function connectorShape(kind: ConnectorKind, strokeWidth: number, r: ResolvedConnector, flush = false, startMark?: EndMark): ConnectorShape {
   const headLen = Math.max(9, strokeWidth * 4.5)
   const headWidth = headLen * 0.85
   const barLen = Math.max(12, strokeWidth * 6)
@@ -57,7 +76,7 @@ export function connectorShape(kind: ConnectorKind, strokeWidth: number, r: Reso
   // Pulling the line back inside a head needs room. On a straight or curved arrow both heads share
   // one stretch of line; on a right-angled one each head has its own leg.
   const needed = headLen * 1.2
-  const shared = dist(r.from, r.to) > headLen * (kind === 'double' ? 2.2 : 1.2)
+  const shared = dist(r.from, r.to) > headLen * (kind === 'double' || startMark ? 2.2 : 1.2)
   const roomAtEnd = via.length ? dist(r.to, beforeEnd) > needed : shared
   const roomAtStart = via.length ? dist(r.from, afterStart) > needed : shared
 
@@ -73,25 +92,28 @@ export function connectorShape(kind: ConnectorKind, strokeWidth: number, r: Reso
     heads.push([tip, add(base, mul(n, headWidth / 2)), sub(base, mul(n, headWidth / 2))].map(f).join(' '))
   }
 
-  if (kind === 'arrow' || kind === 'double') {
-    head(r.to, endDir)
-    // Stop the line inside the head so its square end does not poke past the tip.
-    if (roomAtEnd) to = sub(r.to, mul(endDir, flush ? headLen - seam : headLen * 0.8))
+  /** Draw a mark at one end and say where the line stops for it: `dir` points out of the line at that end. */
+  const mark = (which: EndMark | undefined, tip: Point, dir: Point, room: boolean): Point => {
+    if (which === 'arrow') {
+      head(tip, dir)
+      // Stop the line inside the head so its square end does not poke past the tip.
+      return room ? sub(tip, mul(dir, flush ? headLen - seam : headLen * 0.8)) : tip
+    }
+    if (which === 'inhibit') {
+      const n = { x: -dir.y, y: dir.x }
+      bars.push([add(tip, mul(n, barLen / 2)), sub(tip, mul(n, barLen / 2))])
+      return flush && room ? sub(tip, mul(dir, (strokeWidth * BAR_WIDTH) / 2 - seam)) : tip
+    }
+    if (which === 'dot') {
+      // The dot sits on the end point, so an arrow that stops at the edge of an icon touches it.
+      dots.push({ c: tip, r: dotRadius })
+      return flush && room ? sub(tip, mul(dir, dotRadius - seam)) : tip
+    }
+    return tip
   }
-  if (kind === 'double') {
-    head(r.from, startDir)
-    if (roomAtStart) from = sub(r.from, mul(startDir, flush ? headLen - seam : headLen * 0.8))
-  }
-  if (kind === 'inhibit') {
-    const n = { x: -endDir.y, y: endDir.x }
-    bars.push([add(r.to, mul(n, barLen / 2)), sub(r.to, mul(n, barLen / 2))])
-    if (flush && roomAtEnd) to = sub(r.to, mul(endDir, (strokeWidth * BAR_WIDTH) / 2 - seam))
-  }
-  if (kind === 'dot') {
-    // The dot sits on the end point, so an arrow that stops at the edge of an icon touches it.
-    dots.push({ c: r.to, r: dotRadius })
-    if (flush && roomAtEnd) to = sub(r.to, mul(endDir, dotRadius - seam))
-  }
+  const marks = marksOf(kind, startMark)
+  to = mark(marks.end, r.to, endDir, roomAtEnd)
+  from = mark(marks.start, r.from, startDir, roomAtStart)
 
   const d = via.length
     ? `M${f(from)} ${via.map((p) => `L${f(p)}`).join(' ')} L${f(to)}`

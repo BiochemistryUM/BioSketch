@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Canvas } from './canvas/Canvas'
-import { exampleDoc } from './figures'
+import { exampleDoc, tourDoc } from './figures'
 import { MISSING_ICON, getIcon } from './icons/library'
 import { installKeyboard } from './keys'
 import { nodeLabel } from './model/describe'
@@ -11,14 +11,18 @@ import { Icon } from './ui/Icon'
 import { Dialogs } from './ui/lazyDialogs'
 import { LibraryPanel } from './ui/LibraryPanel'
 import { PanelResizer } from './ui/PanelResizer'
+import { Presenter } from './ui/Presenter'
 import { PropertiesPanel } from './ui/PropertiesPanel'
+import { SlideStrip } from './ui/SlideStrip'
 import { ToolRail } from './ui/ToolRail'
 import { TopBar } from './ui/TopBar'
 
 const isWide = () => window.innerWidth >= 1000
 
 function EmptyState() {
-  const empty = useEditor((s) => s.doc.nodes.length === 0 && s.tool === 'select')
+  // Only for a figure that is still one empty page: an example takes the place of the whole figure,
+  // which must not happen to the other slides of a figure that has some.
+  const empty = useEditor((s) => s.doc.nodes.length === 0 && !s.doc.slides && s.tool === 'select')
   const figureId = useEditor((s) => s.figureId)
   // Closed for this figure only: a new empty figure shows the card again.
   const [closedFor, setClosedFor] = useState<string | null>(null)
@@ -29,13 +33,16 @@ function EmptyState() {
         <Icon name="close" size={18} />
       </button>
       <h2>Start your figure</h2>
-      <p>Tap an icon in the library to place it, sketch with the pen, or begin from an example.</p>
+      <p>Tap an icon in the library to place it, sketch with the pen, or begin from an example. The tour shows what BioSketch can do, slide by slide.</p>
       <div className="row wrap center">
         {TEMPLATES.map((t) => (
           <button key={t.id} className="btn" onClick={() => void exampleDoc(t).then((doc) => doc && useEditor.getState().loadDoc(doc))}>
             {t.name}
           </button>
         ))}
+        <button className="btn" onClick={() => void tourDoc().then((doc) => doc && useEditor.getState().loadDoc(doc))}>
+          Tour of the features
+        </button>
         <button className="btn" onClick={() => useEditor.setState({ dialog: 'help' })}>
           How it works
         </button>
@@ -61,13 +68,15 @@ function SelectionStatus() {
 
 export function App() {
   const toastText = useEditor((s) => s.toast)
+  // A figure with several slides always shows them; one with a single slide when they were asked for.
+  const showSlides = useEditor((s) => s.slidesShown || !!s.doc.slides)
   const [showLibrary, setShowLibrary] = useState(isWide)
   const [showProps, setShowProps] = useState(isWide)
 
   useEffect(() => installKeyboard(), [])
 
   return (
-    <div className={`app${showLibrary ? ' with-library' : ''}${showProps ? ' with-props' : ''}`}>
+    <div className={`app${showLibrary ? ' with-library' : ''}${showProps ? ' with-props' : ''}${showSlides ? ' with-slides' : ''}`}>
       <TopBar
         showLibrary={showLibrary}
         showProps={showProps}
@@ -78,13 +87,17 @@ export function App() {
         <ToolRail />
         {showLibrary && <LibraryPanel />}
         <main className="stage">
-          <Canvas />
-          <EmptyState />
+          <div className="stage-page">
+            <Canvas />
+            <EmptyState />
+          </div>
+          {showSlides && <SlideStrip />}
         </main>
         {showProps && <PanelResizer />}
         {showProps && <PropertiesPanel />}
       </div>
       <Dialogs />
+      <Presenter />
       <SelectionStatus />
       <div className="toast-region" role="status" aria-live="polite">
         {toastText && <div className="toast">{toastText}</div>}

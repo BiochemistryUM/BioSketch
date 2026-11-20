@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderSvg } from '../src/io/export'
 import { validateDoc } from '../src/io/files'
-import { CHART_COLOURS, axisFor, chartLayout, chartSeries, curveMethodsText, doseText, ec50Of, isGrouped, isStacked, parseTable, scatterFits, tableText } from '../src/model/chart'
+import { CHART_COLOURS, axisFor, chartLayout, chartSeries, compareCurves, comparisonText, curveMethodsText, doseText, ec50Of, isGrouped, isStacked, parseTable, scatterFits, tableText } from '../src/model/chart'
 import doseRef from './stats-reference.json'
 import { applyInstruction } from '../src/model/chartCommands'
 import { nodeLabel } from '../src/model/describe'
@@ -489,6 +489,48 @@ describe('stacked bars', () => {
   })
 })
 
+// Shares of the table above: WT 1.25 and 2.25 of 3.5, KO 3.25 and 4.25 of 7.5.
+describe('bars scaled to 100 %', () => {
+  const pct = (extra: Partial<ChartNode> = {}) => grouped({ stacked: true, percent: true, ...extra })
+
+  it('make every bar equally tall, each part its share of the category', () => {
+    const [wtVehicle, wtDrug, koVehicle, koDrug] = chartLayout(pct()).rects
+    expect(wtVehicle.h + wtDrug.h).toBeCloseTo(koVehicle.h + koDrug.h, 0)
+    expect(wtVehicle.h / (wtVehicle.h + wtDrug.h)).toBeCloseTo(1.25 / 3.5, 2)
+    expect(koDrug.h / (koVehicle.h + koDrug.h)).toBeCloseTo(4.25 / 7.5, 2)
+    // The axis runs from 0 to 100.
+    expect(Math.max(...tickLabels(chartLayout(pct())).map(Number))).toBe(100)
+  })
+
+  it('write the share in per cent inside each part, or the count when that is asked for', () => {
+    const shares = chartLayout(pct({ w: 520, h: 420, valueLabels: { show: 'mean' } })).texts.map((t) => t.text)
+    expect(shares).toEqual(expect.arrayContaining(['36 %', '64 %', '43 %', '57 %']))
+    expect(chartLayout(pct({ w: 520, h: 420, valueLabels: { show: 'mean', decimals: 1 } })).texts.map((t) => t.text)).toContain('35.7 %')
+    expect(chartLayout(pct({ w: 520, h: 420, valueLabels: { show: 'n' } })).texts.filter((t) => t.text === '*n* = 2')).toHaveLength(4)
+  })
+
+  it('are refused, with a notice, when a mean is below zero', () => {
+    const d = chartLayout(chart({ groups: parseTable('A\tA\nUp\tDown\n2\t-1\n4\t-3'), stacked: true, percent: true }))
+    expect(d.notes.some((n) => n.startsWith('A share of a whole cannot be below zero'))).toBe(true)
+    expect(Math.max(...tickLabels(d).map(Number))).toBeLessThan(100)
+  })
+
+  it('are kept in a saved figure only together with stacking, and can be asked for in words', () => {
+    expect(saved(pct()).percent).toBe(true)
+    expect(saved({ ...grouped(), percent: true }).percent).toBeUndefined()
+    for (const words of ['100% stacked bars', 'stack the bars to 100 %', 'bars as shares of the total', 'percent stacked']) {
+      const r = applyInstruction(grouped(), words)
+      expect([r.node.stacked, r.node.percent], words).toEqual([true, true])
+      expect(r.unclear, words).toEqual([])
+      expect(r.done, words).toEqual(['The bars of each category are stacked and scaled to 100 %: each part is its share of the total.'])
+    }
+    expect(applyInstruction(pct(), 'not 100 %').node).toMatchObject({ stacked: true })
+    expect(applyInstruction(pct(), 'not 100 %').node.percent).toBeUndefined()
+    expect(applyInstruction(pct(), 'bars side by side').node.percent).toBeUndefined()
+    expect(applyInstruction(chart(), '100% stacked').unclear[0]).toContain('need a table with categories and series')
+  })
+})
+
 // The data of scripts/stats-reference.R: a rising curve, and a falling one with three values per dose.
 describe('a dose-response curve on a scatter chart', () => {
   type DoseRef = { x: number[]; y: number[]; A: number; B: number; xmid: number; seXmid: number; tcrit: number }
@@ -551,7 +593,8 @@ describe('a dose-response curve on a scatter chart', () => {
     expect(text).toContain('y = bottom + (top − bottom) / (1 + 10^((log EC50 − log x) × Hill slope))')
     expect(text).toContain('Agonist: EC50 = 1.93 (95 % CI 1.83 to 2.04), Hill slope 1.19, bottom 2.07, top 96.9, R² = 0.9999, n = 9')
     expect(text).toContain('Inhibitor: IC50 = 5.41')
-    expect(text).toContain('R 4.4 (nls with the model SSfpl)')
+    expect(text).toContain('Agonist and Inhibitor: F(1, 25) = 62.5, p < 0.0001.')
+    expect(text).toContain('R 4.4 (nls)')
     expect(curveMethodsText(dose({ curve: undefined }))).toBeNull()
     expect(curveMethodsText(chart())).toBeNull()
   })
@@ -569,5 +612,176 @@ describe('a dose-response curve on a scatter chart', () => {
     expect([off.node.fit, off.node.curve]).toEqual([undefined, undefined])
     expect(applyInstruction(dose(), 'no fitted line').node.curve).toBeUndefined()
     expect(applyInstruction(chart(), 'dose-response curve').unclear[0]).toContain('needs a scatter chart')
+  })
+})
+
+describe('a pie chart', () => {
+  const pie = (extra: Partial<ChartNode> = {}): ChartNode => chart({ kind: 'pie', groups: [{ name: 'G1', values: [50] }, { name: 'S', values: [30] }, { name: 'G2/M', values: [20] }], ...extra })
+  /** The angle a slice spans, in degrees, read from the end points of its arc. */
+  const angles = (d: ReturnType<typeof chartLayout>): number[] =>
+    d.paths.map((p) => {
+      const [, cx, cy, x1, y1, , large, x2, y2] = /^M([\d.-]+) ([\d.-]+)L([\d.-]+) ([\d.-]+)A([\d.-]+) [\d.-]+ 0 ([01]) 1 ([\d.-]+) ([\d.-]+)Z$/.exec(p.d)!.map(Number)
+      const turn = ((Math.atan2(y2 - cy, x2 - cx) - Math.atan2(y1 - cy, x1 - cx)) * 180) / Math.PI
+      const span = (turn + 360) % 360
+      return large ? Math.max(span, 360 - span) : Math.min(span, 360 - span)
+    })
+
+  it('gives every group a slice as large as its share, clockwise from the top in table order', () => {
+    const d = chartLayout(pie())
+    expect(d.paths).toHaveLength(3)
+    const [a, b, c] = angles(d)
+    expect(a).toBeCloseTo(180, 0)
+    expect(b).toBeCloseTo(108, 0)
+    expect(c).toBeCloseTo(72, 0)
+    // The first slice starts straight above the middle.
+    const [, cx, cy, x1, y1] = /^M([\d.-]+) ([\d.-]+)L([\d.-]+) ([\d.-]+)/.exec(d.paths[0].d)!.map(Number)
+    expect(x1).toBeCloseTo(cx, 0)
+    expect(y1).toBeLessThan(cy)
+    expect(d.paths.map((p) => p.fill)).toEqual(CHART_COLOURS.slice(0, 3))
+    // No axes, no bars; a legend names the slices.
+    expect(d.rects).toHaveLength(0)
+    expect(d.rules).toHaveLength(0)
+    expect(d.swatches).toHaveLength(3)
+    expect(d.texts.map((t) => t.text)).toEqual(expect.arrayContaining(['G1', 'S', 'G2/M']))
+  })
+
+  it('writes the share in per cent on each slice, or the value, or nothing', () => {
+    const words = (node: ChartNode): string[] => chartLayout(node).texts.map((t) => t.text)
+    expect(words(pie())).toEqual(expect.arrayContaining(['50 %', '30 %', '20 %']))
+    expect(words(pie({ pieLabels: 'value' }))).toEqual(expect.arrayContaining(['50', '30', '20']))
+    expect(words(pie({ pieLabels: 'none' })).some((t) => /%|^\d+$/.test(t))).toBe(false)
+    // A slice too thin for its number has none.
+    const thin = pie({ groups: [{ name: 'Most', values: [99] }, { name: 'Trace', values: [1] }] })
+    expect(words(thin)).toContain('99 %')
+    expect(words(thin)).not.toContain('1 %')
+  })
+
+  it('takes the mean of several values, draws a whole circle for a single group, and leaves out what has no share', () => {
+    const means = chartLayout(pie({ groups: [{ name: 'A', values: [10, 30] }, { name: 'B', values: [60] }] }))
+    expect(angles(means)[0]).toBeCloseTo(90, 0)
+    const single = chartLayout(pie({ groups: [{ name: 'All', values: [7] }] }))
+    expect(single.paths).toHaveLength(0)
+    expect(single.circles).toHaveLength(1)
+    expect(single.texts.map((t) => t.text)).toContain('100 %')
+    const negative = chartLayout(pie({ groups: [{ name: 'A', values: [5] }, { name: 'B', values: [-2] }, { name: 'C', values: [0] }] }))
+    expect(negative.circles).toHaveLength(1)
+    expect(negative.notes).toEqual(['2 groups have a mean of zero or below and no slice: a pie shows shares of a whole.'])
+    expect(chartLayout(pie({ groups: [{ name: 'A', values: [] }] })).texts.map((t) => t.text)).toContain('Paste your numbers in the panel')
+  })
+
+  it('draws one pie per category for a table with categories and series', () => {
+    const d = chartLayout(grouped({ kind: 'pie', w: 520 }))
+    expect(d.paths).toHaveLength(4)
+    const middles = [...new Set(d.paths.map((p) => /^M([\d.-]+) /.exec(p.d)![1]))]
+    expect(middles).toHaveLength(2)
+    expect(d.texts.map((t) => t.text)).toEqual(expect.arrayContaining(['WT', 'KO', 'Vehicle', 'Drug']))
+    expect(d.swatches).toHaveLength(2)
+  })
+
+  it('is saved, named and exported like any chart, and has no test', () => {
+    expect(saved(pie({ pieLabels: 'value' }))).toMatchObject({ kind: 'pie', pieLabels: 'value' })
+    expect(saved({ ...pie(), pieLabels: 'loud' }).pieLabels).toBeUndefined()
+    expect(saved({ ...chart(), pieLabels: 'none' }).pieLabels).toBeUndefined()
+    expect(nodeLabel(pie())).toMatch(/^Pie chart/)
+    const svg = renderSvg(docOf(pie()), options).svg
+    expect(svg).toContain('A')
+    expect(svg).toContain('50 %')
+    expect(applyInstruction(chart(), 'pie chart').node.kind).toBe('pie')
+    expect(applyInstruction(pie(), 'bar chart').node.kind).toBe('bar')
+  })
+})
+
+describe('correlation on a scatter chart', () => {
+  const c = doseRef.corr as unknown as { x: number[]; y: number[]; sx: number[]; sy: number[]; pearson: { r: number; p: number }; spearmanExact: { r: number; p: number } }
+  const corr = (extra: Partial<ChartNode> = {}): ChartNode => chart({ kind: 'scatter', corr: 'pearson', groups: [{ name: 'Run 1', values: c.y, xs: c.x }], ...extra })
+  const words = (node: ChartNode): string[] => chartLayout(node).texts.map((t) => t.text)
+
+  it('is worked out for each series and written on the chart, with the marks of a label', () => {
+    expect(scatterFits(corr())[0].corr!.r).toBeCloseTo(c.pearson.r, 12)
+    expect(words(corr())).toContain('*r* = 0.99, *p* < 0.0001')
+    const ranks = corr({ corr: 'spearman', groups: [{ name: 'Run 1', values: c.sy, xs: c.sx }] })
+    expect(scatterFits(ranks)[0].corr).toMatchObject({ exact: true })
+    expect(words(ranks)).toContain('*r*_{s} = 0.9, *p* = 0.0046')
+    // None is worked out unless asked for.
+    expect(scatterFits(corr({ corr: undefined }))[0].corr).toBeNull()
+    expect(words(corr({ corr: undefined })).some((t) => t.includes('*r*'))).toBe(false)
+  })
+
+  it('names each series when there are several, and moves out of the way of a legend in the same corner', () => {
+    const two = corr({ groups: [{ name: 'A', values: c.y, xs: c.x }, { name: 'B', values: c.sy, xs: c.sx }] })
+    const lines = chartLayout(two).texts.filter((t) => t.text.includes('*r*'))
+    expect(lines.map((t) => t.text)).toEqual(['A: *r* = 0.99, *p* < 0.0001', 'B: *r* = 0.91, *p* = 0.002'])
+    expect(lines.every((t) => t.align === 'left')).toBe(true)
+    expect(lines[1].y).toBeGreaterThan(lines[0].y)
+    expect(chartLayout({ ...two, legend: 'insideLeft' }).texts.filter((t) => t.text.includes('*r*')).every((t) => t.align === 'right')).toBe(true)
+  })
+
+  it('follows the axes for Pearson (logarithms on a logarithmic axis) and says when none can be worked out', () => {
+    const plain = scatterFits(corr())[0].corr!.r
+    const logged = scatterFits(corr({ xLog: true, yLog: true }))[0].corr!.r
+    expect(logged).not.toBeCloseTo(plain, 6)
+    expect(scatterFits(corr({ corr: 'spearman', xLog: true, yLog: true }))[0].corr!.r).toBeCloseTo(scatterFits(corr({ corr: 'spearman' }))[0].corr!.r, 12)
+    const few = chartLayout(corr({ groups: [{ name: 'Two', values: [1, 2], xs: [1, 2] }] }))
+    expect(few.notes).toContain('No correlation can be worked out for Two: it needs at least three points, and both x and y must vary.')
+  })
+
+  it('is saved for a scatter chart, has a text for the methods, and can be asked for in words', () => {
+    expect(saved(corr({ corr: 'spearman' })).corr).toBe('spearman')
+    expect(saved({ ...corr(), corr: 'kendall' }).corr).toBeUndefined()
+    expect(saved({ ...chart(), corr: 'pearson' }).corr).toBeUndefined()
+    const text = curveMethodsText(corr())!
+    expect(text).toBe('Correlation is Pearson’s r, with a two-sided test of no correlation (t distribution, n − 2 degrees of freedom). Run 1: r = 0.99, p < 0.0001, n = 10. Worked out in BioSketch, which gives the results of R 4.4 (cor.test).')
+    expect(curveMethodsText(corr({ corr: 'spearman', groups: [{ name: '', values: c.sy, xs: c.sx }] }))).toContain('exact p values. rs = 0.9, p = 0.0046, n = 8.')
+    expect(curveMethodsText(corr({ xLog: true }))).toContain('It was worked out on the values as plotted (logarithms on the x axis).')
+    expect(applyInstruction(corr({ corr: undefined }), 'show the correlation').node.corr).toBe('pearson')
+    expect(applyInstruction(corr({ corr: undefined }), 'Spearman correlation').node.corr).toBe('spearman')
+    expect(applyInstruction(corr(), 'no correlation').node.corr).toBeUndefined()
+    expect(applyInstruction(chart(), 'pearson correlation').unclear[0]).toContain('needs a scatter chart')
+  })
+})
+
+describe('dose-response curves with a plateau held, and compared', () => {
+  const d = doseRef.dose as unknown as { fall: { x: number[]; y: number[] }; fall2: number[]; heldBoth: { m: number }; compare: { f: number; df: number; p: number } }
+  const curves = (extra: Partial<ChartNode> = {}): ChartNode =>
+    chart({ kind: 'scatter', fit: true, curve: 'dose', xLog: true, groups: [{ name: 'Drug A', values: d.fall.y, xs: d.fall.x }, { name: 'Drug B', values: d.fall2, xs: d.fall.x }], ...extra })
+
+  it('hold a plateau at the value typed, and say so beside the numbers', () => {
+    const held = scatterFits(curves({ doseBottom: 0, doseTop: 100 }))[0].dose!
+    expect([held.bottom, held.top]).toEqual([0, 100])
+    expect(held.logEc50).toBeCloseTo(d.heldBoth.m, 5)
+    expect(doseText(held, { bottom: 0, top: 100 })).toContain('bottom 0 (held), top 100 (held)')
+    expect(doseText(scatterFits(curves())[0].dose!)).not.toContain('held')
+    // The curve drawn ends on the held plateaus: it differs from the one with everything fitted.
+    expect(chartLayout(curves({ doseBottom: 0, doseTop: 100 })).paths[0].d).not.toBe(chartLayout(curves()).paths[0].d)
+  })
+
+  it('compare the EC50 of every pair of curves with the F test worked out in R', () => {
+    const [pair] = compareCurves(curves())
+    expect([pair.a, pair.b, pair.df]).toEqual(['Drug A', 'Drug B', d.compare.df])
+    expect(pair.f).toBeCloseTo(d.compare.f, 2)
+    expect(comparisonText(pair)).toBe('Drug A and Drug B: F(1, 40) = 93, p < 0.0001')
+    expect(compareCurves(curves({ curve: undefined }))).toEqual([])
+    expect(compareCurves(curves({ groups: curves().groups.slice(0, 1) }))).toEqual([])
+    // Three curves: three pairs.
+    const three = curves({ groups: [...curves().groups, { name: 'Drug C', values: d.fall.y.map((v) => v * 0.9 + 2), xs: d.fall.x }] })
+    expect(compareCurves(three).map((c) => `${c.a}/${c.b}`)).toEqual(['Drug A/Drug B', 'Drug A/Drug C', 'Drug B/Drug C'])
+  })
+
+  it('are told in the text for the methods, kept in a saved figure, and set in words', () => {
+    const text = curveMethodsText(curves({ doseBottom: 0 }))!
+    expect(text).toContain('; the bottom was held at 0.')
+    expect(text).toContain('EC50 values were compared by the extra sum-of-squares F test (curves fitted with one shared log EC50 against curves fitted separately): Drug A and Drug B: F(1, 42) = ')
+    expect(saved(curves({ doseBottom: 0, doseTop: 100 }))).toMatchObject({ doseBottom: 0, doseTop: 100 })
+    expect(saved({ ...curves({ doseTop: 100 }), curve: undefined }).doseTop).toBeUndefined()
+    expect(saved({ ...curves(), doseBottom: 'zero' }).doseBottom).toBeUndefined()
+    const both = applyInstruction(curves(), 'bottom at 0, top at 100')
+    expect([both.node.doseBottom, both.node.doseTop]).toEqual([0, 100])
+    expect(both.done).toEqual(['The bottom of the dose-response curve is held at 0.', 'The top of the dose-response curve is held at 100.'])
+    expect(both.unclear).toEqual([])
+    const fresh = applyInstruction(chart({ kind: 'scatter', groups: curves().groups }), 'dose-response curve with the bottom held at 0')
+    expect(fresh.node).toMatchObject({ fit: true, curve: 'dose', doseBottom: 0 })
+    expect(applyInstruction(curves({ doseBottom: 0 }), 'fit the bottom').node.doseBottom).toBeUndefined()
+    expect(applyInstruction(curves({ doseBottom: 0 }), 'straight regression line').node.doseBottom).toBeUndefined()
+    expect(applyInstruction(chart(), 'top at 100').unclear[0]).toContain('needs a scatter chart')
   })
 })

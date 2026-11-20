@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { fitView, patchDoc, zoomBy } from '../actions'
-import { exampleDoc, newFigure } from '../figures'
+import { fitView, patchDoc, present, zoomBy } from '../actions'
+import { exampleDoc, newFigure, tourDoc } from '../figures'
 import { download, fileBase } from '../io/download'
 import { parseDoc, serializeDoc } from '../io/files'
+import { slideCount } from '../model/slides'
 import { toast, useEditor } from '../store'
 import { TEMPLATES } from '../templates'
 import { Icon, type IconName } from './Icon'
@@ -87,6 +88,20 @@ function FileMenu() {
           {item('Save figure file', 'save', saveFile)}
           {item('Import a pathway…', 'pathway', () => useEditor.setState({ dialog: 'pathway' }))}
           <div className="menu-label">Start from an example</div>
+          <button
+            role="menuitem"
+            className="menu-item two-line"
+            onClick={() => {
+              setOpen(false)
+              void tourDoc().then((doc) => doc && newFigure(doc))
+            }}
+          >
+            <Icon name="slides" size={16} />
+            <span>
+              Tour of the features
+              <small>Twelve slides with examples to try, from icons to statistics</small>
+            </span>
+          </button>
           {TEMPLATES.map((t) => (
             <button
               key={t.id}
@@ -137,6 +152,8 @@ export function TopBar({ showLibrary, showProps, onToggleLibrary, onToggleProps 
   const zoom = useEditor((s) => s.view.zoom)
   const gridSnap = useEditor((s) => s.gridSnap)
   const showSketch = useEditor((s) => s.showSketch)
+  const slides = useEditor((s) => slideCount(s.doc))
+  const slidesShown = useEditor((s) => s.slidesShown || !!s.doc.slides)
   const set = useEditor((s) => s.set)
   const undo = useEditor((s) => s.undo)
   const redo = useEditor((s) => s.redo)
@@ -169,7 +186,19 @@ export function TopBar({ showLibrary, showProps, onToggleLibrary, onToggleProps 
           onClick={() => set({ showSketch: !showSketch, selection: [] })}
         />
       </div>
+      <div className="bar-group">
+        <BarButton
+          icon="slides"
+          label={slides > 1 ? `Slides: this figure has ${slides}` : slidesShown ? 'Hide the slides' : 'Show the slides, to make a presentation of several'}
+          text={slides > 1 ? `${slides} slides` : 'Slides'}
+          active={slidesShown}
+          className="slim"
+          // A figure with several slides always shows them: the button then leads to the open slide in the row.
+          onClick={() => (slides < 2 ? set({ slidesShown: !slidesShown }) : document.querySelector<HTMLElement>('.slide-thumb.current')?.focus())}
+        />
+      </div>
       <div className="spacer" />
+      <BarButton icon="play" label="Present: show the slides full screen" text="Present" className="slim present-btn" onClick={present} />
       <BarButton icon="sparkles" label="Create a figure with AI" text="AI" className="accent" onClick={() => set({ dialog: 'ai' })} />
       <BarButton icon="export" label="Export the figure" text="Export" className="primary" onClick={() => set({ dialog: 'export' })} />
       <BarButton icon="sliders" label={showProps ? 'Hide the properties panel' : 'Show the properties panel'} active={showProps} onClick={onToggleProps} />

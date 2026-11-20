@@ -20,6 +20,8 @@ export interface Box extends Rect {
 
 /** How an arrow ends: a head, a flat bar, a round dot, nothing, or a head at both ends. */
 export type ConnectorKind = 'arrow' | 'inhibit' | 'dot' | 'line' | 'double'
+/** What can stand at an end of a line: a head, a flat bar or a round dot. */
+export type EndMark = 'arrow' | 'inhibit' | 'dot'
 /** A line that fades: 'in' is faint at its start and solid at its end, 'out' the other way round. */
 export type ConnectorFade = 'in' | 'out'
 /** How a line that is not solid is broken up. Absent on a dashed line means plain dashes. */
@@ -137,6 +139,8 @@ export interface ConnectorNode extends NodeBase {
   /** Offset of the curve's midpoint from the straight line's midpoint. Absent = straight. */
   bend?: Point
   kind: ConnectorKind
+  /** A mark at the start of the line as well: a head, a bar or a dot. Absent = none (a 'double' arrow always has a head there). */
+  startMark?: EndMark
   stroke: string
   strokeWidth: number
   dashed?: boolean
@@ -184,7 +188,9 @@ export interface ImageNode extends NodeBase {
   rotation: number
 }
 
-export type ChartKind = 'bar' | 'dot' | 'line' | 'box' | 'violin' | 'scatter'
+export type ChartKind = 'bar' | 'dot' | 'line' | 'box' | 'violin' | 'scatter' | 'pie' | 'heatmap' | 'venn'
+/** The run of colours the cells of a heat map take, from the lowest value to the highest. */
+export type HeatScale = 'viridis' | 'blues' | 'greys' | 'bluered' | 'purpleorange'
 /** The mark drawn for a data point. */
 export type PointShape = 'circle' | 'square' | 'triangle' | 'diamond'
 
@@ -207,7 +213,12 @@ export interface ChartGroup {
   category?: string
   /** Scatter charts: the x value of every point, as many as there are values. */
   xs?: number[]
-  /** Scatter charts: the name written beside each point (a gene, a sample), as many as there are values; '' = no name. Absent = no point has one. */
+  /**
+   * A name for every value, as many as there are values; '' = no name. Absent = none has one.
+   * Scatter charts: the name written beside the point (a gene, a sample). Heat maps: the name of
+   * the row the value stands in. Venn diagrams: the members of the set, one name each, with a 1
+   * as its value; a set without names is given by its size, its one value.
+   */
   labels?: string[]
   /**
    * The row of the table each value stands in, when the column has gaps (an empty or unreadable
@@ -299,6 +310,18 @@ export interface ChartNode extends NodeBase {
   points?: boolean
   /** A bar chart with categories and series: the bars of one category stand on top of each other instead of side by side. */
   stacked?: boolean
+  /** Stacked bars: every bar is as tall as 100 %, and each part is its share of the category's total. */
+  percent?: boolean
+  /** Pie charts: what is written on the slices: the value of the group, or nothing. Absent = its share in per cent. */
+  pieLabels?: 'value' | 'none'
+  /** Heat maps: the colours of the cells. Absent = Viridis, or blue to red through white when the cells hold correlations or rows scaled to their own spread. */
+  heatScale?: HeatScale
+  /** Heat maps: every row is shown as z-scores, its values less their mean and divided by their standard deviation, so rows of different size can be compared. */
+  heatByRow?: boolean
+  /** Heat maps: the number of each cell is written in it. */
+  heatNumbers?: boolean
+  /** Venn diagrams: what is written in the regions: the share of all members in per cent, or nothing. Absent = the count. */
+  vennLabels?: 'percent' | 'none'
   /** How large the points are, as a multiple of their usual size (0.25 to 4). Absent = 1. */
   pointSize?: number
   /** How solid the points of single values are, 0.1 to 1. Absent = 1 (not transparent). */
@@ -321,8 +344,20 @@ export interface ChartNode extends NodeBase {
   xLog?: boolean
   /** Scatter charts: draw a fitted line through each series: the least-squares straight line, unless `curve` says otherwise. */
   fit?: boolean
+  /**
+   * Scatter charts: read the table as times (x) and what happened then (1 = the event, 0 = left the
+   * study without it) and draw Kaplan-Meier survival curves instead of points.
+   */
+  survival?: boolean
+  /** Survival curves: write the p value of the log-rank test on the chart. */
+  logRank?: boolean
+  /** Scatter charts: write the correlation of each series on the chart: Pearson's r, or Spearman's rank correlation. Absent = none. */
+  corr?: 'pearson' | 'spearman'
   /** What `fit` draws: 'dose' is a dose-response curve (four-parameter logistic along the logarithm of x). Absent = a straight line. */
   curve?: 'dose'
+  /** Dose-response curves: a plateau held at this value instead of being fitted (a response known to start at 0, or to end at 100 %). */
+  doseBottom?: number
+  doseTop?: number
   brackets?: ChartBracket[]
   /** The palette that colours groups without a colour of their own (an id of `PALETTES`). Absent = the usual colours. */
   palette?: string
@@ -355,6 +390,11 @@ export interface IconDef {
   source: string
 }
 
+/** A slide of a figure while another slide is the open one: the objects it holds, first at the back. */
+export interface Slide {
+  nodes: FigNode[]
+}
+
 export interface FigDoc {
   version: 1
   name: string
@@ -363,10 +403,16 @@ export interface FigDoc {
   /** Printed width of the page in millimetres (journal column width). Absent = not set. */
   widthMm?: number
   background: string
-  /** Drawing order: first is at the back. */
+  /** Drawing order: first is at the back. In a figure with several slides these are the objects of the open slide. */
   nodes: FigNode[]
   /** Icons imported by the user, stored with the figure so the file is self-contained. */
   customIcons: Record<string, IconDef>
+  /**
+   * The other slides of a figure that has several: those before the open one and those after it,
+   * each list in the order of the slides. Absent in a figure of one slide. The page (its size and
+   * colour) and the icons are those of the whole figure. See `src/model/slides.ts`.
+   */
+  slides?: { before: Slide[]; after: Slide[] }
 }
 
 export const FONT_STACKS: Record<FontFamily, string> = {

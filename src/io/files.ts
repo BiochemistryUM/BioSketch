@@ -6,9 +6,11 @@
 import { isHexColor, normalizeHex, sanitizeBody } from '../icons/svg'
 import { uid } from '../model/doc'
 import { DASH_SCALE_MAX, DASH_SCALE_MIN, DASH_STYLES } from '../model/dash'
-import { LEGEND_PLACES, MAX_BRACKETS, MAX_GROUPS, MAX_ROWS, MAX_VALUES, POINT_SHAPES, maxValues, ownPointStyle, pointStyle, usable, usableEnds, usablePointNames, usableRefLines, usableValueLabels } from '../model/chart'
+import { LEGEND_PLACES, MAX_BRACKETS, MAX_GROUPS, MAX_POINTS, MAX_ROWS, MAX_VALUES, POINT_SHAPES, maxValues, ownPointStyle, pointStyle, usable, usableEnds, usablePointNames, usableRefLines, usableValueLabels } from '../model/chart'
+import { heatScaleDef } from '../model/heatmap'
 import { paletteId } from '../model/palettes'
 import { SHAPE_KINDS } from '../model/shapes'
+import { MAX_SLIDES, uniqueIds, withSlides } from '../model/slides'
 import type { ChartBracket, ChartGroup, ChartKind, ChartTest, ConnectorKind, DashStyle, ElbowLegs, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign } from '../model/types'
 
 const num = (v: unknown, fallback: number, min = -1e6, max = 1e6): number =>
@@ -20,7 +22,7 @@ const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === '
 const color = (v: unknown, fallback: string): string => (typeof v === 'string' && /^[#\w(),.%\s-]{1,40}$/.test(v) ? v : fallback)
 
 const SHAPES: ShapeKind[] = SHAPE_KINDS
-const CHART_KINDS: ChartKind[] = ['bar', 'dot', 'line', 'box', 'violin', 'scatter']
+const CHART_KINDS: ChartKind[] = ['bar', 'dot', 'line', 'box', 'violin', 'scatter', 'pie', 'heatmap', 'venn']
 const KINDS: ConnectorKind[] = ['arrow', 'inhibit', 'dot', 'line', 'double']
 const LEGS: ElbowLegs[] = ['hh', 'vv', 'hv', 'vh']
 const ALIGNS: TextAlign[] = ['left', 'center', 'right']
@@ -155,6 +157,8 @@ function node(raw: unknown): FigNode | null {
         from,
         to,
         kind: oneOf(o.kind, KINDS, 'arrow'),
+        // A 'double' arrow has a head at its start already.
+        ...(o.kind !== 'double' && (o.startMark === 'arrow' || o.startMark === 'inhibit' || o.startMark === 'dot') ? { startMark: o.startMark } : {}),
         stroke: color(o.stroke, '#000000'),
         strokeWidth: num(o.strokeWidth, 2, 0.25, 40),
         ...(bend ? { bend } : {}),
@@ -198,15 +202,25 @@ function node(raw: unknown): FigNode | null {
           const names = Array.isArray(g.labels) ? g.labels : []
           const pairs = list.map((v, k) => ({ x: xs[k], v, name: typeof names[k] === 'string' ? (names[k] as string).slice(0, 40) : '' })).filter((p): p is { x: number; v: number; name: string } => finite(p.x) && finite(p.v))
           groups.push({ ...shared, values: pairs.map((p) => p.v), xs: pairs.map((p) => p.x), ...(pairs.some((p) => p.name) ? { labels: pairs.map((p) => p.name) } : {}) })
+        } else if (kind === 'venn') {
+          // A set is the names of its members, each with a 1 as its value, or, without names, its size alone.
+          const members = (Array.isArray(g.labels) ? g.labels : [])
+            .filter((n): n is string => typeof n === 'string' && !!n.trim())
+            .slice(0, MAX_POINTS)
+            .map((n) => n.trim().slice(0, 40))
+          const size = list.find((v): v is number => finite(v) && v >= 0)
+          groups.push({ ...shared, values: members.length ? members.map(() => 1) : size !== undefined ? [size] : [], ...(members.length ? { labels: members } : {}) })
         } else {
           const category = typeof g.category === 'string' && g.category.trim() ? { category: g.category.slice(0, 60) } : {}
           // The row of each value is kept only when it makes sense for every value: whole numbers
           // that rise down the column. Values and rows are filtered together, so they cannot drift apart.
           const at = Array.isArray(g.rows) && g.rows.length === (Array.isArray(g.values) ? g.values.length : 0) ? g.rows.slice(0, MAX_VALUES) : null
-          const cells = list.map((v, k) => ({ v, r: at ? at[k] : k })).filter((c): c is { v: number; r: unknown } => finite(c.v))
+          // A heat map: the name of the row stays with its number.
+          const names = kind === 'heatmap' && Array.isArray(g.labels) ? g.labels : []
+          const cells = list.map((v, k) => ({ v, r: at ? at[k] : k, name: typeof names[k] === 'string' ? (names[k] as string).slice(0, 40) : '' })).filter((c): c is { v: number; r: unknown; name: string } => finite(c.v))
           const rowsOk = !!at && cells.every((c, k) => Number.isInteger(c.r) && (c.r as number) >= 0 && (c.r as number) < MAX_ROWS && (k === 0 || (c.r as number) > (cells[k - 1].r as number)))
           const gaps = rowsOk && cells.some((c, k) => c.r !== k)
-          groups.push({ ...shared, values: cells.map((c) => c.v), ...category, ...(gaps ? { rows: cells.map((c) => c.r as number) } : {}) })
+          groups.push({ ...shared, values: cells.map((c) => c.v), ...category, ...(gaps ? { rows: cells.map((c) => c.r as number) } : {}), ...(cells.some((c) => c.name) ? { labels: cells.map((c) => c.name) } : {}) })
         }
       }
       // The ends of an axis are kept by the same rule the chart is drawn by, so reopening changes nothing.
@@ -246,6 +260,12 @@ function node(raw: unknown): FigNode | null {
         ...(o.error === 'sd' || o.error === 'sem' ? { error: o.error } : {}),
         ...(bool(o.points) ? { points: true } : {}),
         ...(kind === 'bar' && bool(o.stacked) ? { stacked: true } : {}),
+        ...(kind === 'bar' && bool(o.stacked) && bool(o.percent) ? { percent: true } : {}),
+        ...(kind === 'pie' && (o.pieLabels === 'value' || o.pieLabels === 'none') ? { pieLabels: o.pieLabels } : {}),
+        ...(kind === 'heatmap' && heatScaleDef(o.heatScale) ? { heatScale: heatScaleDef(o.heatScale)!.id } : {}),
+        ...(kind === 'heatmap' && bool(o.heatByRow) ? { heatByRow: true } : {}),
+        ...(kind === 'heatmap' && bool(o.heatNumbers) ? { heatNumbers: true } : {}),
+        ...(kind === 'venn' && (o.vennLabels === 'percent' || o.vennLabels === 'none') ? { vennLabels: o.vennLabels } : {}),
         ...pointStyle(o.pointSize, o.pointOpacity),
         ...(paletteId(o.palette) ? { palette: paletteId(o.palette) } : {}),
         ...(refLines.length ? { refLines } : {}),
@@ -262,8 +282,13 @@ function node(raw: unknown): FigNode | null {
         ...(xMin !== undefined ? { xMin } : {}),
         ...(xMax !== undefined ? { xMax } : {}),
         ...(kind === 'scatter' && bool(o.xLog) ? { xLog: true } : {}),
+        ...(kind === 'scatter' && bool(o.survival) ? { survival: true } : {}),
+        ...(kind === 'scatter' && bool(o.survival) && bool(o.logRank) ? { logRank: true } : {}),
         ...(kind === 'scatter' && bool(o.fit) ? { fit: true } : {}),
+        ...((kind === 'scatter' || kind === 'heatmap') && (o.corr === 'pearson' || o.corr === 'spearman') ? { corr: o.corr } : {}),
         ...(kind === 'scatter' && bool(o.fit) && o.curve === 'dose' ? { curve: 'dose' as const } : {}),
+        ...(kind === 'scatter' && bool(o.fit) && o.curve === 'dose' && typeof o.doseBottom === 'number' && Number.isFinite(o.doseBottom) && Math.abs(o.doseBottom) < 1e100 ? { doseBottom: o.doseBottom } : {}),
+        ...(kind === 'scatter' && bool(o.fit) && o.curve === 'dose' && typeof o.doseTop === 'number' && Number.isFinite(o.doseTop) && Math.abs(o.doseTop) < 1e100 ? { doseTop: o.doseTop } : {}),
         ...(brackets.length ? { brackets } : {}),
         ...(Object.keys(test).length ? { test } : {}),
       }
@@ -328,24 +353,35 @@ export function validateDoc(data: unknown): FigDoc {
     const icon = customIcon(id, raw)
     if (icon) customIcons[id] = icon
   }
-  const nodes: FigNode[] = []
-  const seen = new Set<string>()
-  for (const raw of o.nodes) {
-    const n = node(raw)
-    if (!n || seen.has(n.id)) continue
-    seen.add(n.id)
-    nodes.push(n)
+  // The objects of one slide: each rebuilt, and none with an id another object of the slide has.
+  const slide = (list: unknown[]): FigNode[] => {
+    const nodes: FigNode[] = []
+    const seen = new Set<string>()
+    for (const raw of list) {
+      const n = node(raw)
+      if (!n || seen.has(n.id)) continue
+      seen.add(n.id)
+      nodes.push(n)
+    }
+    return nodes
   }
-  return {
+  // The slides that are not open: lists of objects before and after the open one. Anything else is passed over.
+  const others = (list: unknown): FigNode[][] => (Array.isArray(list) ? list.flatMap((raw) => (Array.isArray(obj(raw)?.nodes) ? [slide(obj(raw)!.nodes as unknown[])] : [])) : [])
+  const before = others(obj(o.slides)?.before).slice(0, MAX_SLIDES - 1)
+  const after = others(obj(o.slides)?.after).slice(0, MAX_SLIDES - 1 - before.length)
+  const doc: FigDoc = {
     version: 1,
     name: str(o.name, 'Untitled figure', 120),
     width: num(o.width, 1200, 50, 20000),
     height: num(o.height, 800, 50, 20000),
     ...(typeof o.widthMm === 'number' && o.widthMm > 0 ? { widthMm: num(o.widthMm, 85, 10, 2000) } : {}),
     background: color(o.background, '#ffffff'),
-    nodes,
+    nodes: slide(o.nodes),
     customIcons,
   }
+  if (!before.length && !after.length) return doc
+  // No id twice in the whole figure: the slides of a PDF are drawn into one document.
+  return withSlides(doc, uniqueIds([...before, doc.nodes, ...after]), before.length)
 }
 
 export function parseDoc(text: string): FigDoc {

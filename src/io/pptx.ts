@@ -1,6 +1,6 @@
-// PowerPoint export: one slide holding the figure as a picture. The picture is stored twice, as
-// SVG (sharp at any size in PowerPoint 2016 and later) and as PNG (what older PowerPoint, Keynote
-// and Google Slides show). A .pptx file is a ZIP archive of XML parts; both are written here by
+// PowerPoint export: a slide holding the figure as a picture, or one such slide for every slide of
+// the figure. The picture is stored twice, as SVG (sharp at any size in PowerPoint 2016 and later)
+// and as PNG (what older PowerPoint, Keynote and Google Slides show). A .pptx file is a ZIP archive of XML parts; both are written here by
 // hand, so no library has to be shipped for it.
 
 export interface ZipEntry {
@@ -141,25 +141,40 @@ export interface PptxPicture {
   svg: string
 }
 
-/** The files of a one-slide presentation showing the picture. */
-export function pptxParts(pic: PptxPicture): ZipEntry[] {
-  const at = fitOnSlide(pic.width, pic.height)
-  const slide =
-    `${XML}<p:sld ${NS}><p:cSld><p:spTree>${TREE_START}` +
-    `<p:pic><p:nvPicPr><p:cNvPr id="2" name="Figure" descr="${escapeXml(pic.title)}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
-    // The PNG is the picture every program understands; the extension points newer PowerPoint to the SVG.
-    `<p:blipFill><a:blip r:embed="rId2"><a:extLst><a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">` +
-    `<asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="rId3"/></a:ext></a:extLst></a:blip><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
-    `<p:spPr><a:xfrm><a:off x="${at.x}" y="${at.y}"/><a:ext cx="${at.w}" cy="${at.h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>` +
-    `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`
+/** The smallest and largest side PowerPoint accepts for a slide (1 and 56 inches). */
+const SIDE_MIN = 914400
+const SIDE_MAX = 51206400
+
+/**
+ * The size of a slide with the proportions of the figure's page: as wide as a 16:9 slide, as high
+ * as the proportions ask, within what PowerPoint accepts.
+ */
+export function slideLike(width: number, height: number): { w: number; h: number } {
+  const ratio = width > 0 && height > 0 ? height / width : SLIDE.h / SLIDE.w
+  const h = Math.round(SLIDE.w * ratio)
+  if (h > SIDE_MAX) return { w: Math.max(SIDE_MIN, Math.round(SIDE_MAX / ratio)), h: SIDE_MAX }
+  return { w: SLIDE.w, h: Math.max(SIDE_MIN, h) }
+}
+
+/**
+ * The files of a presentation with one slide for every picture, in order. With `fill` a slide has
+ * the proportions of the first picture and every picture covers its slide (the slides of a figure
+ * become the slides of the file); without it the slides are 16:9 and a picture sits inside a margin.
+ */
+export function deckParts(pics: PptxPicture[], fill = false): ZipEntry[] {
+  const size = fill && pics[0] ? slideLike(pics[0].width, pics[0].height) : SLIDE
+  const slides = pics.map((pic) => slideXml(pic, fill ? { x: 0, y: 0, w: size.w, h: size.h } : fitOnSlide(pic.width, pic.height)))
+  const n = pics.length
   const master =
     `${XML}<p:sldMaster ${NS}><p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg><p:spTree>${TREE_START}</p:spTree></p:cSld>` +
     `<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>` +
     `<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst></p:sldMaster>`
   const layout = `${XML}<p:sldLayout ${NS} type="blank" preserve="1"><p:cSld name="Blank"><p:spTree>${TREE_START}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`
+  // In the list of what the presentation is made of, the master comes first, then the slides, then the theme.
   const presentation =
-    `${XML}<p:presentation ${NS}><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst>` +
-    `<p:sldSz cx="${SLIDE.w}" cy="${SLIDE.h}"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`
+    `${XML}<p:presentation ${NS}><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst><p:sldIdLst>` +
+    pics.map((_, k) => `<p:sldId id="${256 + k}" r:id="rId${k + 2}"/>`).join('') +
+    `</p:sldIdLst><p:sldSz cx="${size.w}" cy="${size.h}"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`
   const types =
     `${XML}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
     `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>` +
@@ -167,27 +182,54 @@ export function pptxParts(pic: PptxPicture): ZipEntry[] {
     `<Override PartName="/ppt/presentation.xml" ContentType="${PML}.presentation.main+xml"/>` +
     `<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="${PML}.slideMaster+xml"/>` +
     `<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="${PML}.slideLayout+xml"/>` +
-    `<Override PartName="/ppt/slides/slide1.xml" ContentType="${PML}.slide+xml"/>` +
+    pics.map((_, k) => `<Override PartName="/ppt/slides/slide${k + 1}.xml" ContentType="${PML}.slide+xml"/>`).join('') +
     `<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/></Types>`
   const text = (name: string, content: string): ZipEntry => ({ name, data: utf8(content) })
   return [
     text('[Content_Types].xml', types),
     text('_rels/.rels', rels([['rId1', 'officeDocument', 'ppt/presentation.xml']])),
     text('ppt/presentation.xml', presentation),
-    text('ppt/_rels/presentation.xml.rels', rels([['rId1', 'slideMaster', 'slideMasters/slideMaster1.xml'], ['rId2', 'slide', 'slides/slide1.xml'], ['rId3', 'theme', 'theme/theme1.xml']])),
+    text(
+      'ppt/_rels/presentation.xml.rels',
+      rels([['rId1', 'slideMaster', 'slideMasters/slideMaster1.xml'], ...pics.map((_, k): [string, string, string] => [`rId${k + 2}`, 'slide', `slides/slide${k + 1}.xml`]), [`rId${n + 2}`, 'theme', 'theme/theme1.xml']]),
+    ),
     text('ppt/slideMasters/slideMaster1.xml', master),
     text('ppt/slideMasters/_rels/slideMaster1.xml.rels', rels([['rId1', 'slideLayout', '../slideLayouts/slideLayout1.xml'], ['rId2', 'theme', '../theme/theme1.xml']])),
     text('ppt/slideLayouts/slideLayout1.xml', layout),
     text('ppt/slideLayouts/_rels/slideLayout1.xml.rels', rels([['rId1', 'slideMaster', '../slideMasters/slideMaster1.xml']])),
     text('ppt/theme/theme1.xml', THEME),
-    text('ppt/slides/slide1.xml', slide),
-    text('ppt/slides/_rels/slide1.xml.rels', rels([['rId1', 'slideLayout', '../slideLayouts/slideLayout1.xml'], ['rId2', 'image', '../media/image1.png'], ['rId3', 'image', '../media/image2.svg']])),
-    { name: 'ppt/media/image1.png', data: pic.png },
-    text('ppt/media/image2.svg', pic.svg),
+    // Every slide with its two pictures: slide k has image 2k-1 (PNG) and image 2k (SVG).
+    ...pics.flatMap((pic, k): ZipEntry[] => [
+      text(`ppt/slides/slide${k + 1}.xml`, slides[k]),
+      text(`ppt/slides/_rels/slide${k + 1}.xml.rels`, rels([['rId1', 'slideLayout', '../slideLayouts/slideLayout1.xml'], ['rId2', 'image', `../media/image${2 * k + 1}.png`], ['rId3', 'image', `../media/image${2 * k + 2}.svg`]])),
+      { name: `ppt/media/image${2 * k + 1}.png`, data: pic.png },
+      text(`ppt/media/image${2 * k + 2}.svg`, pic.svg),
+    ]),
   ]
 }
+
+/** A slide showing the picture at the place `at`. */
+function slideXml(pic: PptxPicture, at: { x: number; y: number; w: number; h: number }): string {
+  return (
+    `${XML}<p:sld ${NS}><p:cSld><p:spTree>${TREE_START}` +
+    `<p:pic><p:nvPicPr><p:cNvPr id="2" name="Figure" descr="${escapeXml(pic.title)}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
+    // The PNG is the picture every program understands; the extension points newer PowerPoint to the SVG.
+    `<p:blipFill><a:blip r:embed="rId2"><a:extLst><a:ext uri="{96DAC541-7B7A-43D3-8B79-37D633B846F1}">` +
+    `<asvg:svgBlip xmlns:asvg="http://schemas.microsoft.com/office/drawing/2016/SVG/main" r:embed="rId3"/></a:ext></a:extLst></a:blip><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+    `<p:spPr><a:xfrm><a:off x="${at.x}" y="${at.y}"/><a:ext cx="${at.w}" cy="${at.h}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>` +
+    `</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`
+  )
+}
+
+/** The files of a one-slide presentation showing the picture. */
+export const pptxParts = (pic: PptxPicture): ZipEntry[] => deckParts([pic])
 
 /** The finished .pptx file. */
 export function buildPptx(pic: PptxPicture): Uint8Array {
   return zipStore(pptxParts(pic))
+}
+
+/** A .pptx file with one slide for every picture; see `deckParts`. */
+export function buildDeck(pics: PptxPicture[], fill = false): Uint8Array {
+  return zipStore(deckParts(pics, fill))
 }

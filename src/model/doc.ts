@@ -332,12 +332,17 @@ export function figureScaleWithin(doc: FigDoc, s: number): number {
 }
 
 /**
- * Resize the whole figure: every object (hidden, locked and guides too) and the page, from the
- * page's top left corner. A factor that would make the page too small or too large is cut back.
+ * Resize the whole figure: every object (hidden, locked and guides too, on every slide) and the
+ * page, from the page's top left corner. A factor that would make the page too small or too large is cut back.
  */
 export function scaleFigure(doc: FigDoc, s: number): FigDoc {
   const factor = figureScaleWithin(doc, s)
   if (factor === 1) return doc
-  const scaled = scaleAsPicture(doc, doc.nodes.map((n) => n.id), factor, { x: 0, y: 0 })
-  return { ...scaled, width: Math.round(doc.width * factor), height: Math.round(doc.height * factor) }
+  const resized = (nodes: FigNode[]): FigNode[] => scaleAsPicture({ ...doc, nodes }, nodes.map((n) => n.id), factor, { x: 0, y: 0 }).nodes
+  // The page is that of every slide, so the slides that are not open are resized with it.
+  const slides = doc.slides && {
+    before: doc.slides.before.map((slide) => ({ ...slide, nodes: resized(slide.nodes) })),
+    after: doc.slides.after.map((slide) => ({ ...slide, nodes: resized(slide.nodes) })),
+  }
+  return { ...doc, nodes: resized(doc.nodes), ...(slides ? { slides } : {}), width: Math.round(doc.width * factor), height: Math.round(doc.height * factor) }
 }

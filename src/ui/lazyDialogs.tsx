@@ -20,8 +20,8 @@ const loaders: Record<Name, () => Promise<{ default: ComponentType }>> = {
 
 const views = Object.fromEntries(Object.entries(loaders).map(([name, load]) => [name, lazy(load)])) as unknown as Record<Name, ComponentType>
 
-/** Fetch every dialog now (they are small next to the editor). Never fails: what cannot be fetched is fetched when it is opened. */
-export const preloadDialogs = (): Promise<unknown> => Promise.allSettled(Object.values(loaders).map((load) => load()))
+/** Fetch every dialog now (they are small next to the editor), and the tour of the features with them. Never fails: what cannot be fetched is fetched when it is opened. */
+export const preloadDialogs = (): Promise<unknown> => Promise.allSettled([...Object.values(loaders).map((load) => load()), import('../tutorial')])
 
 /** A dialog that cannot be fetched (the connection dropped before it was ever opened) closes with a message instead of taking the editor down. */
 class Fetched extends Component<{ children: ReactNode }, { failed: boolean }> {

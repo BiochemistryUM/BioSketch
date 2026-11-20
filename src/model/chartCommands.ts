@@ -9,7 +9,7 @@
 // Every reader below looks for its phrase in a clause, makes its change and takes its words out;
 // words left over that are not small talk ("please", "the", "make") are reported back.
 
-import { TWO_FACTOR_ONLY, CHART_FONT, MAX_POINT_LABELS, MAX_REF_LINES, POINT_NAMES_TOP, POINT_OPACITY_MIN, POINT_SIZE_MAX, POINT_SIZE_MIN, VALUE_DECIMALS_MAX, chartAdvice, chartSamples, chartSeries, crossTable, hasPoints, isGrouped, pointNamesIn, pointStyle, usable, usablePointNames, usableValueLabels, usualValueLabel, withTestBrackets } from './chart'
+import { chartFamily, TWO_FACTOR_ONLY, CHART_FONT, MAX_POINT_LABELS, MAX_REF_LINES, POINT_NAMES_TOP, POINT_OPACITY_MIN, POINT_SIZE_MAX, POINT_SIZE_MIN, VALUE_DECIMALS_MAX, chartAdvice, chartSamples, chartSeries, crossTable, hasPoints, isGrouped, pointNamesIn, pointStyle, usable, usablePointNames, usableValueLabels, usualValueLabel, withTestBrackets } from './chart'
 import { TEST_NAMES, testFor } from './chartTests'
 import { PALETTES } from './palettes'
 import type { ChartGroup, ChartKind, ChartNode, ChartPointNames, ChartRefLine, ChartTest, ChartValueLabels, LegendPlace, PointShape } from './types'
@@ -47,7 +47,7 @@ export const INSTRUCTION_EXAMPLES = [
 
 const NUM = '[-+]?(?:\\d+(?:[.,]\\d+)?|[.,]\\d+)(?:e[-+]?\\d+)?'
 const toNumber = (s: string): number => Number(s.replace(',', '.'))
-const KIND_NAMES: Record<ChartKind, string> = { bar: 'bar chart', dot: 'dot chart', line: 'line chart', box: 'box plot', violin: 'violin plot', scatter: 'scatter chart' }
+const KIND_NAMES: Record<ChartKind, string> = { bar: 'bar chart', dot: 'dot chart', line: 'line chart', box: 'box plot', violin: 'violin plot', scatter: 'scatter chart', pie: 'pie chart', heatmap: 'heat map', venn: 'Venn diagram' }
 const COLOURS: Record<string, string> = {
   red: '#d9534f', blue: '#4a90d9', green: '#5cb85c', orange: '#f0a04b', yellow: '#f3c95e', purple: '#8e6bbf', violet: '#8e6bbf', pink: '#e58ab5',
   grey: '#9aa3ad', gray: '#9aa3ad', black: '#2b2f36', teal: '#3aa6a0', turquoise: '#3aa6a0', brown: '#9c6b4e', white: '#ffffff', magenta: '#cc3fa4', cyan: '#43b7d6',
@@ -270,6 +270,21 @@ function readErrorBars(r: Reading) {
 }
 
 function readStack(r: Reading) {
+  // "100 % stacked", "stacked to 100 %", "as shares of the total": stacked, and scaled to 100 %.
+  const whole = take(r, /\b(?:(?:not|no)\s+)?(?:(?:scaled?\s+)?(?:to\s+)?100\s*%|(?:in|as|to)\s+per ?cent(?:ages?)?|per ?cent(?:age)?\s+stack(?:ed)?|(?:as\s+)?(?:shares?|fractions?|proportions?)\s+of\s+(?:the\s+)?(?:total|whole))/)
+  if (whole && r.node.kind !== 'scatter') {
+    const off = /\b(?:not|no)\b/.test(whole[0])
+    take(r, /\bstack(?:ed|ing|s)?(?:\s+(?:the\s+)?(?:bars?|columns?)(?:[- ](?:charts?|plots?|graphs?))?)?|\b(?:bars?|columns?)\b/)
+    if (off) {
+      r.node = without(r.node, 'percent')
+      r.done.push('The bars show the means as they are, not shares of 100 %.')
+    } else if (!isGrouped(r.node)) r.unclear.push('Bars scaled to 100 % need a table with categories and series: two rows of names at the top, the category above and the series below.')
+    else {
+      r.node = { ...r.node, kind: 'bar', stacked: true, percent: true }
+      r.done.push('The bars of each category are stacked and scaled to 100 %: each part is its share of the total.')
+    }
+    return
+  }
   const m = take(r, /\b(?:(?:do not|don't|no|not|without|remove|stop)\s+)?(?:un-?)?stack(?:ed|ing|s)?(?:\s+(?:the\s+)?(?:bars?|columns?)(?:[- ](?:charts?|plots?|graphs?))?)?(?:\s+(?:up|on top of each other))?|\b(?:(?:bars?|columns?)\s+)?(?:side[- ]by[- ]side|next to each other)\b/)
   if (!m) return
   if (r.node.kind === 'scatter') {
@@ -278,7 +293,7 @@ function readStack(r: Reading) {
   }
   const stacked = !/\b(?:do not|don't|no|not|without|remove|stop)\b|\bun-?stack|side[- ]by[- ]side|next to each other/.test(m[0])
   if (!stacked) {
-    r.node = without(r.node, 'stacked')
+    r.node = without(r.node, 'stacked', 'percent')
     r.done.push('The bars of a category stand side by side.')
     return
   }
@@ -294,9 +309,36 @@ function readStack(r: Reading) {
 /** Words that ask for a dose-response curve. */
 const DOSE_CURVE = /(?:\b(?:remove|delete|no|without|hide|drop)\s+)?(?:\b(?:the|a|an)\s+)?(?:\b(?:fit(?:ted)?|draw)\s+)?(?:\b(?:the|a|an)\s+)?(?:\bdose[- ]?response(?:\s+(?:curve|fit|line))?|\b(?:4|four)[- ]?(?:pl\b|parameter(?:s)?(?:\s+logistic)?(?:\s+(?:curve|fit))?)|\bsigmoid(?:al)?(?:\s+(?:curve|fit|line))?|\blogistic(?:\s+(?:curve|fit))|\bhill(?:\s+(?:curve|equation|fit|slope))?|\b[ei]c[- ]?50\b(?:\s+(?:curve|fit))?)/
 
+/** "bottom at 0", "hold the top at 100", "fit the bottom": a plateau of the dose-response curve held at a value, or set free. */
+function readPlateaus(r: Reading): boolean {
+  let any = false
+  for (const which of ['bottom', 'top'] as const) {
+    const words = which === 'bottom' ? '(?:bottom|lower plateau|baseline|minimum)' : '(?:top|upper plateau|maximum)'
+    const freed = take(r, new RegExp(`\\b(?:free|fit(?:ted)?|release|unconstrain(?:ed)?|do not (?:fix|hold)|don't (?:fix|hold))\\s+(?:the\\s+)?${words}\\b|\\b${words}\\s+(?:free|fitted|not (?:fixed|held))\\b`))
+    const held = freed ? null : take(r, new RegExp(`\\b(?:(?:fix(?:ed)?|hold|held|constrain(?:ed)?|set|keep)\\s+)?(?:the\\s+)?${words}\\s*(?:(?:fixed|held|constrained|set)\\s+)?(?:at|to|=|:)\\s*(${NUM})\\s*%?`))
+    if (!freed && !held) continue
+    any = true
+    if (r.node.kind !== 'scatter') {
+      r.unclear.push('A plateau can be held for a dose-response curve, which needs a scatter chart.')
+      continue
+    }
+    const key = which === 'bottom' ? 'doseBottom' : 'doseTop'
+    if (freed) {
+      r.node = without(r.node, key)
+      r.done.push(`The ${which} of the dose-response curve is fitted again.`)
+    } else {
+      const value = toNumber(held![1])
+      r.node = { ...r.node, fit: true, curve: 'dose', [key]: value }
+      r.done.push(`The ${which} of the dose-response curve is held at ${value}.`)
+    }
+  }
+  return any
+}
+
 function readDoseCurve(r: Reading): boolean {
+  const plateaus = readPlateaus(r)
   const m = take(r, DOSE_CURVE)
-  if (!m) return false
+  if (!m) return plateaus
   // "fit a dose-response curve": the word "fit" belongs to this request, not to a straight line.
   take(r, /\b(?:fit(?:ted)?|curve)\b/)
   if (r.node.kind !== 'scatter') {
@@ -304,13 +346,31 @@ function readDoseCurve(r: Reading): boolean {
     return true
   }
   if (/\b(?:remove|delete|no|without|hide|drop)\b/.test(m[0])) {
-    r.node = without(r.node, 'fit', 'curve')
+    r.node = without(r.node, 'fit', 'curve', 'doseBottom', 'doseTop')
     r.done.push('The fitted curve is removed.')
     return true
   }
+  // Already said by a plateau that was held in the same sentence.
+  if (!(plateaus && r.node.curve === 'dose')) r.done.push('A dose-response curve (four-parameter logistic) is fitted to each series; its EC50 is listed under the table.')
   r.node = { ...r.node, fit: true, curve: 'dose' }
-  r.done.push('A dose-response curve (four-parameter logistic) is fitted to each series; its EC50 is listed under the table.')
   return true
+}
+
+function readCorrelation(r: Reading) {
+  const m = take(r, /(?:\b(?:remove|delete|no|without|hide|drop)\s+)?(?:\b(?:the|a)\s+)?(?:\b(?:pearson|spearman)(?:'s)?(?:\s+(?:rank\s+)?(?:correlation|r|rho))?|\b(?:rank\s+)?correlation(?:\s+coefficient)?(?:\s+\(?(?:pearson|spearman)\)?)?|\br[- ]value)\b/)
+  if (!m) return
+  if (r.node.kind !== 'scatter') {
+    r.unclear.push('A correlation needs a scatter chart, with x values in the first column of the table.')
+    return
+  }
+  if (/\b(?:remove|delete|no|without|hide|drop)\b/.test(m[0])) {
+    r.node = without(r.node, 'corr')
+    r.done.push('The correlation is no longer written on the chart.')
+    return
+  }
+  const corr = /spearman|rank/.test(m[0]) ? 'spearman' : 'pearson'
+  r.node = { ...r.node, corr }
+  r.done.push(corr === 'spearman' ? 'Spearman’s rank correlation of each series is written on the chart, with its p value.' : 'Pearson’s correlation of each series is written on the chart, with its p value.')
 }
 
 function readFit(r: Reading) {
@@ -322,7 +382,7 @@ function readFit(r: Reading) {
     return
   }
   const fit = !/\b(?:remove|delete|no|without|hide|drop)\b/.test(m[0])
-  r.node = fit ? { ...without(r.node, 'curve'), fit: true } : without(r.node, 'fit', 'curve')
+  r.node = fit ? { ...without(r.node, 'curve', 'doseBottom', 'doseTop'), fit: true } : without(r.node, 'fit', 'curve', 'doseBottom', 'doseTop')
   r.done.push(fit ? 'A straight line is fitted to each series (least squares).' : 'The fitted line is removed.')
 }
 
@@ -751,6 +811,9 @@ function readPoints(r: Reading) {
 
 /** The words for each kind of chart. */
 const KINDS: [RegExp, ChartKind][] = [
+  [/\bheat[- ]?maps?\b|\bmatrix(?:[- ]?(?:plots?|charts?))?\b/, 'heatmap'],
+  [/\bvenn(?:[- ]?(?:diagrams?|plots?|charts?))?\b/, 'venn'],
+  [/\bpie(?:[- ]?(?:charts?|plots?|graphs?))?\b|\bpies\b/, 'pie'],
   [/\bbox(?:[- ]and[- ]whiskers?)?[- ]?(?:plots?|charts?|graphs?)?\b|\bboxes\b/, 'box'],
   [/\bviolins?(?:[- ]?(?:plots?|charts?|graphs?))?\b/, 'violin'],
   [/\bscatter(?:[- ]?(?:plots?|charts?|graphs?))?\b|\bvolcano(?:[- ]?plots?)?\b/, 'scatter'],
@@ -759,18 +822,54 @@ const KINDS: [RegExp, ChartKind][] = [
   [/\b(?:bar|column)[- ]?(?:plots?|charts?|graphs?)\b|\bbarplot\b|\bbars\b|\bcolumns\b/, 'bar'],
 ]
 
+/** Survival curves read their table like a scatter chart: times in the first column, then 1 or 0 for each group. */
+function readSurvival(r: Reading): boolean {
+  const curves = take(r, /\b(?:survival|kaplan[- ]?meier)(?:[- ]?(?:curves?|plots?|charts?|analysis|estimates?))?\b/)
+  if (curves && !r.node.survival) {
+    const wasScatter = r.node.kind === 'scatter'
+    const groups = wasScatter ? r.node.groups : crossTable(r.node.groups, r.node.kind, 'scatter')
+    r.node = { ...without(r.node, 'fit', 'curve', 'doseBottom', 'doseTop', 'corr', 'pointNames', 'xLog', 'yLog', 'yMin', 'yMax', 'refLines', 'brackets', 'test', 'stacked', 'percent'), kind: 'scatter', groups, survival: true }
+    r.done.push(`The chart now shows survival curves (Kaplan–Meier): the first column of the table is read as the time, the others as 1 (the event) or 0 (left the study without it).`)
+  } else if (curves) r.done.push('The chart already shows survival curves.')
+  const test = take(r, /\b(?:(?:no|remove|hide|without)\s+(?:the\s+)?)?log[- ]?rank(?:\s+tests?)?(?:\s+p(?:[- ]?values?)?)?\b/)
+  if (test) {
+    if (!r.node.survival) r.unclear.push('The log-rank test compares survival curves: choose survival curves first.')
+    else {
+      const on = !/\b(?:no|remove|hide|without)\b/.test(test[0])
+      r.node = on ? { ...r.node, logRank: true } : without(r.node, 'logRank')
+      r.done.push(on ? 'The p value of the log-rank test is written on the chart.' : 'The p value of the log-rank test is no longer written on the chart.')
+    }
+  }
+  return !!curves || !!test
+}
+
 function readKind(r: Reading) {
   for (const [pattern, kind] of KINDS) {
     if (!take(r, pattern)) continue
+    if (kind === 'scatter' && r.node.survival) {
+      r.node = without(r.node, 'survival', 'logRank')
+      r.done.push('The chart is now a scatter chart.')
+      return
+    }
+    if (r.node.survival) r.node = without(r.node, 'survival', 'logRank')
     if (kind === r.node.kind) r.done.push(`The chart is already a ${KIND_NAMES[kind]}.`)
-    else if ((kind === 'scatter') === (r.node.kind === 'scatter')) {
+    else if (chartFamily(kind) === chartFamily(r.node.kind)) {
       r.node = { ...r.node, kind }
       r.done.push(`The chart is now a ${KIND_NAMES[kind]}.`)
     } else {
       // The other family of chart reads the table differently, as it does when chosen in the panel.
       const across = (r.node.refLines ?? []).filter((l) => l.axis === 'y')
-      r.node = { ...r.node, kind, groups: crossTable(r.node.groups, r.node.kind, kind), brackets: undefined, test: undefined, fit: undefined, curve: undefined, xMin: undefined, xMax: undefined, xLog: undefined, pointNames: undefined, refLines: across.length ? across : undefined }
-      r.done.push(kind === 'scatter' ? 'The chart is now a scatter chart: the first column of the table is read as the x values.' : `The chart is now a ${KIND_NAMES[kind]}: the x values became the first group.`)
+      const from = chartFamily(r.node.kind)
+      r.node = { ...r.node, kind, groups: crossTable(r.node.groups, r.node.kind, kind), brackets: undefined, test: undefined, fit: undefined, curve: undefined, doseBottom: undefined, doseTop: undefined, corr: undefined, xMin: undefined, xMax: undefined, xLog: undefined, pointNames: undefined, refLines: across.length ? across : undefined }
+      r.done.push(
+        kind === 'scatter'
+          ? 'The chart is now a scatter chart: the first column of the table is read as the x values.'
+          : kind === 'venn'
+            ? 'The chart is now a Venn diagram: every column of the table is read as the names of the members of one set.'
+            : from === 'scatter'
+              ? `The chart is now a ${KIND_NAMES[kind]}: the x values became the first group.`
+              : `The chart is now a ${KIND_NAMES[kind]}: every column of the table is read as the numbers of one group.`,
+      )
     }
     return
   }
@@ -819,10 +918,13 @@ export function applyInstruction(node: ChartNode, text: string): InstructionResu
             r.rest = `${r.rest.slice(0, m.index)} ¦ `
           }
         }
+        // Before the reader of tests, which would take the "rank" of "log-rank" for a test on ranks.
+        readSurvival(r)
         readPalette(r)
         readTest(r)
         readErrorBars(r)
         readStack(r)
+        readCorrelation(r)
         readFit(r)
         readLegend(r)
         readPointNames(r)

@@ -3,6 +3,7 @@
 // icon), so the library icon and other copies on the page stay as they were.
 
 import { uid } from '../model/doc'
+import { everyNode } from '../model/slides'
 import type { FigDoc, IconDef, IconNode } from '../model/types'
 import { toast, useEditor } from '../store'
 import { getIcon } from './library'
@@ -137,9 +138,9 @@ export function movePointInDoc(doc: FigDoc, iconId: string, path: number, index:
   return { ...doc, customIcons: { ...doc.customIcons, [iconId]: { ...icon, body: movePoint(icon.body, path, index, dx, dy) } } }
 }
 
-/** Remove pieces (split or reshaped icons) that nothing on the page uses any more. */
+/** Remove pieces (split or reshaped icons) that nothing on any slide of the figure uses any more. */
 export function dropUnusedParts(doc: FigDoc): FigDoc {
-  const used = new Set(doc.nodes.flatMap((n) => (n.type === 'icon' ? [n.iconId] : [])))
+  const used = new Set(everyNode(doc).flatMap((n) => (n.type === 'icon' ? [n.iconId] : [])))
   const kept = Object.entries(doc.customIcons).filter(([id, icon]) => icon.category !== 'Part' || used.has(id))
   return kept.length === Object.keys(doc.customIcons).length ? doc : { ...doc, customIcons: Object.fromEntries(kept) }
 }

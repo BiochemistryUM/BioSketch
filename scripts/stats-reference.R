@@ -143,8 +143,83 @@ rise <- c(2.1, 3.4, 4.0, 11.8, 31.5, 62.0, 84.9, 93.1, 96.4)
 dose3 <- rep(c(0.1, 0.3, 1, 3, 10, 30, 100, 300), each = 3)
 fall <- c(101, 97, 99, 96, 99, 94, 88, 91, 85, 66, 71, 62, 38, 33, 41, 16, 19, 12, 8, 6, 9, 5, 7, 4)
 shallow <- c(8.0, 12.5, 15.1, 24.9, 33.0, 45.2, 58.9, 66.8, 77.5)
+# Plateaus held at a stated value: the same curve with fewer parameters to fit, written out for nls
+# as y = bottom + (top - bottom) / (1 + 10^((m - log10 x) * s)).
+held_out <- function(f, y) {
+  co <- coef(f); se <- summary(f)$coefficients[, "Std. Error"]; sse <- sum(residuals(f)^2)
+  obj(top = num(if ("top" %in% names(co)) co["top"] else NA), m = num(co["m"]), s = num(co["s"]), seM = num(se["m"]),
+      sse = num(sse), r2 = num(1 - sse / sum((y - mean(y))^2)), tcrit = num(qt(0.975, df.residual(f))))
+}
+lx3 <- log10(dose3); lx1 <- log10(doses)
+heldBoth <- nls(fall ~ 0 + (100 - 0) / (1 + 10^((m - lx3) * s)), start = list(m = 0.7, s = -1))
+heldBottom <- nls(rise ~ 0 + (top - 0) / (1 + 10^((m - lx1) * s)), start = list(top = 95, m = 0.3, s = 1))
+# Two inhibition curves: do they have the same IC50? Each fitted alone, then both with one middle.
+fall2 <- c(99, 102, 98, 97, 99, 101, 93, 95, 96, 82, 85, 79, 58, 61, 55, 31, 28, 34, 14, 12, 16, 7, 6, 8)
+both_y <- c(fall, fall2); both_lx <- c(lx3, lx3); g <- rep(c(0, 1), each = 24)
+sep1 <- nls(fall ~ b + (t - b) / (1 + 10^((m - lx3) * s)), start = list(b = 4, t = 100, m = 0.7, s = -1))
+sep2 <- nls(fall2 ~ b + (t - b) / (1 + 10^((m - lx3) * s)), start = list(b = 4, t = 100, m = 1.1, s = -1))
+shared <- nls(both_y ~ (b1 * (1 - g) + b2 * g) + ((t1 * (1 - g) + t2 * g) - (b1 * (1 - g) + b2 * g)) / (1 + 10^((m - both_lx) * (s1 * (1 - g) + s2 * g))),
+              start = list(b1 = 4, b2 = 5, t1 = 100, t2 = 100, s1 = -1, s2 = -1, m = 0.9))
+rss <- function(f) sum(residuals(f)^2)
+rss_sep <- rss(sep1) + rss(sep2); df_sep <- df.residual(sep1) + df.residual(sep2)
+f_ec50 <- (rss(shared) - rss_sep) / (rss_sep / df_sep)
+# The same question with both plateaus held at 0 and 100.
+h1 <- nls(fall ~ 100 / (1 + 10^((m - lx3) * s)), start = list(m = 0.7, s = -1))
+h2 <- nls(fall2 ~ 100 / (1 + 10^((m - lx3) * s)), start = list(m = 1.1, s = -1))
+hs <- nls(both_y ~ 100 / (1 + 10^((m - both_lx) * (s1 * (1 - g) + s2 * g))), start = list(s1 = -1, s2 = -1, m = 0.9))
+rss_h <- rss(h1) + rss(h2); df_h <- df.residual(h1) + df.residual(h2)
+f_held <- (rss(hs) - rss_h) / (rss_h / df_h)
 dose <- obj(rise = dose_fit(doses, rise), fall = dose_fit(dose3, fall), shallow = dose_fit(doses, shallow),
-            qt = num(c(qt(0.975, 1), qt(0.975, 5), qt(0.975, 20), qt(0.995, 3), qt(0.95, 200))))
+            qt = num(c(qt(0.975, 1), qt(0.975, 5), qt(0.975, 20), qt(0.995, 3), qt(0.95, 200))),
+            heldBoth = held_out(heldBoth, fall), heldBottom = held_out(heldBottom, rise),
+            fall2 = num(fall2),
+            compare = obj(f = num(f_ec50), df = num(df_sep), p = num(pf(f_ec50, 1, df_sep, lower.tail = FALSE)), m1 = num(coef(sep1)["m"]), m2 = num(coef(sep2)["m"])),
+            compareHeld = obj(f = num(f_held), df = num(df_h), p = num(pf(f_held, 1, df_h, lower.tail = FALSE))))
+
+# ---- correlation ----
+# Pearson, and Spearman with the exact p value (up to nine points, no ties) or the t approximation
+# (exact = FALSE), which is what BioSketch uses for more points and for ties.
+cx <- c(2.1, 3.4, 3.9, 4.4, 5.0, 5.6, 6.1, 7.3, 9.8, 14.2)
+cy <- c(1.2, 2.9, 3.1, 4.8, 4.9, 6.4, 6.2, 8.1, 9.9, 15.1)
+sx <- c(1.0, 2.5, 3.1, 4.8, 5.2, 6.9, 7.7, 9.0)
+sy <- c(2.2, 1.9, 4.5, 3.8, 7.1, 6.0, 9.3, 8.8)
+tx <- c(1, 2, 2, 3, 4, 5, 5, 6, 7, 8, 9, 9)
+ty <- c(3, 1, 4, 4, 2, 6, 8, 5, 9, 7, 10, 12)
+cor_out <- function(t) obj(r = num(t$estimate), p = num(t$p.value))
+corr <- obj(
+  x = num(cx), y = num(cy), sx = num(sx), sy = num(sy), tx = num(tx), ty = num(ty),
+  pearson = cor_out(cor.test(cx, cy)),
+  pearsonNoisy = cor_out(cor.test(sx, sy)),
+  spearmanExact = cor_out(cor.test(sx, sy, method = "spearman")),
+  spearmanExactFall = cor_out(cor.test(sx, -sy + c(0, 3, 0, 0, 0, 0, 0, 0), method = "spearman")),
+  spearmanLarge = cor_out(cor.test(cx, cy + c(0, 0, 3, 0, 0, 2, 0, 0, 0, 0), method = "spearman", exact = FALSE)),
+  spearmanTies = cor_out(suppressWarnings(cor.test(tx, ty, method = "spearman", exact = FALSE)))
+)
+
+# ---- survival ----
+# Kaplan-Meier estimates (survfit) and the log-rank test (survdiff) of the survival package.
+suppressMessages(library(survival))
+km_out <- function(time, status) {
+  f <- survfit(Surv(time, status) ~ 1)
+  obj(time = num(time), status = num(status), at = num(f$time), surv = num(f$surv), atRisk = num(f$n.risk), median = num(unname(summary(f)$table["median"])))
+}
+lr_out <- function(time, status, group) {
+  d <- survdiff(Surv(time, status) ~ group)
+  obj(chisq = num(d$chisq), df = num(length(d$n) - 1), p = num(pchisq(d$chisq, length(d$n) - 1, lower.tail = FALSE)), observed = num(d$obs), expected = num(d$exp))
+}
+# Three groups of mice: days until the event (1) or until the mouse left the study without it (0).
+ta <- c(6, 7, 10, 15, 19, 25, 30, 34, 40, 40); sa <- c(1, 1, 1, 1, 0, 1, 1, 0, 0, 0)
+tb <- c(4, 5, 5, 8, 9, 12, 13, 17, 21, 28);   sb <- c(1, 1, 1, 1, 1, 1, 0, 1, 1, 1)
+tc <- c(9, 14, 18, 22, 26, 33, 40, 40, 40, 40); sc <- c(1, 0, 1, 1, 0, 1, 0, 0, 0, 0)
+# The estimate is exactly one half between two events: the median is the middle of that stretch.
+th <- c(2, 4, 6, 8); sh <- c(1, 1, 1, 1)
+surv <- obj(
+  a = km_out(ta, sa), b = km_out(tb, sb), c = km_out(tc, sc), half = km_out(th, sh),
+  ab = lr_out(c(ta, tb), c(sa, sb), rep(c("a", "b"), each = 10)),
+  abc = lr_out(c(ta, tb, tc), c(sa, sb, sc), rep(c("a", "b", "c"), each = 10)),
+  ac = lr_out(c(ta, tc), c(sa, sc), rep(c("a", "c"), each = 10)),
+  bc = lr_out(c(tb, tc), c(sb, sc), rep(c("b", "c"), each = 10))
+)
 
 # ---- two factors ----
 # Two-way analysis of variance with Type II sums of squares: each factor after the other, the
@@ -179,5 +254,5 @@ twoway <- obj(
   unequal = two_out(unFit, list(within = num(unPairs)))
 )
 
-writeLines(obj(r = sprintf("\"%s\"", R.version.string), dist = dist, two = two, several = several, repeated = repeated, normal = normal, holm = holm, dose = dose, twoway = twoway), "tests/stats-reference.json")
+writeLines(obj(r = sprintf("\"%s\"", R.version.string), dist = dist, two = two, several = several, repeated = repeated, normal = normal, holm = holm, dose = dose, twoway = twoway, corr = corr, surv = surv), "tests/stats-reference.json")
 cat("Wrote tests/stats-reference.json\n")

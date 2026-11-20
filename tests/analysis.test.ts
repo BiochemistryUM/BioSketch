@@ -27,7 +27,11 @@ describe('the request for Claude', () => {
     expect(text).toContain('"test": "means", "paired": false: One-way analysis of variance (ANOVA).')
     expect(text).toContain('"test": "ranks", "paired": true: Friedman test.')
     expect(text).toContain('compares each group with the first one, “Control”, only')
-    expect(text).toContain('Every group has 4 values, so each row of the table could be one sample measured in every group.')
+    expect(text).toContain('Every group has 4 values, so each row of the table could be one sample measured in every group. The scientist has not said so: ask, unless the description settles it.')
+    // When the scientist has already said that rows are one sample, the request says so instead of asking again.
+    const paired = analysisRequest(chart({ test: { paired: true } }), 'x')
+    expect(paired).toContain('The scientist has ticked “each row is one sample measured in every group”, so the rows are taken as pairs (4 complete rows).')
+    expect(paired).not.toContain('could be one sample')
     expect(text).toContain('BioSketch’s own suggestion, from the table alone: One-way analysis of variance (ANOVA).')
     expect(text).toContain('Do not work out statistics or p values yourself.')
     expect(text).toContain('"test": "means" or "ranks" or "none"')

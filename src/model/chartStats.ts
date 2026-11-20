@@ -10,6 +10,8 @@
 //    (R's `bw.nrd0`, the default of `density`).
 //  - Fitted line: ordinary least squares of y on x, with the coefficient of determination R².
 
+import { fUpper, tTwoSided } from './distributions'
+
 /** The `p` quantile (0 to 1) of values that are already sorted in ascending order. */
 export function quantile(sorted: number[], p: number): number {
   const n = sorted.length
@@ -121,6 +123,111 @@ export function fitLine(points: [number, number][]): Fit | null {
   return { slope, intercept: my - slope * mx, r2: syy > 0 ? (sxy * sxy) / (sxx * syy) : 1, n }
 }
 
+// ---------- correlation ----------
+
+export interface Correlation {
+  /** Pearson's r, or Spearman's rank correlation. */
+  r: number
+  /** Two-sided p value for "no correlation". */
+  p: number
+  n: number
+  /** Spearman only: the p value comes from the exact distribution (up to nine points, no ties); otherwise from the t approximation. */
+  exact?: boolean
+}
+
+/** Ranks from 1, equal values sharing the mean of their ranks; and whether any values are equal. */
+function rankOf(values: number[]): { rank: number[]; ties: boolean } {
+  const order = values.map((v, i) => ({ v, i })).sort((a, b) => a.v - b.v)
+  const rank = new Array<number>(values.length)
+  let ties = false
+  for (let i = 0; i < order.length; ) {
+    let j = i
+    while (j + 1 < order.length && order[j + 1].v === order[i].v) j++
+    if (j > i) ties = true
+    for (let k = i; k <= j; k++) rank[order[k].i] = (i + j) / 2 + 1
+    i = j + 1
+  }
+  return { rank, ties }
+}
+
+/** How often each sum of squared rank differences occurs among all orders of n ranks (n up to 9), counted once per n. */
+const rankSums = new Map<number, Map<number, number>>()
+function squaredDifferences(n: number): Map<number, number> {
+  const known = rankSums.get(n)
+  if (known) return known
+  const counts = new Map<number, number>()
+  const used = new Array<boolean>(n).fill(false)
+  const walk = (place: number, sum: number): void => {
+    if (place === n) {
+      counts.set(sum, (counts.get(sum) ?? 0) + 1)
+      return
+    }
+    for (let r = 0; r < n; r++) {
+      if (used[r]) continue
+      used[r] = true
+      walk(place + 1, sum + (r - place) ** 2)
+      used[r] = false
+    }
+  }
+  walk(0, 0)
+  rankSums.set(n, counts)
+  return counts
+}
+
+/**
+ * How closely two measurements go together across the points [x, y], with the two-sided test of
+ * "no correlation", as R's `cor.test` gives it.
+ *  - Pearson's r: a straight-line relation; p from the t distribution with n − 2 degrees of freedom.
+ *  - Spearman's rank correlation: any relation that only rises or only falls. With up to nine
+ *    points and no equal values the p value is exact; otherwise it comes from the t approximation
+ *    (R: `exact = FALSE`; R's default for more points without ties is a series approximation that
+ *    differs from it in the third digit).
+ * Null with fewer than three points, or when x or y does not vary.
+ */
+export function correlation(points: [number, number][], method: 'pearson' | 'spearman'): Correlation | null {
+  const pts = points.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
+  const n = pts.length
+  if (n < 3) return null
+  let xs = pts.map((p) => p[0])
+  let ys = pts.map((p) => p[1])
+  let ties = false
+  if (method === 'spearman') {
+    const [rx, ry] = [rankOf(xs), rankOf(ys)]
+    ties = rx.ties || ry.ties
+    xs = rx.rank
+    ys = ry.rank
+  }
+  const mx = xs.reduce((a, v) => a + v, 0) / n
+  const my = ys.reduce((a, v) => a + v, 0) / n
+  let sxx = 0
+  let sxy = 0
+  let syy = 0
+  for (let i = 0; i < n; i++) {
+    sxx += (xs[i] - mx) ** 2
+    sxy += (xs[i] - mx) * (ys[i] - my)
+    syy += (ys[i] - my) ** 2
+  }
+  if (!(sxx > 0) || !(syy > 0)) return null
+  const r = Math.max(-1, Math.min(1, sxy / Math.sqrt(sxx * syy)))
+  const approximate = (): number => (Math.abs(r) >= 1 ? 0 : tTwoSided(r * Math.sqrt((n - 2) / (1 - r * r)), n - 2))
+  if (method === 'pearson') return { r, p: approximate(), n }
+  if (ties || n > 9) return { r, p: approximate(), n, exact: false }
+  // Exact: the share of all orders of the ranks whose sum of squared differences is at least as
+  // far to the same side as the one observed, doubled.
+  const d = Math.round(xs.reduce((a, v, i) => a + (v - ys[i]) ** 2, 0))
+  const counts = squaredDifferences(n)
+  let total = 0
+  let below = 0
+  let above = 0
+  for (const [sum, count] of counts) {
+    total += count
+    if (sum <= d) below += count
+    if (sum >= d) above += count
+  }
+  const middle = (n ** 3 - n) / 6
+  return { r, p: Math.min(1, (2 * (d > middle ? above : below)) / total), n, exact: true }
+}
+
 // ---------- dose-response curve ----------
 
 /**
@@ -146,6 +253,8 @@ export interface DoseFit {
   n: number
   /** Standard error of `logEc50` from the fit (asymptotic, as R's `summary(nls)` gives it); null when it cannot be worked out. */
   seLogEc50: number | null
+  /** Points minus fitted parameters: the degrees of freedom of what is left over. */
+  df: number
 }
 
 /** The response the curve gives at a dose, from the logarithm (base 10) of the dose. */
@@ -175,14 +284,87 @@ export function solve(a: number[][], b: number[]): number[] | null {
   return x.every(Number.isFinite) ? x : null
 }
 
+/** Plateaus held at a value the scientist states (a response known to start at 0, or to end at 100 %) instead of being fitted. */
+export interface DoseHeld {
+  bottom?: number
+  top?: number
+}
+
+/** One curve of a fit: its points, and where its four parameters stand in the list of fitted ones (-1 = held at `value`). */
+interface CurvePlan {
+  pts: [number, number][]
+  at: [bottom: number, top: number, middle: number, slope: number]
+  value: [number, number, number, number]
+}
+
 /**
- * Fit a dose-response curve to points given as [log10 of the dose, response]. Null when no curve
- * is defined by them: fewer than five points or four different doses, a response that does not
- * vary, or data that do not settle on one curve (a jump between two doses, no bend at all), where
- * R's `nls` stops with an error as well. Never a guess: a curve is returned only when the search
- * has come to rest at a least-squares solution.
+ * Least squares for one or several dose-response curves at once (Levenberg-Marquardt). `plans`
+ * say which parameters are fitted and which are shared between curves; `start` is where the search
+ * begins. Returns where it came to rest, the misfit left, and JᵀJ there; null when it does not
+ * come to rest at a least-squares solution.
  */
-export function fitDose(points: [number, number][]): DoseFit | null {
+function settle(plans: CurvePlan[], start: number[], total: number): { q: number[]; sse: number; jtj: number[][] } | null {
+  const k = start.length
+  const full = (plan: CurvePlan, q: number[]): number[] => plan.at.map((i, j) => (i < 0 ? plan.value[j] : q[i]))
+  const share = (p: number[], lx: number): number => 1 / (1 + Math.exp(Math.LN10 * p[3] * (p[2] - lx)))
+  const cost = (q: number[]): number =>
+    plans.reduce((sum, plan) => {
+      const p = full(plan, q)
+      return sum + plan.pts.reduce((a, [lx, y]) => a + (y - (p[0] + (p[1] - p[0]) * share(p, lx))) ** 2, 0)
+    }, 0)
+  const normal = (q: number[]): { jtj: number[][]; jtr: number[] } => {
+    const jtj = Array.from({ length: k }, () => new Array<number>(k).fill(0))
+    const jtr = new Array<number>(k).fill(0)
+    for (const plan of plans) {
+      const p = full(plan, q)
+      for (const [lx, y] of plan.pts) {
+        const g = share(p, lx)
+        const bend = (p[1] - p[0]) * g * (1 - g) * Math.LN10
+        const d = [1 - g, g, -bend * p[3], -bend * (p[2] - lx)]
+        const r = y - (p[0] + (p[1] - p[0]) * g)
+        for (let i = 0; i < 4; i++) {
+          const row = plan.at[i]
+          if (row < 0) continue
+          jtr[row] += d[i] * r
+          for (let j = 0; j < 4; j++) if (plan.at[j] >= 0) jtj[row][plan.at[j]] += d[i] * d[j]
+        }
+      }
+    }
+    return { jtj, jtr }
+  }
+  let q = start
+  let sse = cost(q)
+  let damp = 1e-3
+  for (let iter = 0; iter < 400; iter++) {
+    const { jtj, jtr } = normal(q)
+    let moved = false
+    for (let tries = 0; tries < 30; tries++) {
+      const step = solve(jtj.map((row, i) => row.map((v, j) => (i === j ? v * (1 + damp) + 1e-300 : v))), jtr)
+      const next = step && q.map((v, i) => v + step[i])
+      const left = next ? cost(next) : NaN
+      if (next && Number.isFinite(left) && left <= sse) {
+        const gain = sse - left
+        q = next
+        sse = left
+        damp = Math.max(damp / 10, 1e-12)
+        moved = gain > 1e-15 * Math.max(sse, 1e-300)
+        break
+      }
+      damp *= 10
+      if (damp > 1e12) break
+    }
+    if (!moved) break
+  }
+  if (!q.every(Number.isFinite) || !Number.isFinite(sse)) return null
+  // At rest: no parameter can still lower the misfit (the residuals are at right angles to every
+  // direction the curves can move in), or the curves pass through every point.
+  const { jtj, jtr } = normal(q)
+  const settled = sse <= 1e-20 * Math.max(total, 1e-300) || jtr.every((v, i) => Math.abs(v) <= 1e-6 * Math.sqrt(jtj[i][i] * sse) + 1e-300)
+  return settled ? { q, sse, jtj } : null
+}
+
+/** The points of a curve that count, and what the fit needs to know about them; null when they define no curve at all. */
+function surveyed(points: [number, number][]) {
   const pts = points.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
   const n = pts.length
   const xs = pts.map((p) => p[0])
@@ -192,96 +374,115 @@ export function fitDose(points: [number, number][]): DoseFit | null {
   if (!(yHi > yLo) || !(xHi > xLo)) return null
   const mean = ys.reduce((a, v) => a + v, 0) / n
   const total = ys.reduce((a, v) => a + (v - mean) ** 2, 0)
-
-  // Parameters: [plateau at low doses, plateau at high doses, log EC50, hill]. `g` is the share
-  // of the way from the first plateau to the second.
-  type P = [number, number, number, number]
-  const share = (p: P, lx: number): number => 1 / (1 + Math.exp(Math.LN10 * p[3] * (p[2] - lx)))
-  const cost = (p: P): number => pts.reduce((a, [lx, y]) => a + (y - (p[0] + (p[1] - p[0]) * share(p, lx))) ** 2, 0)
-  /** JᵀJ and Jᵀr at `p`: the normal equations of the least-squares step. */
-  const normal = (p: P): { jtj: number[][]; jtr: number[] } => {
-    const jtj = [0, 1, 2, 3].map(() => [0, 0, 0, 0])
-    const jtr = [0, 0, 0, 0]
-    for (const [lx, y] of pts) {
-      const g = share(p, lx)
-      const bend = (p[1] - p[0]) * g * (1 - g) * Math.LN10
-      const d = [1 - g, g, -bend * p[3], -bend * (p[2] - lx)]
-      const r = y - (p[0] + (p[1] - p[0]) * g)
-      for (let i = 0; i < 4; i++) {
-        jtr[i] += d[i] * r
-        for (let j = 0; j < 4; j++) jtj[i][j] += d[i] * d[j]
-      }
-    }
-    return { jtj, jtr }
-  }
-
-  /** Levenberg-Marquardt from one starting point; null when the search does not come to rest. */
-  const search = (start: P): { p: P; sse: number } | null => {
-    let p = start
-    let sse = cost(p)
-    let damp = 1e-3
-    for (let iter = 0; iter < 400; iter++) {
-      const { jtj, jtr } = normal(p)
-      let moved = false
-      for (let tries = 0; tries < 30; tries++) {
-        const step = solve(jtj.map((row, i) => row.map((v, j) => (i === j ? v * (1 + damp) + 1e-300 : v))), jtr)
-        const q = step && (p.map((v, i) => v + step[i]) as P)
-        const next = q ? cost(q) : NaN
-        if (q && Number.isFinite(next) && next <= sse) {
-          const gain = sse - next
-          p = q
-          sse = next
-          damp = Math.max(damp / 10, 1e-12)
-          moved = gain > 1e-15 * Math.max(sse, 1e-300)
-          break
-        }
-        damp *= 10
-        if (damp > 1e12) break
-      }
-      if (!moved) break
-    }
-    if (!p.every(Number.isFinite) || !Number.isFinite(sse)) return null
-    // At rest: no parameter can still lower the misfit (the residuals are at right angles to
-    // every direction the curve can move in), or the curve passes through every point.
-    const { jtj, jtr } = normal(p)
-    const settled = sse <= 1e-20 * Math.max(total, 1e-300) || jtr.every((v, i) => Math.abs(v) <= 1e-6 * Math.sqrt(jtj[i][i] * sse) + 1e-300)
-    return settled ? { p, sse } : null
-  }
-
-  // Starting points: the plateaus at the extremes of the response, the middle where the response
-  // crosses halfway (or at a few places along the doses), a few slopes in the direction of the trend.
-  const order = pts.map((_, i) => i).sort((i, j) => xs[i] - xs[j])
   const mx = xs.reduce((a, v) => a + v, 0) / n
   const rising = pts.reduce((a, [lx, y]) => a + (lx - mx) * (y - mean), 0) >= 0
+  const order = pts.map((_, i) => i).sort((i, j) => xs[i] - xs[j])
   const half = (yLo + yHi) / 2
   const crossing = order.find((i) => (rising ? ys[i] >= half : ys[i] <= half))
   const middles = [...new Set([crossing === undefined ? mx : xs[crossing], mx, xLo + (xHi - xLo) * 0.25, xLo + (xHi - xLo) * 0.5, xLo + (xHi - xLo) * 0.75])]
-  let best: { p: P; sse: number } | null = null
-  for (const middle of middles) {
+  return { pts, n, yLo, yHi, xLo, xHi, total, rising, middles }
+}
+
+/** The best fit of one curve: [bottom, top, middle, slope] with the slope above zero for a rising curve, below for a falling one. */
+function oneCurve(points: [number, number][], held: DoseHeld): { p: number[]; sse: number; jtj: number[][]; at: CurvePlan['at']; free: number; s: NonNullable<ReturnType<typeof surveyed>> } | null {
+  const s = surveyed(points)
+  if (!s) return null
+  const fixed = [held.bottom, held.top].map((v) => (typeof v === 'number' && Number.isFinite(v) ? v : null))
+  let free = 0
+  const at = [fixed[0] === null ? free++ : -1, fixed[1] === null ? free++ : -1, free++, free++] as CurvePlan['at']
+  if (s.n <= free) return null
+  const plan: CurvePlan = { pts: s.pts, at, value: [fixed[0] ?? 0, fixed[1] ?? 0, 0, 0] }
+  let best: { q: number[]; sse: number; jtj: number[][] } | null = null
+  // Starting points: the plateaus at the extremes of the response, the middle where the response
+  // crosses halfway (or at a few places along the doses), a few slopes in the direction of the trend.
+  for (const middle of s.middles) {
     for (const slope of [1, 0.5, 2, 4]) {
-      const found = search(rising ? [yLo, yHi, middle, slope] : [yHi, yLo, middle, slope])
+      const begin = [s.yLo, s.yHi, middle, s.rising ? slope : -slope].filter((_, j) => at[j] >= 0)
+      const found = settle([plan], begin, s.total)
       if (found && (!best || found.sse < best.sse)) best = found
     }
   }
   if (!best) return null
-  const [a, b, logEc50, slope] = best.p
+  const q = best.q
+  return { p: at.map((i, j) => (i < 0 ? plan.value[j] : q[i])), sse: best.sse, jtj: best.jtj, at, free, s }
+}
+
+/** True when the points say where the middle of the curve is and how steep it is there (see `fitDose`). */
+function determined(p: number[], jtj: number[][], at: CurvePlan['at'], xLo: number, xHi: number): boolean {
+  const reach = (p[1] - p[0]) * Math.LN10
+  if (p[2] < xLo - 3 || p[2] > xHi + 3 || !(Math.abs(p[3]) > 1e-6) || Math.abs(p[3]) > 100) return false
+  return jtj[at[2]][at[2]] > 1e-10 * (reach * p[3]) ** 2 && jtj[at[3]][at[3]] > 1e-10 * (reach * (xHi - xLo)) ** 2
+}
+
+/**
+ * Fit a dose-response curve to points given as [log10 of the dose, response]. A plateau named in
+ * `held` is kept at that value and not fitted. Null when no curve is defined by the points: fewer
+ * than five points or four different doses, a response that does not vary, or data that do not
+ * settle on one curve (a jump between two doses, no bend at all), where R's `nls` stops with an
+ * error as well; also when a held plateau would have to lie on the wrong side of the fitted one.
+ * Never a guess: a curve is returned only when the search has come to rest at a least-squares
+ * solution.
+ */
+export function fitDose(points: [number, number][], held: DoseHeld = {}): DoseFit | null {
+  const fit = oneCurve(points, held)
+  if (!fit) return null
+  const { p, sse, jtj, at, free, s } = fit
   // A middle far outside the doses that were tested, or a step instead of a slope, is no result.
-  if (logEc50 < xLo - 3 || logEc50 > xHi + 3 || !(Math.abs(slope) > 1e-6) || Math.abs(slope) > 100) return null
-
-  // The points must say where the middle is and how steep the curve is there: when every point
-  // sits on a plateau (a jump between two doses), moving the middle or the slope changes nothing
-  // at any point, and any steep curve fits equally well.
-  const { jtj } = normal(best.p)
-  const reach = (b - a) * Math.LN10
-  if (!(jtj[2][2] > 1e-10 * (reach * slope) ** 2) || !(jtj[3][3] > 1e-10 * (reach * (xHi - xLo)) ** 2)) return null
-
+  // The points must also say where the middle is and how steep the curve is there: when every
+  // point sits on a plateau (a jump between two doses), moving the middle or the slope changes
+  // nothing at any point, and any steep curve fits equally well.
+  if (!determined(p, jtj, at, s.xLo, s.xHi)) return null
   // The standard error of the middle: from the scatter left over and how sharply the misfit
   // rises when the middle is moved (the usual asymptotic value).
   let seLogEc50: number | null = null
-  const column = solve(jtj, [0, 0, 1, 0])
-  const variance = column ? (best.sse / (n - 4)) * column[2] : NaN
+  const unit = new Array<number>(free).fill(0)
+  unit[at[2]] = 1
+  const column = solve(jtj, unit)
+  const variance = column ? (sse / (s.n - free)) * column[at[2]] : NaN
   if (variance >= 0 && Number.isFinite(variance)) seLogEc50 = Math.sqrt(variance)
-  // The same curve is written with the higher plateau as "top": the slope then says which way it runs.
-  const [bottom, top, hill] = b >= a ? [a, b, slope] : [b, a, -slope]
-  return { bottom, top, logEc50, hill, r2: total > 0 ? Math.max(0, 1 - best.sse / total) : 1, n, seLogEc50 }
+  // The same curve is written with the higher plateau as "top": the slope then says which way it
+  // runs. A plateau that is held stays what the scientist called it.
+  let [bottom, top, hill] = [p[0], p[1], p[3]]
+  if (top < bottom) {
+    if (at[0] < 0 || at[1] < 0) return null
+    ;[bottom, top, hill] = [top, bottom, -hill]
+  }
+  return { bottom, top, logEc50: p[2], hill, r2: s.total > 0 ? Math.max(0, 1 - sse / s.total) : 1, n: s.n, seLogEc50, df: s.n - free }
+}
+
+/**
+ * Do two dose-response curves have the same EC50? The two curves are fitted once each on its own
+ * and once with one middle for both; the extra misfit of the shared middle is compared with the
+ * scatter left by the separate fits (the extra sum-of-squares F test, with 1 and n1 + n2 minus the
+ * number of fitted parameters degrees of freedom). Null when either curve cannot be fitted.
+ */
+export function compareEc50(a: [number, number][], b: [number, number][], held: DoseHeld = {}): { f: number; df: number; p: number } | null {
+  const [one, two] = [oneCurve(a, held), oneCurve(b, held)]
+  if (!one || !two) return null
+  if (!determined(one.p, one.jtj, one.at, one.s.xLo, one.s.xHi) || !determined(two.p, two.jtj, two.at, two.s.xLo, two.s.xHi)) return null
+  const separate = one.sse + two.sse
+  const df = one.s.n + two.s.n - one.free - two.free
+  if (df < 1 || !(separate > 0)) return null
+  // Both curves in one fit: each keeps its own plateaus and slope, the middle is one number for both.
+  const own = one.free - 1
+  const first: CurvePlan['at'] = [one.at[0], one.at[1], 2 * own, one.at[3] > one.at[2] ? one.at[3] - 1 : one.at[3]]
+  const second: CurvePlan['at'] = [two.at[0] < 0 ? -1 : two.at[0] + own, two.at[1] < 0 ? -1 : two.at[1] + own, 2 * own, (two.at[3] > two.at[2] ? two.at[3] - 1 : two.at[3]) + own]
+  const fixed = [held.bottom, held.top].map((v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0))
+  const plans: CurvePlan[] = [
+    { pts: one.s.pts, at: first, value: [fixed[0], fixed[1], 0, 0] },
+    { pts: two.s.pts, at: second, value: [fixed[0], fixed[1], 0, 0] },
+  ]
+  const begin = new Array<number>(2 * own + 1).fill(0)
+  plans.forEach((plan, c) => plan.at.forEach((i, j) => {
+    if (i >= 0 && j !== 2) begin[i] = (c ? two : one).p[j]
+  }))
+  let shared: { sse: number } | null = null
+  for (const middle of [(one.p[2] + two.p[2]) / 2, one.p[2], two.p[2]]) {
+    begin[2 * own] = middle
+    const found = settle(plans, [...begin], one.s.total + two.s.total)
+    if (found && (!shared || found.sse < shared.sse)) shared = found
+  }
+  if (!shared) return null
+  const f = Math.max(0, shared.sse - separate) / (separate / df)
+  return { f, df, p: fUpper(f, 1, df) }
 }

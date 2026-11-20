@@ -13,6 +13,7 @@ import {
   selectAll,
   selectStep,
   setTool,
+  stepSlide,
   ungroupSelection,
   zoomBy,
 } from './actions'
@@ -39,7 +40,8 @@ export function installKeyboard(): () => void {
   const onKeyDown = (e: KeyboardEvent) => {
     if (isTyping(e.target)) return
     const s = useEditor.getState()
-    if (s.dialog) return
+    // While the slides are shown full screen the keys belong to the presentation (see Presenter).
+    if (s.dialog || s.presenting) return
     const mod = e.metaKey || e.ctrlKey
     const key = e.key.toLowerCase()
 
@@ -139,6 +141,13 @@ export function installKeyboard(): () => void {
       case 'ArrowDown':
         nudge(0, step)
         break
+      case 'PageDown':
+        // The next and the previous slide, as in every presentation program.
+        if (!stepSlide(1)) return
+        break
+      case 'PageUp':
+        if (!stepSlide(-1)) return
+        break
       case ']':
         orderSelection('front')
         return
@@ -159,7 +168,7 @@ export function installKeyboard(): () => void {
   }
   // Paste: a picture copied from elsewhere is placed on the page; otherwise objects copied in BioSketch.
   const onPaste = (e: ClipboardEvent) => {
-    if (isTyping(e.target) || useEditor.getState().dialog) return
+    if (isTyping(e.target) || useEditor.getState().dialog || useEditor.getState().presenting) return
     const picture = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/'))
     e.preventDefault()
     if (picture) void placeImageFile(picture)

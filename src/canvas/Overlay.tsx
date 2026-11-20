@@ -84,6 +84,7 @@ export function Overlay({ marquee, attachHint, guides }: Props) {
   const view = useEditor((s) => s.view)
   const editing = useEditor((s) => s.editingTextId)
   const reshape = useEditor((s) => s.reshape)
+  const chartPart = useEditor((s) => s.chartPart)
 
   const toScreen = (p: Point): Point => ({ x: p.x * view.zoom + view.x, y: p.y * view.zoom + view.y })
   const screenRect = (r: Rect) => ({ x: r.x * view.zoom + view.x, y: r.y * view.zoom + view.y, width: r.w * view.zoom, height: r.h * view.zoom })
@@ -164,6 +165,16 @@ export function Overlay({ marquee, attachHint, guides }: Props) {
         })}
       </g>,
     )
+  }
+
+  // The part of a chart that was pressed: a dashed box round it, turned with the chart.
+  const pressed = chartPart && selected.length === 1 && selected[0].id === chartPart.id && selected[0].type === 'chart' ? selected[0] : null
+  if (chartPart && pressed) {
+    const b = chartPart.box
+    const pad = 3 / view.zoom
+    const middle = { x: pressed.x + pressed.w / 2, y: pressed.y + pressed.h / 2 }
+    const corners = [[b.x - pad, b.y - pad], [b.x + b.w + pad, b.y - pad], [b.x + b.w + pad, b.y + b.h + pad], [b.x - pad, b.y + b.h + pad]].map(([x, y]) => toScreen(add(middle, rotate({ x: x - pressed.w / 2, y: y - pressed.h / 2 }, pressed.rotation))))
+    parts.push(<polygon key="chart-part" className="part-outline" points={corners.map((p) => `${p.x},${p.y}`).join(' ')} />)
   }
 
   if (guides.x !== null) {

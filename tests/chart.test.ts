@@ -193,7 +193,7 @@ describe('a chart in a figure', () => {
     expect(saved(full)).toEqual({ ...full, groups: [{ name: 'A', values: [1, 2.5], color: '#abcdef' }] })
     const odd = saved({
       ...chart(),
-      kind: 'pie',
+      kind: 'radar',
       error: 'range',
       points: 'yes',
       fontSize: 900,

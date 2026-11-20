@@ -8,7 +8,8 @@ import { contentRect, usedIconIds } from '../model/doc'
 import { ARROW_LABEL_SIZE } from '../model/nodes'
 import type { FigDoc, FigNode, ImageNode, Rect } from '../model/types'
 import { DocNodes } from '../render/DocNodes'
-import { buildPptx } from './pptx'
+import { fileBase } from './download'
+import { buildDeck, buildPptx, utf8, zipStore, type PptxPicture } from './pptx'
 
 export interface ExportOptions {
   /** 'page' exports the white page; 'content' crops to what is drawn. */
@@ -250,29 +251,81 @@ export async function renderPptx(doc: FigDoc, opts: ExportOptions): Promise<Blob
   return new Blob([file.buffer as ArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' })
 }
 
-/** The page handed to the print window: the figure alone, on paper of exactly its printed size. */
-export function printPage(doc: FigDoc, opts: ExportOptions): string {
-  const { svg, width, height } = renderSvg(doc, opts)
+/**
+ * The slides of a figure exported together are whole pages of one size: cropping each to its own
+ * drawing would give a presentation whose pages jump in size.
+ */
+export const forSlides = (opts: ExportOptions): ExportOptions => ({ ...opts, area: 'page' })
+
+/** A PowerPoint file with every slide of the figure (`slideDocs`) as a slide of its own, the size of the page. */
+export async function renderDeckPptx(slides: FigDoc[], opts: ExportOptions): Promise<Blob> {
+  const whole = forSlides(opts)
+  const pics: PptxPicture[] = []
+  for (const slide of slides) {
+    const r = exportRect(slide, whole.area, whole.includeSketch)
+    const scale = Math.min(3, 2400 / Math.max(r.w, r.h))
+    const png = await renderPng(slide, whole, scale)
+    const { svg, width, height } = await svgForPowerPoint(slide, whole, scale * 2)
+    pics.push({ title: slide.name, width, height, png: new Uint8Array(await png.arrayBuffer()), svg })
+  }
+  const file = buildDeck(pics, true)
+  return new Blob([file.buffer as ArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' })
+}
+
+/** The name of the file of one slide among `count`: "figure-03.svg", with as many digits as the last slide needs. */
+export const slideFileName = (base: string, index: number, count: number, ext: string): string =>
+  `${base}-${String(index + 1).padStart(Math.max(2, String(count).length), '0')}.${ext}`
+
+/**
+ * Every slide as a file of its own (SVG, or PNG with `scale` pixels to the unit), in one ZIP
+ * archive: a browser saves one file at a press, not twenty.
+ */
+export async function renderSlidesZip(slides: FigDoc[], opts: ExportOptions, kind: 'svg' | 'png', scale = 2): Promise<Blob> {
+  const whole = forSlides(opts)
+  const base = slides[0] ? fileBase(slides[0]) : 'figure'
+  const files = []
+  for (const [i, slide] of slides.entries()) {
+    const data = kind === 'svg' ? utf8(renderSvg(slide, whole).svg) : new Uint8Array(await (await renderPng(slide, whole, scale)).arrayBuffer())
+    files.push({ name: slideFileName(base, i, slides.length, kind), data })
+  }
+  return new Blob([zipStore(files).buffer as ArrayBuffer], { type: 'application/zip' })
+}
+
+/**
+ * The pages handed to the print window: every figure alone on paper of exactly its printed size,
+ * one page each. Several are the slides of one figure, which share a page size.
+ */
+export function printPages(docs: FigDoc[], opts: ExportOptions): string {
+  const first = docs[0]
+  if (!first) return ''
+  const drawn = docs.map((doc) => renderSvg(doc, docs.length > 1 ? forSlides(opts) : opts))
   // Without a printed width, one figure unit is one CSS pixel (96 per inch).
-  const k = mmPerUnit(doc) ?? 25.4 / 96
-  const w = Math.round(width * k * 100) / 100
-  const h = Math.round(height * k * 100) / 100
+  const k = mmPerUnit(first) ?? 25.4 / 96
+  const w = Math.round(drawn[0].width * k * 100) / 100
+  const h = Math.round(drawn[0].height * k * 100) / 100
+  const pages = drawn.map(({ svg }) => svg.replace(/^<\?xml[^>]*>\s*/, ''))
+  // Every slide after the first begins a page of its own.
+  const breaks = docs.length > 1 ? 'svg+svg{break-before:page;page-break-before:always}' : ''
   return (
-    `<!doctype html><html><head><meta charset="utf-8"><title>${escapeXml(doc.name)}</title>` +
-    `<style>@page{size:${w}mm ${h}mm;margin:0}html,body{margin:0;padding:0}svg{display:block;width:${w}mm;height:${h}mm}</style>` +
-    `</head><body>${svg.replace(/^<\?xml[^>]*>\s*/, '')}</body></html>`
+    `<!doctype html><html><head><meta charset="utf-8"><title>${escapeXml(first.name)}</title>` +
+    `<style>@page{size:${w}mm ${h}mm;margin:0}html,body{margin:0;padding:0}svg{display:block;width:${w}mm;height:${h}mm}${breaks}</style>` +
+    `</head><body>${pages.join('')}</body></html>`
   )
 }
+
+/** The page handed to the print window: the figure alone, on paper of exactly its printed size. */
+export const printPage = (doc: FigDoc, opts: ExportOptions): string => printPages([doc], opts)
 
 /**
  * Vector PDF through the browser's own print window (choose "Save as PDF" there). The browser
  * draws the figure exactly as on screen and embeds the fonts, so nothing is lost in conversion.
+ * Several figures (the slides of one) become one PDF with a page each.
  */
-export function printFigure(doc: FigDoc, opts: ExportOptions): void {
+export function printFigure(doc: FigDoc | FigDoc[], opts: ExportOptions): void {
   const frame = document.createElement('iframe')
   frame.setAttribute('aria-hidden', 'true')
   frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden'
-  frame.srcdoc = printPage(doc, opts)
+  frame.srcdoc = printPages(Array.isArray(doc) ? doc : [doc], opts)
   const cleanUp = () => setTimeout(() => frame.remove(), 1000)
   frame.onload = () => {
     const view = frame.contentWindow

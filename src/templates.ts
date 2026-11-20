@@ -6,6 +6,7 @@ import { iconsUsed, type IconLookup } from './ai/scene'
 import { loadPack, packOf, type PackInfo } from './icons/packs'
 import { INK, outlinePoints, textLabel } from './model/build'
 import { emptyDoc, uid } from './model/doc'
+import { everyNode } from './model/slides'
 import type { ConnectorKind, ConnectorNode, FigDoc, FigNode, IconDef, IconNode, MembraneNode, Point, ShapeNode } from './model/types'
 
 /** An icon of the given height, centred on a point. Without its drawing it is a square of that height. */
@@ -154,5 +155,6 @@ export async function buildTemplate(template: Template, packs: PackInfo[], load:
   if (missing.length) throw new Error('The icons of this example could not be loaded. Check the connection and try again.')
   const icons: IconLookup = (id) => found.get(id)
   const doc = template.build(icons)
-  return { ...doc, customIcons: { ...doc.customIcons, ...iconsUsed(doc.nodes, icons) } }
+  // An example can have several slides (the tour): the icons of all of them are stored.
+  return { ...doc, customIcons: { ...doc.customIcons, ...iconsUsed(everyNode(doc), icons) } }
 }

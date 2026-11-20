@@ -11,15 +11,19 @@ import {
   fileBase,
   printFigure,
   needsPicture,
+  renderDeckPptx,
   renderPptx,
   renderPng,
+  renderSlidesZip,
   renderSvg,
   scaleForDpi,
   smallestTextPt,
   type ExportOptions,
 } from '../io/export'
+import { newFigure, tourDoc } from '../figures'
 import { serializeDoc } from '../io/files'
 import { uid } from '../model/doc'
+import { everyNode, slideCount, slideDocs, slideIndex } from '../model/slides'
 import { toast, useEditor } from '../store'
 import { Icon } from './Icon'
 import { TOOLS } from './ToolRail'
@@ -64,32 +68,51 @@ export function ExportDialog() {
   const [opts, setOpts] = useState<ExportOptions>({ area: 'page', transparent: false, includeSketch: showSketch && hasSketch })
   const [scale, setScale] = useState(2)
   const [busy, setBusy] = useState(false)
+  // A figure with several slides: the open one alone, or all of them together.
+  const count = slideCount(doc)
+  const [allSlides, setAllSlides] = useState(false)
+  const all = allSlides && count > 1
+  // Everything on every slide as one figure, for what is said about all slides (credits, shaded icons).
+  const whole = useMemo(() => (all ? { ...doc, nodes: everyNode(doc) } : doc), [doc, all])
 
-  const rect = exportRect(doc, opts.area, opts.includeSketch)
+  const rect = exportRect(doc, all ? 'page' : opts.area, opts.includeSketch)
   // With a printed width set, offer the resolutions journals ask for.
   const dpiScales = [300, 600].flatMap((dpi) => {
     const s = scaleForDpi(doc, dpi)
     return s ? [{ value: s, label: `${dpi} dpi` }] : []
   })
   const scales = [...[1, 2, 3, 4].map((s) => ({ value: s, label: `${s}×` })), ...dpiScales]
-  const smallest = smallestTextPt(doc)
-  const credits = attributionLines(doc)
-  const creditText = attributionText(doc)
-  const shadedIcons = useMemo(() => doc.nodes.filter((n) => needsPicture(doc, n)).length, [doc])
+  const smallest = smallestTextPt(whole)
+  const credits = attributionLines(whole)
+  const creditText = attributionText(whole)
+  const shadedIcons = useMemo(() => whole.nodes.filter((n) => needsPicture(whole, n)).length, [whole])
   const preview = useMemo(() => {
-    const { svg } = renderSvg(doc, opts)
+    const { svg } = renderSvg(doc, all ? { ...opts, area: 'page' } : opts)
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
-  }, [doc, opts])
+  }, [doc, opts, all])
 
-  const saveSvg = () => {
-    download(renderSvg(doc, opts).svg, `${fileBase(doc)}.svg`, 'image/svg+xml')
-    toast('SVG downloaded')
+  const saveSvg = async () => {
+    if (!all) {
+      download(renderSvg(doc, opts).svg, `${fileBase(doc)}.svg`, 'image/svg+xml')
+      toast('SVG downloaded')
+      return
+    }
+    setBusy(true)
+    try {
+      download(await renderSlidesZip(slideDocs(doc), opts, 'svg'), `${fileBase(doc)}-svg.zip`)
+      toast(`${count} SVG files downloaded, in one ZIP file`)
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'The files could not be created.')
+    } finally {
+      setBusy(false)
+    }
   }
   const savePng = async () => {
     setBusy(true)
     try {
-      download(await renderPng(doc, opts, scale), `${fileBase(doc)}.png`)
-      toast('PNG downloaded')
+      if (all) download(await renderSlidesZip(slideDocs(doc), opts, 'png', scale), `${fileBase(doc)}-png.zip`)
+      else download(await renderPng(doc, opts, scale), `${fileBase(doc)}.png`)
+      toast(all ? `${count} PNG files downloaded, in one ZIP file` : 'PNG downloaded')
     } catch (e) {
       toast(e instanceof Error ? e.message : 'The image could not be created.')
     } finally {
@@ -99,7 +122,7 @@ export function ExportDialog() {
   const savePptx = async () => {
     setBusy(true)
     try {
-      download(await renderPptx(doc, opts), `${fileBase(doc)}.pptx`)
+      download(all ? await renderDeckPptx(slideDocs(doc), opts) : await renderPptx(doc, opts), `${fileBase(doc)}.pptx`)
       toast('PowerPoint file downloaded')
     } catch (e) {
       toast(e instanceof Error ? e.message : 'The PowerPoint file could not be created.')
@@ -123,9 +146,24 @@ export function ExportDialog() {
           <img src={preview} alt="Preview of the exported figure" />
         </div>
         <div className="export-options">
+          {count > 1 && (
+            <fieldset className="export-which">
+              <legend>What to export</legend>
+              <label className="check">
+                <input type="radio" name="export-which" checked={!all} onChange={() => setAllSlides(false)} />
+                <span>
+                  This slide ({slideIndex(doc) + 1} of {count})
+                </span>
+              </label>
+              <label className="check">
+                <input type="radio" name="export-which" checked={all} onChange={() => setAllSlides(true)} />
+                <span>All {count} slides</span>
+              </label>
+            </fieldset>
+          )}
           <label className="check">
-            <input type="checkbox" checked={opts.area === 'content'} onChange={(e) => setOpts({ ...opts, area: e.target.checked ? 'content' : 'page' })} />
-            <span>Crop to the drawing</span>
+            <input type="checkbox" checked={!all && opts.area === 'content'} disabled={all} onChange={(e) => setOpts({ ...opts, area: e.target.checked ? 'content' : 'page' })} />
+            <span>Crop to the drawing{all ? ' (slides are exported as whole pages)' : ''}</span>
           </label>
           <label className="check">
             <input type="checkbox" checked={opts.transparent} onChange={(e) => setOpts({ ...opts, transparent: e.target.checked })} />
@@ -138,19 +176,24 @@ export function ExportDialog() {
             </label>
           )}
           <div className="export-actions">
-            <button className="btn primary" onClick={saveSvg}>
-              <Icon name="export" size={16} /> SVG (vector)
+            <button className="btn primary" onClick={() => void saveSvg()} disabled={busy}>
+              <Icon name="export" size={16} /> {all ? 'SVG (a file per slide)' : 'SVG (vector)'}
             </button>
-            <p className="hint">Best for further editing in Inkscape or Illustrator.</p>
-            <button className="btn primary" onClick={() => printFigure(doc, opts)}>
-              <Icon name="pdf" size={16} /> PDF (vector)
-            </button>
-            <p className="hint">Opens the print window: choose “Save as PDF” there. The page is set to the figure’s size.</p>
-            <button className="btn primary" onClick={savePptx} disabled={busy}>
-              <Icon name="template" size={16} /> PowerPoint (slide)
+            <p className="hint">Best for further editing in Inkscape or Illustrator.{all ? ' The files come in one ZIP file.' : ''}</p>
+            <button className="btn primary" onClick={() => printFigure(all ? slideDocs(doc) : doc, opts)}>
+              <Icon name="pdf" size={16} /> {all ? 'PDF (a page per slide)' : 'PDF (vector)'}
             </button>
             <p className="hint">
-              One slide with the figure as a sharp picture you can resize. It is not editable shape by shape in PowerPoint.
+              Opens the print window: choose “Save as PDF” there. The page is set to the figure’s size.
+              {all ? ' The PDF can be shown full screen as a presentation, on any computer.' : ''}
+            </p>
+            <button className="btn primary" onClick={savePptx} disabled={busy}>
+              <Icon name="template" size={16} /> {all ? 'PowerPoint (all slides)' : 'PowerPoint (slide)'}
+            </button>
+            <p className="hint">
+              {all
+                ? 'Every slide becomes a slide of the PowerPoint file, the size of the page, as a sharp picture. The slides are not editable shape by shape in PowerPoint.'
+                : 'One slide with the figure as a sharp picture you can resize. It is not editable shape by shape in PowerPoint.'}
               {shadedIcons > 0 &&
                 (shadedIcons === 1
                   ? ' One icon has shading PowerPoint cannot draw: it goes in as a picture of itself.'
@@ -158,7 +201,7 @@ export function ExportDialog() {
             </p>
             <div className="row">
               <button className="btn primary" onClick={savePng} disabled={busy}>
-                <Icon name="export" size={16} /> {busy ? 'Rendering…' : 'PNG (image)'}
+                <Icon name="export" size={16} /> {busy ? 'Rendering…' : all ? 'PNG (a file per slide)' : 'PNG (image)'}
               </button>
               <select aria-label="PNG resolution" value={scale} onChange={(e) => setScale(Number(e.target.value))}>
                 {scales.map((s) => (
@@ -175,7 +218,7 @@ export function ExportDialog() {
                 toast('Figure file downloaded')
               }}
             >
-              <Icon name="save" size={16} /> Figure file (to edit later)
+              <Icon name="save" size={16} /> {count > 1 ? `Figure file (all ${count} slides, to edit later)` : 'Figure file (to edit later)'}
             </button>
           </div>
         </div>
@@ -319,11 +362,27 @@ const SHORTCUTS: [string, string][] = [
   ['Ctrl/⌘ + scroll, or pinch', 'Zoom'],
   ['Ctrl/⌘ 0', 'Fit page to window'],
   ['] and [', 'Bring to front, send to back'],
+  ['Page Down / Page Up', 'Next slide, previous slide'],
 ]
 
 export function HelpDialog() {
   return (
     <Modal title="How to use BioSketch" onClose={close} wide>
+      <div className="row wrap">
+        <button
+          className="btn primary"
+          onClick={() =>
+            void tourDoc().then(async (doc) => {
+              if (!doc) return
+              await newFigure(doc)
+              close()
+            })
+          }
+        >
+          <Icon name="slides" size={16} /> Open the tour of the features
+        </button>
+        <p className="hint">Twelve slides with examples to try. It opens as a new figure; your own figures stay as they are.</p>
+      </div>
       <div className="help-grid">
         <section>
           <h2>Basics</h2>
@@ -342,6 +401,10 @@ export function HelpDialog() {
             <li>Lock a background so it stays put; “Unlock all” is in the right-hand panel when nothing is selected.</li>
             <li>File › Import a pathway finds a pathway on WikiPathways (or opens a .gpml file) and redraws it as boxes and arrows you can change.</li>
             <li>Drag in or paste your own pictures. File › My figures keeps every figure you have made in this browser.</li>
+            <li>
+              “Slides” in the top bar shows the slides of the figure under the page: add, copy, move and delete them there. “Present” shows them full screen: the arrow keys or a
+              press move on, Escape goes back. Export can save all slides as one PDF or one PowerPoint file.
+            </li>
             <li>With the membrane brush, draw a line. Finish near the start to close it into a cell.</li>
             <li>Sketch with the pen, then use “AI” to turn the sketch into a clean figure, or to change a figure you already have.</li>
           </ul>

@@ -86,9 +86,17 @@ h2 {
 }
 
 .stage {
-  position: relative;
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The page being worked on; the row of slides, when shown, stands under it. */
+.stage-page {
+  position: relative;
+  flex: 1;
+  min-height: 0;
 }
 
 .canvas-wrap {
@@ -310,9 +318,26 @@ h2 {
   .brand {
     display: none;
   }
+  .topbar {
+    gap: 2px;
+  }
 }
 
-@media (max-width: 700px) {
+/* The buttons for slides give up their words first, so that Export stays in reach on a tablet. */
+@media (max-width: 1000px) {
+  .bar-btn.slim .bar-text {
+    display: none;
+  }
+}
+
+/* Narrower than a tablet held upright: the zoom figure goes first (Ctrl/⌘ 0 still fits the page). */
+@media (max-width: 767px) {
+  .bar-btn.zoom {
+    display: none;
+  }
+}
+
+@media (max-width: 710px) {
   .bar-text,
   .bar-btn.zoom,
   .doc-name {
@@ -375,7 +400,9 @@ h2 {
 
 /* Phones: zoom is done by pinching, so the zoom and view buttons make room for the essentials. */
 @media (max-width: 560px) {
-  .bar-group.optional {
+  .bar-group.optional,
+  /* On a phone the presentation is started from the row of slides. */
+  .bar-btn.present-btn {
     display: none;
   }
   .topbar {
@@ -487,6 +514,32 @@ h2 {
   fill: none;
   stroke: var(--select);
   stroke-width: 1.5;
+}
+
+/* The part of a chart that was pressed, and the setting in the panel that belongs to it. */
+.part-outline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+
+[data-picked] {
+  border-radius: 6px;
+  animation: picked 1.8s ease-out;
+}
+
+@keyframes picked {
+  0%,
+  40% {
+    background: var(--accent-weak);
+    box-shadow: 0 0 0 4px var(--accent-weak);
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 4px transparent;
+  }
 }
 
 .selection-outline.thin {
@@ -1016,6 +1069,85 @@ input[type='checkbox'] {
   white-space: pre;
   overflow-x: auto;
   tab-size: 10;
+}
+
+/* The headings the settings of a chart are sorted under. The row stays at the top of the panel
+   while the settings under it are scrolled, and reaches from edge to edge of the section. */
+.tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  margin: 10px -12px 10px;
+  padding: 0 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs button {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 9px 4px 7px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tabs button:hover {
+  color: var(--text);
+}
+
+.tabs button.active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.tabs button:focus-visible {
+  outline-offset: -2px;
+}
+
+/* The first setting under a heading starts close under the row. */
+.chart-tab > :first-child {
+  margin-top: 0;
+}
+
+@media (pointer: coarse) {
+  .tabs button {
+    min-height: 40px;
+  }
+}
+
+/* A list whose names are typed over: the box takes the room that is left, and what cannot be
+   taken as a name is said on a line of its own under it. */
+.chart-summary.names li {
+  flex-wrap: wrap;
+}
+
+.chart-summary.names .name-input {
+  flex: 1 1 60px;
+  min-width: 0;
+}
+
+.name-input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+.chart-summary .name-problem {
+  flex: 1 0 100%;
+  margin: 0;
+}
+
+/* The colour of a group, beside its name in a list. */
+.group-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
 }
 
 .chart-summary {
@@ -1859,4 +1991,256 @@ kbd {
     width: 20px;
     height: 20px;
   }
+}
+
+/* ---------- slides ---------- */
+
+.slide-strip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px max(8px, env(safe-area-inset-right, 0)) max(8px, env(safe-area-inset-bottom, 0)) max(8px, env(safe-area-inset-left, 0));
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+.slide-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.slide-tools .icon-only {
+  width: 30px;
+  height: 30px;
+}
+
+.slide-tools .icon-only.plain {
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+}
+
+.slide-tools .icon-only.danger {
+  color: var(--danger);
+}
+
+.slide-tools .icon-only:disabled {
+  opacity: 0.4;
+}
+
+.slide-list {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  /* Room for the outline of the open slide and the line that shows where a dragged slide lands. */
+  padding: 3px 4px;
+  list-style: none;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.slide-list li {
+  position: relative;
+  flex: none;
+  display: flex;
+}
+
+.slide-list li.drop-before::before,
+.slide-list li.drop-after::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--select);
+}
+
+.slide-list li.drop-before::before {
+  left: -6px;
+}
+
+.slide-list li.drop-after::after {
+  right: -6px;
+}
+
+.slide-thumb {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #fff;
+  overflow: hidden;
+  /* A finger scrolls the row sideways; a mouse or a pen drags a slide. */
+  touch-action: pan-x;
+}
+
+.slide-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.slide-thumb:hover {
+  border-color: var(--muted);
+}
+
+.slide-thumb.current {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.slide-thumb.dragged {
+  opacity: 0.45;
+}
+
+.slide-number {
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: rgba(31, 41, 51, 0.72);
+  color: #fff;
+  font-size: 10.5px;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.slide-add {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+}
+
+.slide-add:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+@media (pointer: coarse) {
+  .slide-tools .icon-only,
+  .slide-tools .btn {
+    width: auto;
+    min-width: 40px;
+    height: 40px;
+  }
+}
+
+@media (max-width: 700px) {
+  .slide-strip {
+    flex-wrap: wrap;
+  }
+  .slide-list {
+    order: -1;
+    flex-basis: 100%;
+  }
+  .slide-tools:last-child {
+    margin-left: auto;
+  }
+}
+
+/* The slides full screen. */
+.presenting {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: #000;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.presenting.idle {
+  cursor: none;
+}
+
+.present-slide {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.present-controls {
+  position: absolute;
+  left: 50%;
+  bottom: max(18px, env(safe-area-inset-bottom, 0));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  border-radius: 12px;
+  background: rgba(24, 28, 34, 0.82);
+  color: #fff;
+  transition: opacity 0.25s;
+}
+
+.presenting.idle .present-controls:not(:focus-within) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.present-controls button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+}
+
+.present-controls button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.present-controls button:disabled {
+  opacity: 0.35;
+}
+
+.present-count {
+  min-width: 64px;
+  text-align: center;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The choice between the open slide and all of them, in the Export dialog. */
+.export-which {
+  margin: 0 0 8px;
+  padding: 4px 10px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.export-which legend {
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Messages stand above the row of slides, not on it. */
+.app.with-slides .toast-region {
+  bottom: calc(96px + env(safe-area-inset-bottom, 0px));
 }

@@ -151,7 +151,7 @@ const ChartMarks = memo(function ChartMarks({ chart, clipId }: { chart: ChartDra
       )}
       <g clipPath={chart.clipped ? `url(#${clipId})` : undefined}>
         {chart.rects.map((r, i) => (
-          <rect key={`r${i}`} x={r.x} y={r.y} width={r.w} height={r.h} fill={r.fill} stroke={INK} strokeWidth={1} />
+          <rect key={`r${i}`} x={r.x} y={r.y} width={r.w} height={r.h} fill={r.fill} stroke={r.edge ?? INK} strokeWidth={r.edge ? 0.6 : 1} />
         ))}
         {chart.paths.map((p, i) => (
           <path key={`p${i}`} d={p.d} fill={p.fill ?? 'none'} stroke={p.stroke} strokeWidth={p.width} strokeLinejoin="round" strokeLinecap="round" />
@@ -296,8 +296,8 @@ function TextView({ node, interactive, halo = false }: { node: TextNode; interac
 function ConnectorView({ node, resolved, interactive }: { node: ConnectorNode; resolved: ResolvedConnector; interactive: boolean }) {
   // A fading line is painted with a colour that runs from see-through to solid between its two
   // ends; its head, bar or dot takes the same paint, so each matches the line where it sits.
-  const fade = fadeStops(node.kind, node.fade)
-  const shape = connectorShape(node.kind, node.strokeWidth, resolved, !!fade)
+  const fade = fadeStops(node.kind, node.fade, node.startMark)
+  const shape = connectorShape(node.kind, node.strokeWidth, resolved, !!fade, node.startMark)
   const sw = node.strokeWidth
   const label = connectorLabelNode(node, resolved)
   const fadeId = `fade-${node.id}`

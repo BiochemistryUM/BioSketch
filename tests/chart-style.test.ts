@@ -84,6 +84,8 @@ describe('shape of points', () => {
     expect(['bar', 'box', 'violin'].map((kind) => hasPoints(chart({ kind: kind as ChartNode['kind'] })))).toEqual([false, false, false])
     expect(['dot', 'line', 'scatter'].map((kind) => hasPoints(chart({ kind: kind as ChartNode['kind'] })))).toEqual([true, true, true])
     expect(hasPoints(chart({ kind: 'bar', points: true }))).toBe(true)
+    // A pie draws slices only, also when it was a chart with dots before.
+    expect(hasPoints(chart({ kind: 'pie', points: true }))).toBe(false)
   })
 })
 

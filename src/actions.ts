@@ -1,6 +1,7 @@
 // Editor commands. Menus, buttons and keyboard shortcuts all call these.
 
 import { getIcon } from './icons/library'
+import { finishReshape } from './icons/reshape'
 import { findPackIcon } from './icons/packs'
 import {
   addFigure,
@@ -28,6 +29,7 @@ import {
 import { clamp, rectCenter, unionRects } from './model/geometry'
 import { findNode, getRect, translateNode } from './model/nodes'
 import { panelNodes, type PanelLayout } from './model/panels'
+import { MAX_SLIDES, addSlide, duplicateSlide, mapSlides, moveSlide, removeSlide, showSlide, slideCount, slideIndex } from './model/slides'
 import type { ChartNode, FigDoc, FigNode, IconDef, IconNode, Point, Rect, TextNode } from './model/types'
 import { isPickable } from './model/types'
 import { toast, useEditor, type Tool, type View } from './store'
@@ -401,15 +403,92 @@ export function addCustomIcon(def: IconDef): void {
 }
 
 export function removeCustomIcon(id: string): void {
-  const s = S()
-  const users = s.doc.nodes.filter((n) => n.type === 'icon' && n.iconId === id).map((n) => n.id)
-  s.commit(
+  S().commit(
     (doc) => {
       const { [id]: _drop, ...rest } = doc.customIcons
-      return { ...removeNodes(doc, users), customIcons: rest }
+      // The icon goes from every slide of the figure, and arrows attached to it let go.
+      const without = (nodes: FigNode[]): FigNode[] => {
+        const users = nodes.filter((n) => n.type === 'icon' && n.iconId === id).map((n) => n.id)
+        return users.length ? removeNodes({ ...doc, nodes }, users).nodes : nodes
+      }
+      return { ...mapSlides(doc, without), customIcons: rest }
     },
     { select: [] },
   )
+}
+
+// ---------- slides ----------
+
+/** Finish what is being typed or reshaped on the open slide, before another slide takes its place. */
+function settleSlide(): void {
+  // Leaving the text box saves what was typed (see TextEditor).
+  if (S().editingTextId && document.activeElement instanceof HTMLElement) document.activeElement.blur()
+  if (S().reshape) finishReshape()
+  if (S().editingTextId) S().set({ editingTextId: null })
+}
+
+/**
+ * Open another slide. This is not a step of its own for Undo: Undo takes back the last change,
+ * and shows the slide it was made on.
+ */
+export function openSlide(index: number): void {
+  const s = S()
+  if (s.gestureStart || index === slideIndex(s.doc) || index < 0 || index >= slideCount(s.doc)) return
+  settleSlide()
+  S().set({ doc: showSlide(S().doc, index), selection: [], mergeKey: null })
+}
+
+/** Open the slide after the open one (1) or before it (-1). False when there is none. */
+export function stepSlide(dir: 1 | -1): boolean {
+  const { doc } = S()
+  const next = slideIndex(doc) + dir
+  if (next < 0 || next >= slideCount(doc)) return false
+  openSlide(next)
+  return true
+}
+
+/** One change to the slides of the figure, as one step for Undo. */
+function changeSlides(fn: (doc: FigDoc) => FigDoc): boolean {
+  if (S().gestureStart) return false
+  settleSlide()
+  const before = S().doc
+  S().commit(fn, { select: [] })
+  return S().doc !== before
+}
+
+/** A new, empty slide after the open one. */
+export function newSlide(): void {
+  if (changeSlides(addSlide)) S().set({ slidesShown: true })
+  else toast(`A figure holds at most ${MAX_SLIDES} slides.`)
+}
+
+/** A copy of the open slide, after it. */
+export function copySlide(): void {
+  if (changeSlides(duplicateSlide)) S().set({ slidesShown: true })
+  else toast(`A figure holds at most ${MAX_SLIDES} slides.`)
+}
+
+/** Delete the open slide. A figure keeps one slide. */
+export function deleteSlide(): void {
+  if (changeSlides(removeSlide)) toast('Slide deleted. Undo brings it back.')
+}
+
+/** Move a slide to another place among the slides. */
+export function moveSlideTo(from: number, to: number): void {
+  changeSlides((doc) => moveSlide(doc, from, to))
+}
+
+/** Show the slides full screen, from the open one. */
+export function present(): void {
+  settleSlide()
+  S().set({ presenting: true, selection: [] })
+  // Asked for here, while the press that started it is being handled: browsers grant full screen
+  // only then. Where it is refused (an iPhone, a frame) the slides fill the window instead.
+  try {
+    void document.documentElement.requestFullscreen?.()?.catch(() => undefined)
+  } catch {
+    /* no full screen in this browser */
+  }
 }
 
 // ---------- view ----------
