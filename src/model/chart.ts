@@ -617,13 +617,23 @@ export interface Scale {
  * of ten). It always returns at least two ticks, whatever it is given: an axis that cannot be
  * worked out must never stop a figure from opening.
  */
+/**
+ * 10 to a whole power, the same on every computer. `10 ** -5` is a hair below 0.00001 in some
+ * versions of Node and browsers, which once made an axis choose a coarser step on GitHub than on
+ * the Mac it was written on. Reading the number from text is rounded correctly everywhere.
+ */
+export function pow10(n: number): number {
+  return Number.isInteger(n) ? Number(`1e${n}`) : 10 ** n
+}
+
 export function niceScale(lo: number, hi: number, target = 5): Scale {
   if (!Number.isFinite(lo)) lo = 0
   // No spread: open the axis by one unit, or by a visible share of a very large number.
   if (!Number.isFinite(hi) || !(hi > lo)) hi = lo + Math.max(1, Math.abs(lo) * 1e-6)
   const raw = (hi - lo) / target
-  const power = 10 ** Math.floor(Math.log10(raw))
-  const norm = raw / power
+  const power = pow10(Math.floor(Math.log10(raw)))
+  // A step of 1, 2 or 5 is kept when the share lands on it give or take rounding.
+  const norm = raw / power - 1e-9
   const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * power
   const ticks: Scale['ticks'] = []
   if (Number.isFinite(step) && step > 0) {
@@ -665,7 +675,7 @@ export function usableEnds(min: unknown, max: unknown, log: boolean): { min?: nu
 /** A number as a short multiple of a power of ten: 2.5×10^{8}. */
 function powerLabel(value: number, power: number, digits: number): string {
   if (value === 0) return '0'
-  const lead = Number((value / 10 ** power).toFixed(digits))
+  const lead = Number((value / pow10(power)).toFixed(digits))
   return lead === 1 ? `10^{${power}}` : lead === -1 ? `−10^{${power}}` : `${lead}×10^{${power}}`
 }
 
@@ -690,7 +700,7 @@ export function axisFor(lo: number, hi: number, opts: { min?: number; max?: numb
   const set = usableEnds(opts.min, opts.max, !!opts.log)
   if (opts.log) {
     const decade = (v: number, round: (x: number) => number, nudge: number): number => {
-      const d = 10 ** round(Math.log10(v) + nudge)
+      const d = pow10(round(Math.log10(v) + nudge))
       return Number.isFinite(d) && d > 0 ? d : v
     }
     const from = lo > 0 && Number.isFinite(lo) ? lo : 1
@@ -729,7 +739,7 @@ export function axisFor(lo: number, hi: number, opts: { min?: number; max?: numb
   const size = Math.max(Math.abs(min), Math.abs(max))
   if (size >= 1e6 || (size > 0 && size < 1e-3)) {
     const power = Math.floor(Math.log10(size) + 1e-9)
-    const gap = ticks.length > 1 ? Math.abs(ticks[1].value - ticks[0].value) / 10 ** power : 1
+    const gap = ticks.length > 1 ? Math.abs(ticks[1].value - ticks[0].value) / pow10(power) : 1
     const digits = Math.min(6, Math.max(0, -Math.floor(Math.log10(gap) + 1e-9)))
     ticks = ticks.map((t) => ({ value: t.value, label: powerLabel(t.value, power, digits) }))
   }

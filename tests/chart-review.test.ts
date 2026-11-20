@@ -4,7 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import { validateDoc } from '../src/io/files'
 import {
-  MAX_GROUPS, MAX_VALUES, axisFor, carryOver, chartLayout, chartSeries, crossTable, followGroups, headRows, niceScale, parseTable, readTable, scatterFits, shownValues,
+  MAX_GROUPS, MAX_VALUES, axisFor, carryOver, chartLayout, chartSeries, crossTable, followGroups, headRows, niceScale, parseTable, pow10, readTable, scatterFits, shownValues,
   stats, tableText, usableEnds,
 } from '../src/model/chart'
 import { boxStats } from '../src/model/chartStats'
@@ -230,6 +230,15 @@ describe('axes that cannot fail', () => {
     // Ordinary numbers are written out as before.
     expect(axisFor(0, 48000).ticks.map((t) => t.label)).toEqual(['0', '10000', '20000', '30000', '40000', '50000'])
     expect(axisFor(0, 0.37).ticks.map((t) => t.label)).toEqual(['0.0', '0.1', '0.2', '0.3', '0.4'])
+  })
+
+  it('choose the same axis steps on every computer', () => {
+    // On GitHub's machines (Node 22) `10 ** -5` was a hair below 0.00001, so the axis of 0 to
+    // 0.00025 went up in steps of 10^{-4} there and in steps of 0.5×10^{-4} on a Mac.
+    for (let n = -300; n <= 300; n++) expect(pow10(n)).toBe(Number(`1e${n}`))
+    // A share that lands on 1, 2 or 5 give or take rounding keeps that step.
+    expect(niceScale(0, 25 * (1 + 1e-12)).ticks.map((t) => t.value)).toEqual([0, 5, 10, 15, 20, 25])
+    expect(niceScale(0, 0.0001 * (1 + 1e-12)).ticks.map((t) => t.value)).toEqual([0, 0.00002, 0.00004, 0.00006, 0.00008, 0.0001])
   })
 
   it('keep a logarithmic axis readable: at least two numbers, never dozens', () => {

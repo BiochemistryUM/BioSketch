@@ -555,6 +555,12 @@ A change is done when all of these hold:
 - Words on the page are read for the marks of labels wherever they stand: a line of the tour that
   explained the marks by showing them (a star on each side, `^` with curly brackets) was itself
   set in italics and raised. Say marks in words, and show the result in a label beside them.
+- GitHub runs the checks on Node 22, where `10 ** -5` is a hair below 0.00001; on the Mac (Node 26)
+  it is exact. An axis once chose another step there and the publication failed. Powers of ten go
+  through `pow10` in `src/model/chart.ts`, and a test that passes here can still fail on GitHub:
+  look at the run under Actions after pushing `main`. GitHub Pages must be set to publish from
+  GitHub Actions (Settings › Pages), not from a branch: from a branch it serves the source folder
+  and the page stays white.
 - In a pathway file a group of the style "Group" is a stack of molecules with nothing drawn
   around it, and a group without a style is the one with the dashed outline: the names suggest
   the opposite. An arrow to an undrawn group is attached to the member it reaches. Whatever is
