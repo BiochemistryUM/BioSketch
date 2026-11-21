@@ -33,7 +33,39 @@ const loaders: Record<Name, () => Promise<{ default: ComponentType }>> = {
 const views = Object.fromEntries(Object.entries(loaders).map(([name, load]) => [name, lazy(load)])) as unknown as Record<Name, ComponentType>
 
 /** Fetch every dialog now (they are small next to the editor), and the tour of the features with them. Never fails: what cannot be fetched is fetched when it is opened. */
-export const preloadDialogs = (): Promise<unknown> => Promise.allSettled([...Object.values(loaders).map((load) => load()), import('../tutorial')])
+export const preloadDialogs = (): Promise<unknown> => Promise.allSettled([...Object.values(loaders).map((load) => load()), loadPanel(), import('../tutorial'), import('../templates')])
+
+// The properties panel is the largest part of the editor (every setting of every kind of chart), so
+// it is a file of its own too: the page is drawn first and the panel follows a moment later. It is
+// fetched at once, not when something is selected.
+const loadPanel = () => import('./PropertiesPanel').then((m) => ({ default: m.PropertiesPanel }))
+const PanelView = lazy(loadPanel)
+const emptyPanel = (text?: string) => (
+  <aside className="panel properties" aria-label="Properties" aria-busy={!text}>
+    {text && <p className="notice">{text}</p>}
+  </aside>
+)
+
+class PanelFetched extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true }
+  }
+  render(): ReactNode {
+    return this.state.failed ? emptyPanel('The settings could not be loaded. Reload the page once there is a connection.') : this.props.children
+  }
+}
+
+/** The properties panel, fetched on its own. */
+export function LazyPropertiesPanel() {
+  return (
+    <PanelFetched>
+      <Suspense fallback={emptyPanel()}>
+        <PanelView />
+      </Suspense>
+    </PanelFetched>
+  )
+}
 
 /** A dialog that cannot be fetched (the connection dropped before it was ever opened) closes with a message instead of taking the editor down. */
 class Fetched extends Component<{ children: ReactNode }, { failed: boolean }> {

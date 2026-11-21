@@ -1,18 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Canvas } from './canvas/Canvas'
-import { exampleDoc, tourDoc } from './figures'
+import { START_EXAMPLES, exampleDoc, tourDoc } from './figures'
 import { MISSING_ICON, getIcon } from './icons/library'
 import { installKeyboard } from './keys'
 import { nodeLabel } from './model/describe'
 import { findNode } from './model/nodes'
 import { useEditor } from './store'
-import { TEMPLATES } from './templates'
 import { Icon } from './ui/Icon'
-import { Dialogs } from './ui/lazyDialogs'
+import { Dialogs, LazyPropertiesPanel } from './ui/lazyDialogs'
 import { LibraryPanel } from './ui/LibraryPanel'
 import { PanelResizer } from './ui/PanelResizer'
 import { Presenter } from './ui/Presenter'
-import { PropertiesPanel } from './ui/PropertiesPanel'
 import { SlideStrip } from './ui/SlideStrip'
 import { ToolRail } from './ui/ToolRail'
 import { TopBar } from './ui/TopBar'
@@ -35,8 +33,8 @@ function EmptyState() {
       <h2>Start your figure</h2>
       <p>Tap an icon in the library to place it, sketch with the pen, or begin from an example. The tour shows what BioSketch can do, slide by slide.</p>
       <div className="row wrap center">
-        {TEMPLATES.filter((t) => !t.group).map((t) => (
-          <button key={t.id} className="btn" onClick={() => void exampleDoc(t).then((doc) => doc && useEditor.getState().loadDoc(doc))}>
+        {START_EXAMPLES.map((t) => (
+          <button key={t.id} className="btn" onClick={() => void exampleDoc(t.id).then((doc) => doc && useEditor.getState().loadDoc(doc))}>
             {t.name}
           </button>
         ))}
@@ -102,7 +100,7 @@ export function App() {
           {showSlides && <SlideStrip />}
         </main>
         {showProps && <PanelResizer />}
-        {showProps && <PropertiesPanel />}
+        {showProps && <LazyPropertiesPanel />}
       </div>
       <Dialogs />
       <Presenter />

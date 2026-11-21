@@ -16,6 +16,8 @@ export function PlateView<T extends string>({
   palette,
   flagWords,
   valueWords,
+  onPress,
+  pressWords,
 }: {
   /** The wells, coloured by the choice made. */
   entriesFor: (by: T) => PlateEntry[]
@@ -27,6 +29,10 @@ export function PlateView<T extends string>({
   flagWords: string
   /** The words of the box that writes the numbers in the wells: "Write the Cq in each well". */
   valueWords: string
+  /** Called with the well pressed, when pressing a well changes it. */
+  onPress?: (well: string) => void
+  /** What a press does, for the line under the plate when `onPress` is given. */
+  pressWords?: string
 }) {
   const [by, setBy] = useState<T>(initial)
   const [values, setValues] = useState(true)
@@ -46,6 +52,7 @@ export function PlateView<T extends string>({
     if (!el || !m) return
     const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse())
     const hit = wellAt(picture, p.x, p.y)
+    if (hit && onPress) onPress(hit.well)
     setChosen(hit && hit.entries.length && hit.well !== chosen ? hit.well : null)
   }
   const place = () => {
@@ -55,6 +62,7 @@ export function PlateView<T extends string>({
 
   return (
     <div className="plate-view">
+      {choices.length > 1 && (
       <div className="segmented" role="group" aria-label="Colour the wells by">
         {choices.map((o) => (
           <button key={o.value} className={by === o.value ? 'active' : ''} aria-pressed={by === o.value} onClick={() => setBy(o.value)}>
@@ -62,6 +70,7 @@ export function PlateView<T extends string>({
           </button>
         ))}
       </div>
+      )}
       <svg ref={svg} className="plate-picture" viewBox={`-4 -4 ${picture.w + 8} ${picture.h + 8}`} onPointerDown={press} role="img" aria-label={`Picture of the ${picture.size}-well plate`}>
         <DocNodes doc={doc} />
         {[...(well ? [well] : []), ...partners].map((w, i) => (
@@ -81,7 +90,7 @@ export function PlateView<T extends string>({
         </div>
       ) : (
         <p className="hint">
-          Press a well to see what it holds and where its replicates are.
+          {pressWords ?? 'Press a well to see what it holds and where its replicates are.'}
           {flagged ? ` ${flagged} ${flagged === 1 ? 'well is' : 'wells are'} ringed in red: ${flagWords}.` : ''}
         </p>
       )}

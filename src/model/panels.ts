@@ -66,7 +66,7 @@ export function panelNodes(doc: FigDoc, layout: PanelLayout): FigNode[] {
       locked: true,
       name: `Panel ${letter} frame`,
     }
-    const label: TextNode = { id: uid(), type: 'text', x: frame.x + Math.round(size * 0.3), y: frame.y + Math.round(size * 0.2), text: letter, fontSize: size, fill: '#1f2933', bold: true, align: 'left', rotation: 0 }
+    const label: TextNode = { id: uid(), type: 'text', x: frame.x + Math.round(size * 0.3), y: frame.y + Math.round(size * 0.2), text: letter, fontSize: size, fill: '#1f2933', bold: true, align: 'left', rotation: 0, letter: true }
     return [frame, label]
   })
 }

@@ -216,7 +216,10 @@ corr <- obj(
 suppressMessages(library(survival))
 km_out <- function(time, status) {
   f <- survfit(Surv(time, status) ~ 1)
-  obj(time = num(time), status = num(status), at = num(f$time), surv = num(f$surv), atRisk = num(f$n.risk), median = num(unname(summary(f)$table["median"])))
+  # The number at risk at the times a time axis would have numbers: summary(..., times = , extend = TRUE).
+  riskTimes <- c(0, 5, 10, 15, 20, 30, 40, 50)
+  obj(time = num(time), status = num(status), at = num(f$time), surv = num(f$surv), atRisk = num(f$n.risk), median = num(unname(summary(f)$table["median"])),
+      riskTimes = num(riskTimes), risk = num(summary(f, times = riskTimes, extend = TRUE)$n.risk))
 }
 lr_out <- function(time, status, group) {
   d <- survdiff(Surv(time, status) ~ group)
@@ -590,5 +593,59 @@ meltRef <- obj(
   delta = num(mean(tmB) - mean(tmA)), welch = htest(t.test(tmB, tmA))
 )
 
-writeLines(obj(r = sprintf("\"%s\"", R.version.string), dist = dist, two = two, several = several, repeated = repeated, normal = normal, holm = holm, dose = dose, twoway = twoway, corr = corr, surv = surv, standard = standard, kinetics = kinetics, qpcr = qpcr, binding = binding, melt = meltRef), "tests/stats-reference.json")
+
+# ---- effect sizes and confidence intervals ----
+# Beside every test: the difference of means with its 95 % interval (the test's own: t.test,
+# TukeyHSD, and Dunnett's simultaneous intervals) and a measure of effect size under a named
+# definition. Hedges' g, d_z and the rank-biserial correlations are written out from their
+# definitions (the rank-biserial r once more as the share of pairs, as a check of the shortcut);
+# η²(H) and Kendall's W are those of the rstatix package.
+hedges <- function(x, y) {
+  df <- length(x) + length(y) - 2
+  sp <- sqrt(((length(x) - 1) * var(x) + (length(y) - 1) * var(y)) / df)
+  (mean(y) - mean(x)) / sp * exp(lgamma(df / 2) - log(sqrt(df / 2)) - lgamma((df - 1) / 2))
+}
+diff_ci <- function(t) num(c(if (length(t$estimate) == 2) t$estimate[1] - t$estimate[2] else t$estimate, t$conf.int))
+paired_rb <- function(x, y) {
+  d <- signif(y - x, 12); d <- d[d != 0]; r <- rank(abs(d))
+  (sum(r[d > 0]) - sum(r[d < 0])) / sum(r)
+}
+# Dunnett's critical value from the same integral as dunnett_p above, solved for a chance of 0.05.
+dunnett_crit <- function(groups) {
+  yy <- unlist(groups); gg <- factor(rep(seq_along(groups), sapply(groups, length)))
+  a <- aov(yy ~ gg); df <- a$df.residual; n <- sapply(groups, length)
+  lam <- sqrt(n[-1] / (n[-1] + n[1]))
+  within <- function(t, u) sapply(u, function(uu) integrate(function(z) sapply(z, function(zz) prod(pnorm((lam * zz + t * uu) / sqrt(1 - lam^2)) - pnorm((lam * zz - t * uu) / sqrt(1 - lam^2)))) * dnorm(z), -Inf, Inf, rel.tol = 1e-11)$value)
+  upper <- function(t) 1 - integrate(function(u) within(t, u) * 2 * df * u * dchisq(df * u^2, df), 0, Inf, rel.tol = 1e-10)$value
+  uniroot(function(t) upper(t) - 0.05, c(1, 6), tol = 1e-10)$root
+}
+ey <- c(A, B, C, D); eg <- factor(rep(c("A", "B", "C", "D"), c(6, 6, 6, 4))); efit <- aov(ey ~ eg)
+etab <- summary(efit)[[1]]; etuk <- TukeyHSD(efit)$eg
+eyy <- as.vector(cbind(A, B, C)); egg <- factor(rep(c("A", "B", "C"), each = 6)); ess <- factor(rep(1:6, 3)); erm <- anova(lm(eyy ~ ess + egg))
+suppressMessages(library(multcomp))
+set.seed(1)
+dun <- confint(glht(efit, linfct = mcp(eg = "Dunnett")))
+dcrit <- dunnett_crit(list(A, B, C, D))
+dn <- c(6, 6, 6, 4); dm <- tapply(ey, eg, mean); dms <- sum(resid(efit)^2) / efit$df.residual
+dunnettExact <- unlist(lapply(2:4, function(i) { e <- dm[i] - dm[1]; h <- dcrit * sqrt(dms * (1 / dn[i] + 1 / dn[1])); c(e, e - h, e + h) }))
+suppressMessages(library(rstatix))
+effects <- obj(
+  welchAB = diff_ci(t.test(B, A)), welchAD = diff_ci(t.test(D, A)),
+  pairedAB = diff_ci(t.test(B, A, paired = TRUE)), pairedP = diff_ci(t.test(P2, P1, paired = TRUE)),
+  hedgesAB = num(hedges(A, B)), hedgesAD = num(hedges(A, D)),
+  dzAB = num(mean(B - A) / sd(B - A)), dzP = num(mean(P2 - P1) / sd(P2 - P1)),
+  rbAB = num(1 - 2 * unname(wilcox.test(A, B)$statistic) / 36), rbABpairs = num(mean(sign(outer(B, A, "-")))),
+  rbTies = num(mean(sign(outer(T2, T1, "-")))),
+  rbPairedAB = num(paired_rb(A, B)), rbPairedP = num(paired_rb(P1, P2)),
+  eta2 = num(etab[1, "Sum Sq"] / sum(etab[, "Sum Sq"])),
+  tukey = num(as.vector(t(etuk[c("B-A", "C-A", "D-A", "C-B", "D-B", "D-C"), c("diff", "lwr", "upr")]))),
+  dunnettCrit = num(dcrit), dunnett = num(dunnettExact),
+  dunnettSimulated = num(as.vector(t(dun$confint[, c("Estimate", "lwr", "upr")]))),
+  etaH = num(kruskal_effsize(data.frame(y = ey, g = eg), y ~ g)$effsize),
+  partialEta2 = num(erm["egg", "Sum Sq"] / (erm["egg", "Sum Sq"] + erm["Residuals", "Sum Sq"])),
+  pairedPairs = num(c(t.test(B, A, paired = TRUE)$conf.int, t.test(C, A, paired = TRUE)$conf.int, t.test(C, B, paired = TRUE)$conf.int)),
+  kendallW = num(friedman_effsize(data.frame(yy = eyy, gg = egg, ss = ess), yy ~ gg | ss)$effsize)
+)
+
+writeLines(obj(r = sprintf("\"%s\"", R.version.string), dist = dist, two = two, several = several, repeated = repeated, normal = normal, holm = holm, dose = dose, twoway = twoway, corr = corr, surv = surv, standard = standard, kinetics = kinetics, qpcr = qpcr, binding = binding, melt = meltRef, effects = effects), "tests/stats-reference.json")
 cat("Wrote tests/stats-reference.json\n")

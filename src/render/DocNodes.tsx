@@ -15,6 +15,7 @@ import { connectorLabelNode, fontStack, resolveConnector, shapeLabelNode, textLa
 import { SCRIPT_SCALE, SCRIPT_SHIFT, parseRich } from '../model/richtext'
 import { isOpenShape, shapePath } from '../model/shapes'
 import { TABLE_LINE, tableLayout } from '../model/table'
+import { scaleBarMarks } from '../model/scaleBar'
 import { structureLayout } from '../model/structure'
 import {
   FONT_FAMILY,
@@ -170,9 +171,36 @@ export const StructureView = memo(function StructureView({ node, interactive, sp
 })
 
 function ImageView({ node }: { node: ImageNode }) {
+  const bar = scaleBarMarks(node)
   return (
     <g data-id={node.id} transform={boxTransform(node)} opacity={node.opacity}>
-      <image href={node.src} width={round(node.w)} height={round(node.h)} preserveAspectRatio="none" />
+      {node.crop ? (
+        <>
+          <defs>
+            <clipPath id={`${node.id}-crop`}>
+              <rect width={round(node.w)} height={round(node.h)} />
+            </clipPath>
+          </defs>
+          <image
+            href={node.src}
+            x={round((-node.crop.x * node.w) / node.crop.w)}
+            y={round((-node.crop.y * node.h) / node.crop.h)}
+            width={round(node.w / node.crop.w)}
+            height={round(node.h / node.crop.h)}
+            preserveAspectRatio="none"
+            clipPath={`url(#${node.id}-crop)`}
+          />
+        </>
+      ) : (
+        <image href={node.src} width={round(node.w)} height={round(node.h)} preserveAspectRatio="none" />
+      )}
+      {bar && <rect x={round(bar.x)} y={round(bar.y)} width={round(bar.w)} height={round(bar.h)} fill={bar.colour} />}
+      {bar?.text && (
+        <TextView
+          node={{ id: `${node.id}-scale`, type: 'text', x: round(bar.text.x), y: round(bar.text.y), text: bar.text.value, fontSize: round(bar.text.size), fill: bar.colour, bold: true, align: 'center', rotation: 0 }}
+          interactive={false}
+        />
+      )}
     </g>
   )
 }

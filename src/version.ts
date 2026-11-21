@@ -3,7 +3,7 @@
 // here and in package.json together (a test checks they agree), add its entry at the top of
 // WHATS_NEW, and bump the cache name in public/sw.js and src/main.tsx.
 
-export const VERSION = '0.2.0'
+export const VERSION = '0.3.0'
 
 export interface Release {
   version: string
@@ -13,6 +13,23 @@ export interface Release {
 }
 
 export const WHATS_NEW: Release[] = [
+  {
+    version: '0.3.0',
+    date: '21 November 2026',
+    items: [
+      'Effect sizes and confidence intervals beside every test: Hedges’ g, Cohen’s d_z, the rank-biserial r, η², partial η², η²(H) or Kendall’s W, and the difference of means with its 95 % interval (Tukey’s or Dunnett’s simultaneous intervals after an ANOVA). The text for the methods names them.',
+      'A statistics report of the whole figure under Export: every test of every chart as a table for a spreadsheet (CSV), or every chart with its text for the methods.',
+      'Survival curves: the number at risk under the time axis, under Statistics.',
+      'Standard curves from a plate reader’s grid: paste the 96- or 384-well table as it is, say where the standards are and how they are diluted, and press wells to leave them out or make them blanks.',
+      'Scale bars on micrographs: select a picture and type the size of a pixel; the bar stays right however the picture is resized.',
+      'Panel letters keep themselves in order: A, B, C … read row by row, whenever a panel is moved, added or deleted.',
+      'Copy style and Paste style (⌥⌘C and ⌥⌘V, or under Arrange): give one object’s colours, lines and lettering to others.',
+      'BioSketch opens faster: the side panel and the templates are fetched when needed.',
+      'Blots, gels and micrographs: crop a placed picture, put names over its lanes (straight or slanted) and a ladder of marker sizes beside it, under the picture’s settings.',
+      'A colour-blind preview of the whole figure (File › Colour-blind preview): the page as seen without green, red or blue cones, or in greys. Exports stay in full colour.',
+      'A journal check under Export: the smallest text and the thinnest line in points at the printed width, and the resolution of every placed picture, with a button that selects what is too small.',
+    ],
+  },
   {
     version: '0.2.0',
     date: '20 November 2026',

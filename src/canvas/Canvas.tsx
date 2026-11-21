@@ -17,6 +17,7 @@ import type { Box, ChartNode, ConnectorNode, Endpoint, FigDoc, FigNode, Membrane
 import { isPickable } from '../model/types'
 import { DocNodes, strokePath } from '../render/DocNodes'
 import { membraneShape } from '../model/membrane'
+import { VISIONS, visionFilterValues, type VisionKind } from '../model/vision'
 import { useEditor, type View } from '../store'
 import { drawnPaths, movePointInDoc } from '../icons/reshape'
 import { placeImageFile } from '../io/images'
@@ -129,6 +130,7 @@ export function Canvas() {
   const tool = useEditor((s) => s.tool)
   const showSketch = useEditor((s) => s.showSketch)
   const editingTextId = useEditor((s) => s.editingTextId)
+  const vision = useEditor((s) => s.vision)
   const fitRequest = useEditor((s) => s.fitRequest)
   const penColor = useEditor((s) => s.penColor)
   const penSize = useEditor((s) => s.penSize)
@@ -769,9 +771,18 @@ export function Canvas() {
         onPointerCancel={onPointerCancel}
         onContextMenu={(e) => e.preventDefault()}
       >
+        {vision && (
+          <defs>
+            <filter id="vision-view" colorInterpolationFilters="linearRGB">
+              <feColorMatrix type="matrix" values={visionFilterValues(vision)} />
+            </filter>
+          </defs>
+        )}
         <g transform={`translate(${view.x} ${view.y}) scale(${view.zoom})`}>
-          <rect className="artboard" width={doc.width} height={doc.height} fill={doc.background} />
-          <DocNodes doc={doc} interactive hideSketch={!showSketch} hiddenId={editingTextId} />
+          <g filter={vision ? 'url(#vision-view)' : undefined}>
+            <rect className="artboard" width={doc.width} height={doc.height} fill={doc.background} />
+            <DocNodes doc={doc} interactive hideSketch={!showSketch} hiddenId={editingTextId} />
+          </g>
           {draftMembrane && (
             <g opacity={0.75} pointerEvents="none">
               <path d={draftMembrane.tails} fill="none" stroke="#d9b65c" strokeWidth={draftMembrane.tailWidth} />
@@ -783,6 +794,30 @@ export function Canvas() {
         <Overlay marquee={marquee} attachHint={attachHint} guides={guides} />
       </svg>
       {editingTextId && <TextEditor key={editingTextId} id={editingTextId} />}
+      {vision && <VisionBar vision={vision} />}
+    </div>
+  )
+}
+
+/** Over the page while it is shown as seen with a colour-vision deficiency: which one, the others, and the way back. */
+function VisionBar({ vision }: { vision: VisionKind }) {
+  const about = VISIONS.find((v) => v.value === vision)?.about ?? ''
+  return (
+    <div className="vision-bar" role="status">
+      <label>
+        <span>Seen with</span>
+        <select value={vision} aria-label="Colour vision shown" onChange={(e) => useEditor.setState({ vision: e.target.value as VisionKind })}>
+          {VISIONS.map((v) => (
+            <option key={v.value} value={v.value}>
+              {v.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <span className="hint">{about}. Only the screen changes; exports are in full colour.</span>
+      <button className="btn small" onClick={() => useEditor.setState({ vision: null })}>
+        Back to full colour
+      </button>
     </div>
   )
 }

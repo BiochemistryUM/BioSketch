@@ -79,6 +79,8 @@ export function settingFor(part: ChartPart, kind: ChartKind, survival = false, w
       return { tab: chartTabs(kind).includes('axes') ? 'axes' : 'look', setting: 'title' }
     case 'facet':
       return { tab: 'look', setting: 'facets' }
+    case 'atRisk':
+      return { tab: 'stats', setting: 'at-risk' }
   }
 }
 

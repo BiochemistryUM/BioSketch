@@ -124,6 +124,8 @@ export interface TextNode extends NodeBase {
   width?: number
   /** Every paragraph (what stands between two presses of Enter) begins with a bullet, and its further lines are set in under its first. */
   bullets?: boolean
+  /** A panel letter: renamed A, B, C … in reading order with the other panel letters whenever the figure changes (`orderLetters`). */
+  letter?: boolean
 }
 
 /** A connector end. When `nodeId` is set the end follows that node; x/y is then only a fallback. */
@@ -199,6 +201,35 @@ export interface ImageNode extends NodeBase {
   w: number
   h: number
   rotation: number
+  /** A micrograph's scale: the size of one pixel, and the bar drawn on it (`scaleBarMarks`). */
+  scale?: ImageScale
+  /** The part of the picture shown, as shares (0 to 1) of the whole picture; absent = all of it (`cropImage`). */
+  crop?: ImageCrop
+}
+
+export interface ImageCrop {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+export type ScaleUnit = 'nm' | 'µm' | 'mm'
+
+export interface ImageScale {
+  /** The size of one pixel of the picture, in `unit`. */
+  pixel: number
+  unit: ScaleUnit
+  /** The picture's width in pixels, read from the file when the scale was set. */
+  pixels: number
+  /** The length of the bar in `unit`; 0 = no bar (the scale is kept for later). */
+  bar: number
+  /** The corner it stands in. Absent = bottom right. */
+  corner?: 'bl' | 'tl' | 'tr'
+  /** Absent = white. */
+  colour?: string
+  /** False = the length is not written over the bar. */
+  label?: false
 }
 
 export type ChartKind = 'bar' | 'dot' | 'line' | 'box' | 'violin' | 'scatter' | 'pie' | 'heatmap' | 'venn' | 'standard' | 'qpcr'
@@ -446,6 +477,8 @@ export interface ChartNode extends NodeBase {
   survival?: boolean
   /** Survival curves: write the p value of the log-rank test on the chart. */
   logRank?: boolean
+  /** Survival curves: a table of the number of subjects still followed in every group, under the time axis at its ticks. */
+  atRisk?: boolean
   /** Scatter charts: write the correlation of each series on the chart: Pearson's r, or Spearman's rank correlation. Absent = none. */
   corr?: 'pearson' | 'spearman'
   /** What `fit` draws: 'dose' is a dose-response curve (four-parameter logistic along the logarithm of x). Absent = a straight line. */

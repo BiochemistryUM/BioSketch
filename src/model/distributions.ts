@@ -353,3 +353,22 @@ export function dunnettUpper(t: number, lambdas: number[], df: number): number {
   const inside = integrate((u) => within(u) * density(u), lo, hi, 36)
   return Math.min(1, Math.max(0, 1 - inside))
 }
+
+/** The value at which a falling upper tail `upper` reaches `alpha`, by halving (`upper` must fall from 1 at 0 towards 0). */
+function criticalOf(upper: (q: number) => number, alpha: number): number {
+  let lo = 0
+  let hi = 2
+  while (upper(hi) > alpha && hi < 1e6) hi *= 2
+  for (let i = 0; i < 80 && hi - lo > 1e-10 * hi; i++) {
+    const mid = (lo + hi) / 2
+    if (upper(mid) > alpha) lo = mid
+    else hi = mid
+  }
+  return (lo + hi) / 2
+}
+
+/** The studentized range that `k` means exceed with a chance of `alpha` (R: `qtukey(1 - alpha, k, df)`): Tukey's intervals use it. */
+export const studentizedRangeCritical = (alpha: number, k: number, df: number): number => (df >= 2 && k >= 2 ? criticalOf((q) => studentizedRangeUpper(q, k, df), alpha) : NaN)
+
+/** The largest of Dunnett's statistics that is exceeded with a chance of `alpha`: Dunnett's simultaneous intervals use it. */
+export const dunnettCritical = (alpha: number, lambdas: number[], df: number): number => (df > 0 && lambdas.length ? criticalOf((t) => dunnettUpper(t, lambdas, df), alpha) : NaN)

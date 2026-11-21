@@ -12,9 +12,9 @@ import { bandwidth, boxStats, compareEc50, correlation, density, doseResponseAt,
 import { tCritical } from './distributions'
 import { cellColour, heatColour, heatMatrix, treeLines } from './heatmap'
 import { renameVennSet, vennOf, vennParts } from './venn'
-import { kaplanMeier, logRank, type KaplanMeier, type Subject, hazardRatios, type HazardRatio } from './survival'
+import { atRiskAt, kaplanMeier, logRank, type KaplanMeier, type Subject, hazardRatios, type HazardRatio } from './survival'
 import { analyseTwoWay, suggestTwoWay, type Factors } from './twoWay'
-import { STARS_KEY, analyse, holm, pText, stars, suggest, type Advice, type Outcome, type TestId } from './chartTests'
+import { EFFECT_METHODS, STARS_KEY, analyse, differenceText, effectText, holm, pText, stars, suggest, type Advice, type Outcome, type TestId } from './chartTests'
 import { measureText, wrapText } from './nodes'
 import { standardCurve, type StandardResult } from './standardCurve'
 import { standardTableOf } from './standardTable'
@@ -591,6 +591,10 @@ export function methodsText(node: ChartNode): string | null {
   if (design.paired) parts.push(`Values in the same row of the table were treated as one sample${compared.leftOut ? `; ${compared.leftOut} ${compared.leftOut === 1 ? 'row' : 'rows'} with a missing value ${compared.leftOut === 1 ? 'was' : 'were'} left out` : ''}.`)
   if (node.yLog) parts.push('The tests were worked out on the values as measured, not on their logarithms.')
   parts.push(r.effects ? `Result: ${r.effects.map((e) => `${e.name.replace(/ \(.*$/, '').toLowerCase()}, ${e.statistic}, ${pText(e.p)}`).join('; ')}.` : `Result: ${r.statistic}, ${pText(r.p)}.`)
+  if (r.effect) parts.push(`Effect size: ${effectText(r.effect)} (${EFFECT_METHODS[r.effect.name]}).`)
+  const only = r.pairs[0]?.diff
+  if (k === 2 && only) parts.push(`${design.paired ? `The mean change from ${compared.names[0]} to ${compared.names[1]}` : `The mean of ${compared.names[1]} less that of ${compared.names[0]}`} was ${differenceText(only).replace('95 % interval', '95 % confidence interval')}.`)
+  if (k > 2 && r.intervals) parts.push(`Differences of means between groups are given with ${r.intervals}.`)
   if (node.test?.stars) parts.push(`${STARS_KEY}.`)
   parts.push(`Statistics were worked out in BioSketch, which gives the results of R 4.4 (${R_FUNCTIONS[r.test]}${k > 2 ? (r.test === 'anova' ? (design.versusFirst ? ', glht with mcp "Dunnett" of the package multcomp' : ', TukeyHSD') : ', p.adjust with method "holm"') : ''}).`)
   return parts.join(' ')
@@ -762,7 +766,7 @@ export function axisFor(lo: number, hi: number, opts: { min?: number; max?: numb
  * the bracket or line in its list.
  */
 export interface ChartPart {
-  what: 'group' | 'category' | 'cells' | 'error' | 'fit' | 'bracket' | 'refLine' | 'yAxis' | 'xAxis' | 'title' | 'yTitle' | 'xTitle' | 'legend' | 'number' | 'pointName' | 'result' | 'scale' | 'facet'
+  what: 'group' | 'category' | 'cells' | 'error' | 'fit' | 'bracket' | 'refLine' | 'yAxis' | 'xAxis' | 'title' | 'yTitle' | 'xTitle' | 'legend' | 'number' | 'pointName' | 'result' | 'scale' | 'facet' | 'atRisk'
   at?: number
 }
 
@@ -1219,7 +1223,7 @@ export function usableRefLines(lines: unknown, kind: ChartKind, xLog: boolean, y
  * (at the right unless the scientist put it elsewhere). `right` is the room kept free at the right
  * edge; `rows` says how many lines the names along the bottom take, given the width of the plot.
  */
-function frame(node: ChartNode, out: ChartDrawing, yAxis: Axis, legend: { name: string; colour: string; shape?: PointShape }[], right: number, rows: (pw: number, fs: number) => number) {
+function frame(node: ChartNode, out: ChartDrawing, yAxis: Axis, legend: { name: string; colour: string; shape?: PointShape }[], right: number, rows: (pw: number, fs: number) => number, minLeft = 0) {
   const fs = node.fontSize ?? CHART_FONT
   const words = (text: string, x: number, top: number, extra: Partial<TextNode> = {}): TextNode => ({
     id: node.id, type: 'text', x: r1(x), y: r1(top), text, fontSize: fs, fill: INK, align: 'center', rotation: 0, ...extra,
@@ -1229,7 +1233,7 @@ function frame(node: ChartNode, out: ChartDrawing, yAxis: Axis, legend: { name: 
 
   // Room around the plot: title on top, numbers and axis title on the left, names below, legend on the right.
   const tickWidth = Math.max(...yAxis.ticks.map((t) => widthOf(t.label)))
-  const left = (node.yLabel ? fs * 1.7 : 2) + tickWidth + 10
+  const left = Math.max(minLeft, (node.yLabel ? fs * 1.7 : 2) + tickWidth + 10)
   const place: LegendPlace | 'right' = legend.length ? (node.legend ?? 'right') : 'none'
   const widest = legend.length ? Math.max(...legend.map((l) => widthOf(l.name))) : 0
   const legendWidth = place === 'right' ? widest + fs + 16 : 0
@@ -2370,6 +2374,7 @@ export function survivalMethodsText(node: ChartNode): string | null {
   return [
     `Survival was estimated by the Kaplan–Meier method; ticks on the curves mark subjects that left the study without the event (censored)${node.band ? ', and the shaded bands are 95 % confidence intervals (log transformation, Greenwood’s variance)' : ''}.`,
     `${live.map((g) => `${g.name ? `${g.name}: ` : ''}${survivalText(g)}`).join('; ')}.`,
+    node.atRisk ? 'The number of subjects at risk (still followed, without the event) is given under the time axis.' : '',
     test ? `Groups were compared with the log-rank test: ${logRankText(test)}.` : '',
     pairs.length ? `Pairs of groups were compared by log-rank tests with Holm’s correction for multiple comparisons: ${pairs.map((x) => `${x.a} and ${x.b}, ${x.p === null ? 'not defined' : pText(x.p)}`).join('; ')}.` : '',
     told.length ? `Hazard ratios against ${told[0].against} came from a Cox proportional hazards model (Efron’s method for tied times, Wald intervals and tests): ${told.map((h) => `${h.name}, ${hazardText(h.ratio!)}`).join('; ')}.` : '',
@@ -2396,8 +2401,14 @@ function survivalLayout(node: ChartNode): ChartDrawing {
   if (leftOut) out.notes.push(`${leftOut} ${leftOut === 1 ? 'row is' : 'rows are'} left out: a survival table has the time in the first column and, in the column of its group, 1 for the event or 0 for a subject that left the study without it.`)
   const fs = node.fontSize ?? CHART_FONT
   const widest = Math.max(...xAxis.ticks.map((t) => textWidth(t.label, fs)))
-  const plain: ChartNode = { ...node, yLabel: node.yLabel ?? 'Survival (%)', yMin: undefined, yMax: undefined, yLog: undefined, xLog: undefined }
-  const f = frame(plain, out, yAxis, live.length > 1 ? live.map((g) => ({ name: g.name, colour: g.colour })) : [], Math.max(fs, widest / 2 + 2), () => 1)
+  // The table of the number at risk stands under everything else: a heading and a row per group.
+  const table = node.atRisk && live.length ? fs * (0.8 + 1.35 * (live.length + 1)) : 0
+  const plain: ChartNode = { ...node, h: node.h - table, yLabel: node.yLabel ?? 'Survival (%)', yMin: undefined, yMax: undefined, yLog: undefined, xLog: undefined }
+  // The names of the groups stand left of the table, so the plot moves right to make room for them (up to two fifths of the chart).
+  // The numbers stand centred on the ticks, so the first one reaches half its width to the left of the plot.
+  const halfCount = textWidth(String(Math.max(0, ...live.map((g) => g.subjects.length))), fs) / 2
+  const names = table ? Math.min(node.w * 0.4, Math.max(...live.map((g) => measureText({ id: '', type: 'text', x: 0, y: 0, text: g.name, fontSize: fs, fill: INK, align: 'right', rotation: 0, bold: true }).w)) + 12 + halfCount) : 0
+  const f = frame(plain, out, yAxis, live.length > 1 ? live.map((g) => ({ name: g.name, colour: g.colour })) : [], Math.max(fs, widest / 2 + 2), () => 1, names)
   const { words, rule, px, py, pw, ph } = f
   // Only a range set for the time axis cuts anything off.
   out.clipped = node.xMin !== undefined || node.xMax !== undefined
@@ -2445,13 +2456,26 @@ function survivalLayout(node: ChartNode): ChartDrawing {
   nowPart(out, { what: 'xAxis' })
   rule(px, py + ph, px + pw, py + ph)
   let edge = -Infinity
+  const shown: number[] = []
   for (const step of xAxis.ticks) {
     const at = x(step.value)
     const half = textWidth(step.label, fs) / 2
     if (!Number.isFinite(at) || at - half < edge + 4) continue
     edge = at + half
+    shown.push(step.value)
     rule(at, py + ph, at, py + ph + 4)
     out.texts.push(words(step.label, at, py + ph + 6))
+  }
+  if (table) {
+    // Under the time axis, at its numbers: how many of each group are still followed then.
+    nowPart(out, { what: 'atRisk' })
+    let top = node.h - table + fs * 0.8
+    out.texts.push(words('Number at risk', 2, top, { align: 'left', bold: true }))
+    for (const g of live) {
+      top += fs * 1.35
+      out.texts.push(words(cutToFit(g.name, Math.max(fs, px - 9 - halfCount), fs), px - 7 - halfCount, top, { align: 'right', fill: g.colour, bold: true }))
+      for (const t of shown) out.texts.push(words(String(atRiskAt(g.subjects, t)), x(t), top))
+    }
   }
   nowPart(out, null)
   if (!live.length) out.texts.push(words('Paste times and events in the panel', px + pw / 2, py + ph / 2 - fs, { fill: '#8a93a3', italic: true }))

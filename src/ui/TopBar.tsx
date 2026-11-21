@@ -119,6 +119,7 @@ function FileMenu() {
           </button>
           <div className="menu-sep" />
           {item(theme === 'dark' ? 'Light theme' : 'Dark theme', theme === 'dark' ? 'sun' : 'moon', toggleTheme)}
+          {item('Colour-blind preview', 'eye', () => useEditor.setState((s) => ({ vision: s.vision ? null : 'deuteranopia' })))}
           {item('Help and shortcuts', 'help', () => useEditor.setState({ dialog: 'help' }))}
           {item("What's new", 'sparkles', () => useEditor.setState({ dialog: 'whats-new' }))}
           {item('Report a problem…', 'mail', () => useEditor.setState({ dialog: 'report' }))}

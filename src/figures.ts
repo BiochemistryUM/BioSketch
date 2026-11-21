@@ -7,15 +7,19 @@ import { packList } from './icons/packs'
 import { emptyDoc } from './model/doc'
 import type { FigDoc } from './model/types'
 import { toast, useEditor } from './store'
-import { buildTemplate, type Template } from './templates'
+import type { Template } from './templates'
 
 /**
  * An example as a new figure, with its icons fetched from the collections. Null, with a message
  * on screen, when they could not be fetched.
  */
-export async function exampleDoc(template: Template): Promise<FigDoc | null> {
+export async function exampleDoc(template: Template | string): Promise<FigDoc | null> {
   try {
-    return await buildTemplate(template, await packList())
+    // The templates are a file of their own, fetched when one is first asked for (and in the background).
+    const { TEMPLATES, buildTemplate } = await import('./templates')
+    const chosen = typeof template === 'string' ? TEMPLATES.find((t) => t.id === template) : template
+    if (!chosen) return null
+    return await buildTemplate(chosen, await packList())
   } catch (e) {
     // What a failed fetch says of itself ("Failed to fetch") tells a scientist nothing.
     toast(e instanceof Error && /icons/.test(e.message) ? e.message : 'The icons of this template could not be loaded. Check the connection and try again.')
@@ -23,8 +27,14 @@ export async function exampleDoc(template: Template): Promise<FigDoc | null> {
   }
 }
 
+/** The example figures offered on the start card, by id and name (`TEMPLATES` without a group; a test keeps the two equal). */
+export const START_EXAMPLES: { id: string; name: string }[] = [
+  { id: 'signalling', name: 'Receptor signalling' },
+  { id: 'ferroptosis', name: 'Ferroptosis pathway' },
+]
+
 /**
- * The tour of the features as a new figure of several slides. It is a file of its own, fetched when
+ * The tour of the features of several slides. It is a file of its own, fetched when
  * first asked for (and, like the dialogs, in the background after the editor is on screen).
  */
 export async function tourDoc(): Promise<FigDoc | null> {

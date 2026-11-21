@@ -180,7 +180,7 @@ describe('running the test that fits a design', () => {
     const out = analyse([A, B], { by: 'means', paired: false, versusFirst: false })
     expect(out.ok && out.result.test).toBe('welch')
     expect(out.ok && out.result.statistic).toBe('t = -3.58, df = 9.98')
-    expect(out.ok && out.result.pairs).toEqual([{ a: 0, b: 1, p: ref.two.welchAB.p }].map((p) => ({ ...p, p: expect.closeTo(p.p, 12) })))
+    expect(out.ok && out.result.pairs).toMatchObject([{ a: 0, b: 1, p: ref.two.welchAB.p }].map((p) => ({ ...p, p: expect.closeTo(p.p, 12) })))
     expect(out.ok && out.result.pairMethod).toBe('')
   })
 

@@ -2,7 +2,7 @@
 // shows the first by heading, the Search box looks through both. A new feature is offered by
 // adding one entry here, which keeps the top bar and the panel from growing.
 
-import { addChart, addPanelLetter, addTable, addText, present, setTool, viewCenter } from '../actions'
+import { addChart, addPanelLetter, addTable, addText, copyStyle, pasteStyle, present, setTool, viewCenter } from '../actions'
 import { newFigure, tourDoc } from '../figures'
 import type { ChartSample } from '../model/chartSamples'
 import type { Findable } from '../model/match'
@@ -88,7 +88,11 @@ export const COMMANDS: Entry[] = [
   { id: 'cmd-open', name: 'Open a figure file', keywords: ['load', 'json'], icon: 'open', run: () => useEditor.setState((s) => ({ openFileRequest: s.openFileRequest + 1 })) },
   { id: 'cmd-save', name: 'Save the figure as a file', keywords: ['download', 'backup', 'json'], icon: 'save', run: saveFile },
   { id: 'cmd-export', name: 'Export', description: 'PNG, SVG, PDF or PowerPoint', keywords: ['png', 'svg', 'pdf', 'powerpoint', 'pptx', 'download', 'print'], icon: 'export', run: open('export') },
+  { id: 'cmd-vision', name: 'Colour-blind preview', description: 'See the whole figure as readers with deuteranopia, protanopia or tritanopia see it, or in greys', keywords: ['colour blind', 'color blind', 'colorblind', 'deuteranopia', 'protanopia', 'tritanopia', 'grey', 'gray', 'black and white', 'accessibility', 'vision'], icon: 'eye', run: () => useEditor.setState((s) => ({ vision: s.vision ? null : 'deuteranopia' })) },
+  { id: 'cmd-stats-report', name: 'Statistics report', description: 'Every test of the figure in one table or text, under Export', keywords: ['statistics', 'report', 'p values', 'effect size', 'confidence interval', 'csv', 'methods', 'reviewer'], icon: 'export', run: open('export') },
   { id: 'cmd-templates', name: 'Start from a template', description: 'Posters, a graphical abstract, a timeline, examples', keywords: ['poster', 'abstract', 'timeline', 'workflow', 'example'], icon: 'template', run: open('templates') },
+  { id: 'cmd-copy-style', name: 'Copy style', description: 'Take the colours, lines and lettering of the selected object (⌥⌘C)', keywords: ['format', 'painter', 'same style', 'look', 'match'], icon: 'copy', run: copyStyle },
+  { id: 'cmd-paste-style', name: 'Paste style', description: 'Give the copied look to the selected objects (⌥⌘V)', keywords: ['format', 'painter', 'same style', 'look', 'match'], icon: 'copy', run: pasteStyle },
   { id: 'cmd-tour', name: 'Tour of the features', description: 'Thirteen slides with examples to try', keywords: ['tutorial', 'help', 'learn'], icon: 'slides', run: () => void tourDoc().then((doc) => doc && newFigure(doc)) },
   { id: 'cmd-pathway', name: 'Import a pathway', description: 'From WikiPathways or a GPML file', keywords: ['wikipathways', 'gpml', 'pathvisio', 'signalling'], icon: 'pathway', run: open('pathway') },
   { id: 'cmd-svg', name: 'Import an SVG icon', keywords: ['svg', 'drawing', 'illustration'], icon: 'import', run: open('import-icon') },

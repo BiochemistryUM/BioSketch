@@ -17,7 +17,7 @@
 // TukeyHSD, kruskal.test, friedman.test, pairwise.t.test, pairwise.wilcox.test, p.adjust,
 // shapiro.test), all p values are two-sided, and tests/chart-tests.test.ts pins each to R's result.
 
-import { chiSquaredUpper, dunnettUpper, fUpper, normalBelow, normalQuantile, rankSumTwoSided, signedRankTwoSided, studentizedRangeUpper, tTwoSided } from './distributions'
+import { chiSquaredUpper, dunnettCritical, dunnettUpper, fUpper, logGamma, normalBelow, normalQuantile, rankSumTwoSided, signedRankTwoSided, studentizedRangeCritical, studentizedRangeUpper, tCritical, tTwoSided } from './distributions'
 
 const TINY = 1e-300
 const sum = (values: number[]): number => values.reduce((a, b) => a + b, 0)
@@ -382,6 +382,21 @@ export interface PairResult {
   b: number
   /** The p value, corrected for the number of comparisons; null when it cannot be worked out. */
   p: number | null
+  /** Tests on means: the mean of the second group less that of the first, with its 95 % confidence interval. */
+  diff?: Difference
+}
+
+export interface Difference {
+  estimate: number
+  lower: number
+  upper: number
+}
+
+/** A measure of how large the effect is, beside the p value that says how sure it is. */
+export interface EffectSize {
+  /** "Hedges’ g", "η²", … */
+  name: string
+  value: number
 }
 
 export interface Analysis {
@@ -398,6 +413,10 @@ export interface Analysis {
   effects?: { name: string; statistic: string; p: number }[]
   /** Things the scientist should know about how the result was reached. */
   notes: string[]
+  /** The size of the effect over all groups (see `EFFECT_DOES`); absent when it cannot be worked out. */
+  effect?: EffectSize
+  /** With several groups and a test on means: how the intervals of the pairs allow for the number of pairs. */
+  intervals?: string
 }
 
 export type Outcome = { ok: true; result: Analysis } | { ok: false; problem: string }
@@ -428,6 +447,9 @@ export function analyse(samples: number[][], design: Design): Outcome {
       if (!r) return fail(constant)
       statistic = `t = ${three(r.t)}, df = ${three(r.df)}`
       p = r.p
+      const diff = test === 'welch' ? welchInterval(x, y) : pairedInterval(x, y)
+      const effect = test === 'welch' ? hedgesG(x, y) : dz(x, y)
+      return { ok: true, result: { test, statistic, p, pairs: [{ a: 0, b: 1, p, ...(diff ? { diff } : {}) }], pairMethod: '', notes, ...(effect ? { effect } : {}) } }
     } else {
       const signed = test === 'signedRank' ? signedRank(x, y) : null
       const r = test === 'mannWhitney' ? mannWhitney(x, y) : signed
@@ -436,8 +458,9 @@ export function analyse(samples: number[][], design: Design): Outcome {
       p = r.p
       const still = signed ? x.length - signed.n : 0
       if (!r.exact) notes.push(still ? `${still} ${still === 1 ? 'row shows' : 'rows show'} no change and ${still === 1 ? 'is' : 'are'} left out; the p value comes from the normal approximation with continuity correction.` : APPROXIMATE)
+      const effect = signed ? { name: 'rank-biserial r', value: pairedRankBiserial(signed.statistic, signed.n) } : { name: 'rank-biserial r', value: 1 - (2 * r.statistic) / (x.length * y.length) }
+      return { ok: true, result: { test, statistic, p, pairs: [{ a: 0, b: 1, p }], pairMethod: '', notes, ...(Number.isFinite(effect.value) ? { effect } : {}) } }
     }
-    return { ok: true, result: { test, statistic, p, pairs: [{ a: 0, b: 1, p }], pairMethod: '', notes } }
   }
 
   // Several groups: the overall test, then pairs.
@@ -447,20 +470,29 @@ export function analyse(samples: number[][], design: Design): Outcome {
   let p: number
   let raw: (number | null)[]
   let corrected = false
+  let effect: EffectSize | undefined
+  let diffs: (Difference | null)[] = []
+  let intervals: string | undefined
   if (test === 'anova') {
     if (samples.some((s) => s.length < 1) || sum(samples.map((s) => s.length)) - k < 1) return fail('An analysis of variance needs more values than groups.')
     const r = oneWayAnova(samples)
     if (!r) return fail(constant)
     statistic = `F(${r.df1}, ${r.df2}) = ${three(r.f)}`
     p = r.p
+    effect = { name: 'η²', value: etaSquared(r) }
     if (design.versusFirst) {
       // Each group with the first: Dunnett's test, which is made for exactly this.
       raw = dunnettPairs(samples, r)
       corrected = true
+      diffs = dunnettIntervals(samples, r)
+      intervals = 'Dunnett’s simultaneous 95 % intervals'
     } else {
       raw = wanted.map(([a, b]) => tukeyPair(samples[a], samples[b], r, k))
       corrected = true
       if (raw.some((v) => v === null)) notes.push('Tukey’s test needs at least two more values than there are groups.')
+      const q = studentizedRangeCritical(0.05, k, r.df2)
+      diffs = wanted.map(([a, b]) => around(mean(samples[b]) - mean(samples[a]), (q / Math.SQRT2) * Math.sqrt(r.error * (1 / samples[a].length + 1 / samples[b].length))))
+      intervals = 'Tukey’s simultaneous 95 % intervals'
     }
   } else if (test === 'repeatedAnova') {
     if (samples[0].length < 2) return fail('A repeated-measures analysis needs at least two complete rows.')
@@ -468,12 +500,17 @@ export function analyse(samples: number[][], design: Design): Outcome {
     if (!r) return fail(constant)
     statistic = `F(${r.df1}, ${r.df2}) = ${three(r.f)}`
     p = r.p
+    effect = { name: 'partial η²', value: etaSquared(r) }
     raw = wanted.map(([a, b]) => pairedT(samples[a], samples[b])?.p ?? null)
+    diffs = wanted.map(([a, b]) => pairedInterval(samples[a], samples[b]))
+    intervals = '95 % intervals of the paired differences, each on its own (not corrected for the number of pairs)'
   } else {
     const r = test === 'kruskal' ? kruskalWallis(samples) : friedman(samples)
     if (!r) return fail(test === 'friedman' && samples[0].length < 2 ? 'A Friedman test needs at least two complete rows.' : constant)
     statistic = `${test === 'kruskal' ? 'H' : 'χ²'} = ${three(r.statistic)}, df = ${r.df}`
     p = r.p
+    const n = sum(samples.map((s2) => s2.length))
+    effect = test === 'kruskal' ? { name: 'η²(H)', value: (r.statistic - k + 1) / (n - k) } : { name: 'Kendall’s W', value: r.statistic / (samples[0].length * (k - 1)) }
     const pairs = wanted.map(([a, b]) => (test === 'kruskal' ? mannWhitney(samples[a], samples[b]) : signedRank(samples[a], samples[b])))
     raw = pairs.map((r2) => r2?.p ?? null)
     if (pairs.some((r2) => r2 && !r2.exact)) notes.push(APPROXIMATE)
@@ -484,8 +521,99 @@ export function analyse(samples: number[][], design: Design): Outcome {
     const adjusted = holm(known.map((x) => x.v))
     known.forEach((x, j) => (raw[x.i] = adjusted[j]))
   }
-  return { ok: true, result: { test, statistic, p, pairs: wanted.map(([a, b], i) => ({ a, b, p: raw[i] })), pairMethod: pairMethod(test, design.versusFirst), notes } }
+  const pairs = wanted.map(([a, b], i) => ({ a, b, p: raw[i], ...(diffs[i] ? { diff: diffs[i]! } : {}) }))
+  return { ok: true, result: { test, statistic, p, pairs, pairMethod: pairMethod(test, design.versusFirst), notes, ...(effect && Number.isFinite(effect.value) ? { effect } : {}), ...(intervals ? { intervals } : {}) } }
 }
+
+// ---------- effect sizes and intervals ----------
+//
+// Beside every p value, a measure of how large the effect is, each under a definition that can be
+// named: two separate groups Hedges' g (the difference of means in pooled standard deviations,
+// with Hedges' exact correction for small samples), the same samples Cohen's d_z (the mean change
+// in standard deviations of the change), ranks the rank-biserial correlation (from −1 to 1: the
+// share of pairs of values in which the second group is higher, less the share in which it is
+// lower), several groups η² (the share of the scatter that lies between the groups; partial η²
+// for the same samples), η²(H) after Kruskal–Wallis and Kendall's W after Friedman (as R's rstatix
+// gives them). Differences of means come with their 95 % confidence interval: the t test's own for
+// two groups, Tukey's or Dunnett's simultaneous intervals after a one-way ANOVA, and the paired t
+// test's after a repeated-measures ANOVA. tests/effect-sizes.test.ts pins every one to R.
+
+/** What each measure of effect size is, in one sentence, for the panel. */
+export const EFFECT_DOES: Record<string, string> = {
+  'Hedges’ g': 'the difference of the two means in pooled standard deviations, corrected for small samples (0.2 is often called small, 0.5 medium, 0.8 large)',
+  'Cohen’s d_z': 'the mean change from the first group to the second in standard deviations of the change',
+  'rank-biserial r': 'from −1 to 1: how often a value of the second group is higher than one of the first, less how often it is lower (0: as often)',
+  'η²': 'the share of all the scatter that lies between the groups (0 to 1)',
+  'partial η²': 'the share of the scatter left within samples that lies between the groups (0 to 1)',
+  'η²(H)': 'the share of the scatter in ranks that lies between the groups, from the Kruskal–Wallis statistic',
+  'Kendall’s W': 'from 0 to 1: how far the samples agree in the order they put the groups in',
+}
+
+/** How each measure is defined, in the words of a methods section. */
+export const EFFECT_METHODS: Record<string, string> = {
+  'Hedges’ g': 'difference of means over the pooled standard deviation, with Hedges’ exact small-sample correction',
+  'Cohen’s d_z': 'mean change over the standard deviation of the changes',
+  'rank-biserial r': 'share of pairs of values in which the second group is higher less the share in which it is lower',
+  'η²': 'sum of squares between groups over the total sum of squares',
+  'partial η²': 'sum of squares between groups over itself and the residual sum of squares',
+  'η²(H)': '(H − k + 1)/(n − k), as kruskal_effsize of the R package rstatix',
+  'Kendall’s W': 'χ²/(n(k − 1)), as friedman_effsize of the R package rstatix',
+}
+
+const around = (estimate: number, half: number): Difference | null => (Number.isFinite(half) ? { estimate, lower: estimate - half, upper: estimate + half } : null)
+
+/** The mean of `y` less that of `x` with the 95 % interval of Welch's t test (R: t.test(y, x)$conf.int). */
+function welchInterval(x: number[], y: number[]): Difference | null {
+  const [vx, vy] = [variance(x) / x.length, variance(y) / y.length]
+  const df = (vx + vy) ** 2 / (vx ** 2 / (x.length - 1) + vy ** 2 / (y.length - 1))
+  return around(mean(y) - mean(x), tCritical(0.05, df) * Math.sqrt(vx + vy))
+}
+
+/** The mean change from `x` to `y`, row by row, with the 95 % interval of the paired t test. */
+function pairedInterval(x: number[], y: number[]): Difference | null {
+  const d = y.map((v, i) => v - x[i])
+  if (d.length < 2) return null
+  return around(mean(d), tCritical(0.05, d.length - 1) * Math.sqrt(variance(d) / d.length))
+}
+
+/** Hedges' g of `y` against `x`, with the exact correction J = Γ(df/2) / (√(df/2) Γ((df − 1)/2)). */
+function hedgesG(x: number[], y: number[]): EffectSize | null {
+  const df = x.length + y.length - 2
+  const sd = Math.sqrt((squares(x) + squares(y)) / df)
+  if (!(sd > 0) || df < 2) return null
+  const j = Math.exp(logGamma(df / 2) - 0.5 * Math.log(df / 2) - logGamma((df - 1) / 2))
+  return { name: 'Hedges’ g', value: ((mean(y) - mean(x)) / sd) * j }
+}
+
+/** Cohen's d_z: the mean change from `x` to `y` over the standard deviation of the changes. */
+function dz(x: number[], y: number[]): EffectSize | null {
+  const d = y.map((v, i) => v - x[i])
+  const sd = Math.sqrt(variance(d))
+  return sd > 0 ? { name: 'Cohen’s d_z', value: mean(d) / sd } : null
+}
+
+/** The matched-pairs rank-biserial correlation of the change from the first group to the second, from V of `signedRank` (on first − second) over `n` rows with a change. */
+const pairedRankBiserial = (v: number, n: number): number => {
+  const all = (n * (n + 1)) / 2
+  return (all - 2 * v) / all
+}
+
+/** η² (partial η² for the same samples) from an F test: F·df1 / (F·df1 + df2). */
+const etaSquared = (r: FResult): number => (r.f * r.df1) / (r.f * r.df1 + r.df2)
+
+/** Every group less the first, with Dunnett's simultaneous 95 % intervals (R: confint of multcomp's glht with mcp "Dunnett"). */
+function dunnettIntervals(groups: number[][], anova: FResult): (Difference | null)[] {
+  const control = groups[0]
+  const others = groups.slice(1)
+  const d = dunnettCritical(0.05, others.map((g) => Math.sqrt(g.length / (g.length + control.length))), anova.df2)
+  return others.map((g) => around(mean(g) - mean(control), d * Math.sqrt(anova.error * (1 / g.length + 1 / control.length))))
+}
+
+/** An effect size in words: "Hedges’ g = 1.23". */
+export const effectText = (e: EffectSize): string => `${e.name} = ${three(e.value)}`
+
+/** A difference with its interval in words: "1.6 (95 % interval 0.52 to 2.7)". */
+export const differenceText = (d: Difference): string => `${three(d.estimate)} (95 % interval ${three(d.lower)} to ${three(d.upper)})`
 
 // ---------- writing a p value ----------
 

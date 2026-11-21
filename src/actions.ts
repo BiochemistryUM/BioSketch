@@ -34,6 +34,7 @@ import { TEXT_WIDTH_MIN, findNode, getRect, translateNode } from './model/nodes'
 import { layoutNodes, slideFromTemplate, type SlideLayoutId } from './model/layouts'
 import { panelNodes, type PanelLayout } from './model/panels'
 import { newTable } from './model/table'
+import { applyStyle, styleOf, styleWords } from './model/style'
 import { chartSample, type ChartSample, type ChartStart } from './model/chartSamples'
 import { MAX_SLIDES, addSlide, duplicateSlide, mapSlides, moveSlide, removeSlide, showSlide, slideCount, slideIndex } from './model/slides'
 import type { ChartNode, FigDoc, FigNode, IconDef, IconNode, Point, Rect, StructureNode, TextNode } from './model/types'
@@ -308,6 +309,7 @@ export function addPanelLetter(): void {
     bold: true,
     align: 'left',
     rotation: 0,
+    letter: true,
   }
   s.commit((doc) => ({ ...doc, nodes: [...doc.nodes, node] }), { select: [node.id] })
   s.set({ tool: 'select' })
@@ -393,6 +395,16 @@ export function addToFigure(added: FigDoc): number {
   return result.scale
 }
 
+/** Objects placed where they are (beside a picture, say), as one group, selected; one Undo takes them out. */
+export function addGrouped(nodes: FigNode[]): void {
+  if (!nodes.length) return
+  const s = S()
+  const groupId = uid()
+  const grouped = nodes.map((n) => ({ ...n, groupId }))
+  s.commit((doc) => ({ ...doc, nodes: [...doc.nodes, ...grouped] }), { select: grouped.map((n) => n.id) })
+  s.set({ tool: 'select' })
+}
+
 /** Rapid edits merge into one undo step only while they are the same kind of edit on the same objects. */
 const mergeKey = (kind: string, selection: string[]): string => `${kind}:${selection.join(',')}`
 
@@ -402,6 +414,26 @@ export function nudge(dx: number, dy: number): void {
 }
 
 /** Apply a change to every selected node. `merge` groups rapid changes (e.g. dragging a colour picker) into one undo step. */
+/** Take the look of the first selected object, to give it to others with `pasteStyle`. */
+export function copyStyle(): void {
+  const s = S()
+  const first = s.doc.nodes.find((n) => n.id === s.selection[0])
+  if (!first) return
+  const style = styleOf(first)
+  s.set({ copiedStyle: style })
+  toast(`Style copied: ${styleWords(style)}. Select other objects and choose Paste style.`)
+}
+
+/** Give the copied look to every selected object, as far as each has room for it. One Undo takes it back. */
+export function pasteStyle(): void {
+  const s = S()
+  const style = s.copiedStyle
+  if (!style || !s.selection.length) return
+  const before = s.doc
+  s.commit((doc) => updateNodes(doc, s.selection, (n) => applyStyle(n, style)))
+  if (S().doc === before) toast('Nothing of the copied style fits what is selected.')
+}
+
 export function patchSelection(fn: (n: FigNode) => FigNode, merge?: string): void {
   const { selection, commit } = S()
   commit((doc) => updateNodes(doc, selection, fn), { merge: merge && mergeKey(merge, selection) })

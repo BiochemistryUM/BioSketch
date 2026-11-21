@@ -840,18 +840,27 @@ function readSurvival(r: Reading): boolean {
       r.done.push(on ? 'The p value of the log-rank test is written on the chart.' : 'The p value of the log-rank test is no longer written on the chart.')
     }
   }
-  return !!curves || !!test
+  const risk = take(r, /\b(?:(?:no|remove|hide|without)\s+(?:the\s+)?)?(?:(?:table\s+of\s+(?:the\s+)?)?numbers?\s+at\s+risk|(?:at[- ])?risk\s+table)\b/)
+  if (risk) {
+    if (!r.node.survival) r.unclear.push('The number at risk belongs under survival curves: choose survival curves first.')
+    else {
+      const on = !/\b(?:no|remove|hide|without)\b/.test(risk[0])
+      r.node = on ? { ...r.node, atRisk: true } : without(r.node, 'atRisk')
+      r.done.push(on ? 'The number at risk is shown under the time axis.' : 'The number at risk is no longer shown.')
+    }
+  }
+  return !!curves || !!test || !!risk
 }
 
 function readKind(r: Reading) {
   for (const [pattern, kind] of KINDS) {
     if (!take(r, pattern)) continue
     if (kind === 'scatter' && r.node.survival) {
-      r.node = without(r.node, 'survival', 'logRank')
+      r.node = without(r.node, 'survival', 'logRank', 'atRisk')
       r.done.push('The chart is now a scatter chart.')
       return
     }
-    if (r.node.survival) r.node = without(r.node, 'survival', 'logRank')
+    if (r.node.survival) r.node = without(r.node, 'survival', 'logRank', 'atRisk')
     if (kind === r.node.kind) r.done.push(`The chart is already a ${KIND_NAMES[kind]}.`)
     else if (chartFamily(kind) === chartFamily(r.node.kind)) {
       r.node = { ...r.node, kind }

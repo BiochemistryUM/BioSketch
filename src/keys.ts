@@ -2,6 +2,7 @@
 
 import {
   copySelection,
+  copyStyle,
   deleteSelection,
   duplicateSelection,
   editSelectedText,
@@ -10,6 +11,7 @@ import {
   nudge,
   orderSelection,
   pasteClipboard,
+  pasteStyle,
   selectAll,
   selectStep,
   setTool,
@@ -89,6 +91,15 @@ export function installKeyboard(): () => void {
     if (e.key === 'Tab' && !mod && !e.altKey) {
       const onPage = !!(e.target as Element | null)?.closest?.('.canvas')
       if (onPage && selectStep(e.shiftKey ? -1 : 1)) e.preventDefault()
+      return
+    }
+
+    // ⌥⌘C / Alt Ctrl C and ⌥⌘V / Alt Ctrl V copy and paste the look of objects, as in word processors.
+    // The letter is read from the key's place: with ⌥ held a Mac types another character.
+    if (mod && e.altKey && !e.shiftKey && (e.code === 'KeyC' || e.code === 'KeyV')) {
+      e.preventDefault()
+      if (e.code === 'KeyC') copyStyle()
+      else pasteStyle()
       return
     }
 

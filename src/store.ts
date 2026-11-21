@@ -3,6 +3,9 @@
 import { create } from 'zustand'
 import { storedFavourites, storedRecent } from './icons/favourites'
 import { emptyDoc } from './model/doc'
+import { orderLetters } from './model/letters'
+import type { Style } from './model/style'
+import type { VisionKind } from './model/vision'
 import type { ChartPart } from './model/chart'
 import type { PartBox } from './model/chartParts'
 import type { LineStyle } from './model/dash'
@@ -57,6 +60,8 @@ export interface EditorState {
   /** The icon whose outline points are being moved, and the copy of the icon made for that. */
   reshape: { nodeId: string; iconId: string } | null
   clipboard: FigNode[]
+  /** The look taken with Copy style, given to other objects with Paste style. */
+  copiedStyle: Style | null
   clipboardIcons: Record<string, IconDef>
   /** Size of the canvas area on screen, in CSS pixels. */
   canvasSize: { w: number; h: number }
@@ -68,6 +73,8 @@ export interface EditorState {
   slidesShown: boolean
   /** The slides are being shown full screen, one after the other. */
   presenting: boolean
+  /** The page shown as seen with a colour-vision deficiency (`src/model/vision.ts`); null = as it is. Never exported. */
+  vision: VisionKind | null
   /** The light or the dark look of the interface (not of the figure). */
   theme: Theme
   /** Ids of the icons of the collections marked as favourites, and of those used last (newest first); kept in the browser. */
@@ -128,6 +135,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   editingTextId: null,
   reshape: null,
   clipboard: [],
+  copiedStyle: null,
   clipboardIcons: {},
   canvasSize: { w: 800, h: 600 },
   dialog: null,
@@ -135,6 +143,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   fitRequest: 0,
   slidesShown: false,
   presenting: false,
+  vision: null,
   theme: startTheme(),
   favouriteIcons: storedFavourites(),
   recentIcons: storedRecent(),
@@ -146,7 +155,7 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   commit: (fn, opts) => {
     const s = get()
-    const next = fn(s.doc)
+    const next = orderLetters(fn(s.doc))
     const select = opts?.select
     if (next === s.doc) {
       if (select) set({ selection: select })
@@ -180,7 +189,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       set({ gestureStart: null })
       return
     }
-    set({ past: [...s.past, s.gestureStart].slice(-HISTORY_LIMIT), future: [], gestureStart: null, mergeKey: null })
+    // A letter dragged to another panel takes the name of its new place.
+    set({ doc: orderLetters(s.doc), past: [...s.past, s.gestureStart].slice(-HISTORY_LIMIT), future: [], gestureStart: null, mergeKey: null })
   },
 
   cancelGesture: () => {

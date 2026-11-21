@@ -3141,4 +3141,24 @@ button.link {
 .plate-view { display: flex; flex-direction: column; gap: 8px; }
 .plate-picture { width: 100%; height: auto; background: #ffffff; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; touch-action: manipulation; }
 .plate-detail { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.crop-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px 8px; }
+.crop-grid label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+.plate-standards { display: flex; flex-direction: column; gap: 8px; }
+.plate-plan { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px 8px; }
+.plate-plan label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+.plate-plan input, .plate-plan select { width: 100%; }
+.text-input.invalid { border-color: var(--danger, #d1343a); }
 .plate-flag { color: var(--danger, #c0392b); }
+
+/* The bar over the page while it is shown as seen with a colour-vision deficiency. */
+.vision-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; max-width: min(640px, calc(100% - 16px)); padding: 6px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12); font-size: 13px; z-index: 5; }
+.vision-bar label { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.vision-bar .hint { flex: 1 1 220px; }
+
+.journal-check { list-style: none; margin: 6px 0 10px; padding: 0; display: grid; gap: 6px; font-size: 13px; line-height: 1.45; }
+.journal-check li { display: flex; gap: 8px; align-items: flex-start; }
+.journal-check .check-mark { flex: 0 0 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; background: var(--muted, #888); margin-top: 1px; }
+.journal-check .check-ok .check-mark { background: #2e7d4f; }
+.journal-check .check-warn .check-mark { background: #b7791f; }
+.journal-check .check-problem .check-mark { background: #c0392b; }
+.journal-check .check-problem { font-weight: 500; }

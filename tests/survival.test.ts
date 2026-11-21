@@ -2,10 +2,10 @@
 // survdiff) through tests/stats-reference.json, which scripts/stats-reference.R writes.
 
 import { describe, expect, it } from 'vitest'
-import { kaplanMeier, logRank, survivalAt, type Subject } from '../src/model/survival'
+import { atRiskAt, kaplanMeier, logRank, survivalAt, type Subject } from '../src/model/survival'
 import ref from './stats-reference.json'
 
-type Km = { time: number[]; status: number[]; at: number[]; surv: number[]; atRisk: number[]; median: number | null }
+type Km = { time: number[]; status: number[]; at: number[]; surv: number[]; atRisk: number[]; median: number | null; riskTimes: number[]; risk: number[] }
 type Lr = { chisq: number; df: number; p: number; observed: number[]; expected: number[] }
 const s = ref.surv as unknown as Record<'a' | 'b' | 'c' | 'half', Km> & Record<'ab' | 'abc' | 'ac' | 'bc', Lr>
 const subjects = (k: Km): Subject[] => k.time.map((time, i) => ({ time, event: k.status[i] === 1 }))
@@ -75,7 +75,7 @@ describe('the log-rank test', () => {
 
 import { renderSvg } from '../src/io/export'
 import { validateDoc } from '../src/io/files'
-import { chartLayout, curveMethodsText, isSurvival, logRankText, parseTable, survivalOf, survivalText } from '../src/model/chart'
+import { chartLayout, curveMethodsText, isSurvival, logRankText, parseTable, partOf, survivalOf, survivalText } from '../src/model/chart'
 import { applyInstruction } from '../src/model/chartCommands'
 import { emptyDoc } from '../src/model/doc'
 import type { ChartNode, FigNode } from '../src/model/types'
@@ -161,5 +161,37 @@ describe('survival curves on a chart', () => {
     expect(applyInstruction(plain, 'log-rank test').unclear[0]).toContain('choose survival curves first')
     const fromBars = applyInstruction({ ...plain, kind: 'bar', groups: [{ name: 'A', values: [1, 2] }, { name: 'B', values: [0, 1] }] }, 'survival curves')
     expect(fromBars.node).toMatchObject({ kind: 'scatter', survival: true })
+  })
+})
+
+describe('the number at risk', () => {
+  it('gives R’s summary(survfit, times = …)$n.risk at any time, also between and after the steps', () => {
+    for (const name of ['a', 'b', 'c', 'half'] as const) expect(s[name].riskTimes.map((t) => atRiskAt(subjects(s[name]), t)), name).toEqual(s[name].risk)
+  })
+
+  it('stands under the time axis at its numbers, a row per group, and is kept when the figure is saved', () => {
+    const plainLayout = chartLayout(chart())
+    const d = chartLayout(chart({ atRisk: true }))
+    expect(plainLayout.texts.some((t) => t.text === 'Number at risk')).toBe(false)
+    const heading = d.texts.find((t) => t.text === 'Number at risk')!
+    expect(partOf(heading)).toEqual({ what: 'atRisk' })
+    // The plot makes room: its foot is higher than without the table, and the table is under every tick number.
+    expect(d.clip!.h).toBeLessThan(plainLayout.clip!.h)
+    const ticks = d.texts.filter((t) => partOf(t)?.what === 'xAxis' && /^\d+$/.test(t.text) && t.y > d.clip!.y + d.clip!.h && t.y < heading.y)
+    const rowsOf = d.texts.filter((t) => t.y > heading.y && /^\d+$/.test(t.text))
+    const control = rowsOf.filter((t) => Math.abs(t.y - rowsOf[0].y) < 0.5)
+    expect(control.map((t) => t.x)).toEqual(ticks.map((t) => t.x))
+    expect(control.map((t) => Number(t.text))).toEqual(ticks.map((t) => atRiskAt(subjects(s.a), Number(t.text))))
+    expect(d.texts.filter((t) => t.y > heading.y && t.align === 'right').map((t) => t.text)).toEqual(['Control', 'Drug A', 'Drug B'])
+    expect(Math.max(...d.texts.map((t) => t.y))).toBeLessThan(320)
+    const saved = validateDoc({ ...emptyDoc(), nodes: [chart({ atRisk: true })] }).nodes[0] as ChartNode
+    expect(saved.atRisk).toBe(true)
+    expect((validateDoc({ ...emptyDoc(), nodes: [chart({ survival: undefined, atRisk: true })] }).nodes[0] as ChartNode).atRisk).toBeUndefined()
+  })
+
+  it('is asked for in the instruction box', () => {
+    expect(applyInstruction(chart(), 'show the number at risk').node.atRisk).toBe(true)
+    expect(applyInstruction(chart({ atRisk: true }), 'remove the risk table').node.atRisk).toBeUndefined()
+    expect(applyInstruction(chart({ survival: undefined }), 'numbers at risk').unclear[0]).toContain('choose survival curves first')
   })
 })

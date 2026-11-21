@@ -18,13 +18,15 @@ import {
   renderSlidesZip,
   renderSvg,
   scaleForDpi,
-  smallestTextPt,
   type ExportOptions,
 } from '../io/export'
 import { newFigure, tourDoc } from '../figures'
 import { serializeDoc } from '../io/files'
 import { uid } from '../model/doc'
 import { everyNode, slideCount, slideDocs, slideIndex } from '../model/slides'
+import { figureStatistics, reportCsv, reportText } from '../model/statsReport'
+import { journalCheck } from '../model/journalCheck'
+import type { FigNode } from '../model/types'
 import { toast, useEditor } from '../store'
 import { Icon } from './Icon'
 import { TOOLS } from './ToolRail'
@@ -63,6 +65,32 @@ const close = () => useEditor.setState({ dialog: null })
 
 // ---------- export ----------
 
+/** The width in pixels of every placed picture's file, by the picture's id, read as the pictures load. */
+function usePictureWidths(nodes: FigNode[]): Record<string, number> {
+  const sources = nodes.flatMap((n) => (n.type === 'image' ? [[n.id, n.src] as const] : []))
+  const key = sources.map(([id, src]) => `${id}:${src.length}:${src.slice(-32)}`).join('|')
+  const [widths, setWidths] = useState<Record<string, number>>({})
+  useEffect(() => {
+    let live = true
+    const found: Record<string, number> = {}
+    if (!sources.length) setWidths({})
+    for (const [id, src] of sources) {
+      const img = new Image()
+      img.onload = () => {
+        if (!live) return
+        found[id] = img.naturalWidth
+        setWidths({ ...found })
+      }
+      img.src = src
+    }
+    return () => {
+      live = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+  return widths
+}
+
 export function ExportDialog() {
   const doc = useEditor((s) => s.doc)
   const showSketch = useEditor((s) => s.showSketch)
@@ -84,7 +112,10 @@ export function ExportDialog() {
     return s ? [{ value: s, label: `${dpi} dpi` }] : []
   })
   const scales = [...[1, 2, 3, 4].map((s) => ({ value: s, label: `${s}×` })), ...dpiScales]
-  const smallest = smallestTextPt(whole)
+  const pixels = usePictureWidths(whole.nodes)
+  const check = useMemo(() => journalCheck(doc, pixels), [doc, pixels])
+  // Objects of the open slide among those an item names: the ones a press can select.
+  const onPage = (ids: string[] = []) => ids.filter((id) => doc.nodes.some((n) => n.id === id))
   const credits = [...attributionLines(whole), ...structureCredits(whole)]
   const creditText = attributionText(whole)
   const shadedIcons = useMemo(() => whole.nodes.filter((n) => needsPicture(whole, n)).length, [whole])
@@ -131,6 +162,14 @@ export function ExportDialog() {
     } finally {
       setBusy(false)
     }
+  }
+  // The statistics of every chart on every slide, for one file.
+  const statistics = useMemo(() => figureStatistics(doc), [doc])
+  const tested = statistics.filter((c) => c.rows.length).length
+  const saveReport = (as: 'csv' | 'txt') => {
+    if (as === 'csv') download(reportCsv(statistics), `${fileBase(doc)}-statistics.csv`, 'text/csv;charset=utf-8')
+    else download(reportText(statistics, doc.name.trim() || 'the figure'), `${fileBase(doc)}-statistics.txt`, 'text/plain;charset=utf-8')
+    toast('Statistics report downloaded')
   }
   const copyCredits = async () => {
     try {
@@ -226,15 +265,61 @@ export function ExportDialog() {
         </div>
       </div>
       <section className="credits">
-        <h2>Print size</h2>
-        {doc.widthMm ? (
-          <p className={smallest !== null && smallest < 5 ? 'notice' : 'hint'}>
-            Printed at {doc.widthMm} mm wide ({Math.round(((doc.widthMm * doc.height) / doc.width) * 10) / 10} mm high).
-            {smallest !== null &&
-              ` The smallest text will be ${smallest} pt${smallest < 5 ? ', which is below the 5 pt most journals accept. Make the labels larger or the figure wider.' : '.'}`}
-          </p>
+        <h2>Print size and journal check</h2>
+        {doc.widthMm && <p className="hint">Printed at {doc.widthMm} mm wide ({Math.round(((doc.widthMm * doc.height) / doc.width) * 10) / 10} mm high).</p>}
+        <ul className="journal-check">
+          {check.map((item, i) => (
+            <li key={i} className={`check-${item.level}`}>
+              <span className="check-mark" aria-hidden>{item.level === 'ok' ? '✓' : item.level === 'info' ? 'i' : '!'}</span>
+              <span>
+                {item.text}
+                {onPage(item.ids).length > 0 && (
+                  <>
+                    {' '}
+                    <button
+                      className="link"
+                      onClick={() => {
+                        close()
+                        useEditor.setState({ selection: onPage(item.ids) })
+                      }}
+                    >
+                      Select {onPage(item.ids).length === 1 ? 'it' : 'them'}
+                    </button>
+                  </>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="row">
+          <button
+            className="btn small"
+            onClick={() => {
+              close()
+              useEditor.setState({ vision: 'deuteranopia' })
+            }}
+          >
+            <Icon name="eye" size={14} /> Colour-blind preview
+          </button>
+        </div>
+        <h2>Statistics</h2>
+        {statistics.length ? (
+          <>
+            <p className="hint">
+              {statistics.length === 1 ? 'One chart' : `${statistics.length} charts`}
+              {count > 1 ? ' on the slides' : ''} {statistics.length === 1 ? 'shows' : 'show'} an analysis{tested ? `, ${tested === statistics.length ? (tested === 1 ? 'with a test' : 'each with a test') : `${tested} with a test`}` : ''}. The report lists every test with its numbers of values, statistic, p value, effect size and the difference with its 95 % interval (as a table for a spreadsheet), or every chart with its text for the methods.
+            </p>
+            <div className="row">
+              <button className="btn small" onClick={() => saveReport('csv')} disabled={!tested}>
+                <Icon name="export" size={14} /> Table of tests (CSV)
+              </button>
+              <button className="btn small" onClick={() => saveReport('txt')}>
+                <Icon name="export" size={14} /> Report with methods (text)
+              </button>
+            </div>
+          </>
         ) : (
-          <p className="hint">No printed width is set. Set one under Page in the right-hand panel (with nothing selected) to check text sizes and export at 300 or 600 dpi.</p>
+          <p className="hint">No chart in this figure shows a test or another analysis.</p>
         )}
         <h2>Attribution</h2>
         {credits.length ? (

@@ -45,11 +45,17 @@ The owner wants all of the features below without the interface filling up with 
    For a plate, the wells of the standards and blanks are marked on a little plate picture.
    Nothing is guessed silently: what was not read is listed, as charts do now. Exports of the
    common machines (Bio-Rad CFX, QuantStudio, LightCycler, plate readers) are kept as test files.
+8. **Figure first, not a workbench** (agreed 21 November 2026). An analysis is added only when a
+   biologist would put its result straight into a figure or a methods section, and its settings
+   fit under one heading of the panel. BioSketch makes figures and the words that go with them;
+   it is not a place to process instrument data, keep a workspace or write scripts. Items that
+   would make it one wait under "Later" until the owner asks for them.
 
 Done on 20 November 2026: rules 1, 2 (the headings and the charts that exist today; the other
 cards come with their features), 4 (as a list of sources; structures and molecules joined it with
 section 2, sequences come with their feature), 5 and 6. Rule 7 came with standard curves (the row of choices above the table; the plate picture is still to
-come). Rule 3 applies to every analysis still to build.
+come). Rule 3 applies to every analysis still to build. Rule 7's plate picture came on 21 November
+2026. Rule 8 moved four analyses to "Later" the same day.
 
 ## 1. Before more people test it
 
@@ -95,33 +101,28 @@ come). Rule 3 applies to every analysis still to build.
 ## 3. Biochemistry analyses (each checked against R, like the tests already in BioSketch)
 
 - [x] Standard curves (Bradford, BCA, ELISA with a 4- or 5-parameter fit), and unknown samples
-      read off the curve. Plate grids with the standards marked on a picture of the plate are not
-      built yet (20 November 2026).
+      read off the curve (20 November 2026), also from a plate reader's grid (21 November 2026).
 - [x] Enzyme kinetics: Michaelis–Menten (Km, Vmax, kcat), inhibition models and Ki;
       Lineweaver–Burk for display only (20 November 2026).
 - [x] qPCR: fold change by ΔΔCt from a table of Ct values, with the error carried through
       (20 November 2026).
 - [x] Saturation binding (Kd, Bmax) and melting curves (Tm) (20 November 2026).
-- [ ] Purification table: yield, specific activity, fold purification worked out.
-- [ ] Line traces from instrument files: chromatograms with fractions, UV-Vis, CD and
-      fluorescence spectra.
-- [ ] Band quantification on a placed blot, normalised to a loading control, into a chart.
-- [ ] Sequence alignments with conservation colours, sequence logos, plasmid maps from GenBank.
 - [ ] Reactome import beside WikiPathways (CC BY 4.0; KEGG's licence does not allow it).
 - [x] Lab calculators: molarity, dilution (C1V1 = C2V2), mass from molecular weight (PubChem).
 
 ## 4. Figures for papers
 
-- [ ] Placed pictures (blots, gels, micrographs): crop, lane labels and a kDa marker ladder.
-- [ ] Scale bars for micrographs, set from the size of a pixel.
-- [ ] Panel letters (A, B, C …) placed and kept in order automatically.
-- [ ] A colour-blind preview of the whole figure, not only the chart palettes.
-- [ ] A journal check before export: smallest text size, line widths, resolution of pictures.
+- [x] Placed pictures (blots, gels, micrographs): crop, lane labels and a kDa marker ladder (21 November 2026).
+- [x] Scale bars for micrographs, set from the size of a pixel (21 November 2026).
+- [x] Panel letters (A, B, C …) placed and kept in order automatically (21 November 2026).
+- [x] A colour-blind preview of the whole figure, not only the chart palettes (21 November 2026).
+- [x] A journal check before export: smallest text size, line widths, resolution of pictures (21 November 2026).
 
 ## 5. Charts and statistics
 
-- [ ] Survival curves: the table of subjects at risk under the plot.
-- [ ] Effect sizes and confidence intervals beside every test.
+- [x] Survival curves: the table of subjects at risk under the plot (21 November 2026).
+- [x] Effect sizes and confidence intervals beside every test (21 November 2026; none yet for
+      the two-way analysis, and the pairs after tests on ranks have no interval).
 - [ ] Sphericity correction for the repeated-measures ANOVA.
 - [ ] UpSet plot, for more than three sets (Venn diagrams stop at three).
 - [ ] p values of the correlations in a heat map.
@@ -134,8 +135,10 @@ come). Rule 3 applies to every analysis still to build.
       paired design (each treated sample with its own control) (20 November 2026).
 - [x] qPCR: a picture of the plate (96 or 384 wells) from the wells the table names, coloured by
       condition, sample or target, with remarks ringed, and put on the page (20 November 2026).
-- [ ] Standard curves: a plate grid from a plate reader pasted as it is, with standards, blanks and
-      samples marked on the picture of the plate (the picture of `src/model/plate.ts` is ready for it).
+- [x] Standard curves: a plate grid from a plate reader pasted as it is, with standards, blanks and
+      samples marked on the picture of the plate (21 November 2026).
+- [x] A statistics report of the whole figure: every test with n, statistic, p, effect size and
+      interval as CSV, or every chart with its methods as text (21 November 2026).
 
 ## 6. Editing
 
@@ -143,9 +146,22 @@ come). Rule 3 applies to every analysis still to build.
 - [ ] Text boxes: numbered lists, vertical alignment.
 - [ ] Tables: cell colours, merged cells, column widths.
 - [ ] Resize, turn and connect objects from the keyboard.
+- [x] Copy style and paste style (⌥⌘C, ⌥⌘V) between objects (21 November 2026).
 
 ## Later
 
+Parked by rule 8 on 21 November 2026: they turn BioSketch towards processing instrument data.
+Taken up again only when the owner asks.
+
+- [ ] Purification table: yield, specific activity, fold purification worked out.
+- [ ] Line traces from instrument files: chromatograms with fractions, UV-Vis, CD and
+      fluorescence spectra.
+- [ ] Band quantification on a placed blot, normalised to a loading control, into a chart.
+- [ ] Sequence alignments with conservation colours, sequence logos, plasmid maps from GenBank.
+
+Other:
+
 - [ ] Working on one figure together (real time); Yjs is the planned route.
 - [ ] Sharing a figure or a project as one file to send to a colleague.
-- [ ] Fetch the templates only when their list is opened (first load is about 810 kB).
+- [x] Fetch the templates and the properties panel only when needed (first load from about 855
+      to about 570 kB, 21 November 2026).

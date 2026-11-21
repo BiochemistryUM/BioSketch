@@ -13,9 +13,10 @@ import { paletteId } from '../model/palettes'
 import { SHAPE_KINDS } from '../model/shapes'
 import { CELL_MAX, TABLE_COLS_MAX, TABLE_ROWS_MAX } from '../model/table'
 import { wellName } from '../model/tableRoles'
+import { SCALE_UNITS } from '../model/scaleBar'
 import { STRUCTURE_CHAINS_MAX, STRUCTURE_MARKS_MAX, STRUCTURE_RESIDUES_MAX } from '../model/structure'
 import { MAX_NOTES, MAX_SLIDES, MAX_STEPS, openSlide, uniqueIds, withSlides } from '../model/slides'
-import type { StandardModel, StandardSettings, KineticsSettings, BindingSettings, MeltSettings, FacetSettings, ChartNode, QpcrSettings, StructureChain, StructureMark, ChartBracket, ChartGroup, ChartKind, ChartTest, ConnectorKind, DashStyle, ElbowLegs, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign, Slide } from '../model/types'
+import type { ImageCrop, ImageScale, StandardModel, StandardSettings, KineticsSettings, BindingSettings, MeltSettings, FacetSettings, ChartNode, QpcrSettings, StructureChain, StructureMark, ChartBracket, ChartGroup, ChartKind, ChartTest, ConnectorKind, DashStyle, ElbowLegs, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign, Slide } from '../model/types'
 
 const num = (v: unknown, fallback: number, min = -1e6, max = 1e6): number =>
   typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback
@@ -152,6 +153,7 @@ function node(raw: unknown): FigNode | null {
         ...(FONTS.includes(o.fontFamily as FontFamily) && o.fontFamily !== 'sans' ? { fontFamily: o.fontFamily as FontFamily } : {}),
         ...(typeof o.width === 'number' && o.width > 0 ? { width: num(o.width, 300, TEXT_WIDTH_MIN, TEXT_WIDTH_MAX) } : {}),
         ...(bool(o.bullets) ? { bullets: true } : {}),
+        ...(bool(o.letter) ? { letter: true } : {}),
       }
     case 'connector': {
       const from = endpoint(o.from)
@@ -189,6 +191,8 @@ function node(raw: unknown): FigNode | null {
         w: num(o.w, 100, 1),
         h: num(o.h, 100, 1),
         rotation: num(o.rotation, 0),
+        ...imageScale(o.scale),
+        ...imageCrop(o.crop),
       }
     case 'structure': {
       // Every number is rebuilt: chains of residues with three coordinates each, within the limits.
@@ -388,6 +392,7 @@ function node(raw: unknown): FigNode | null {
         ...(kind === 'scatter' && bool(o.survival) ? { survival: true } : {}),
         ...(kind === 'scatter' && !bool(o.survival) && o.kinetics && typeof o.kinetics === 'object' ? { kinetics: kineticsSettings(o.kinetics) } : {}),
         ...(kind === 'scatter' && bool(o.survival) && bool(o.logRank) ? { logRank: true } : {}),
+        ...(kind === 'scatter' && bool(o.survival) && bool(o.atRisk) ? { atRisk: true } : {}),
         ...(kind === 'scatter' && !bool(o.survival) && !(o.kinetics && typeof o.kinetics === 'object') && o.binding && typeof o.binding === 'object' ? { binding: bindingSettings(o.binding) } : {}),
         ...(kind === 'scatter' && !bool(o.survival) && !(o.kinetics && typeof o.kinetics === 'object') && !(o.binding && typeof o.binding === 'object') && o.melt && typeof o.melt === 'object' ? { melt: meltSettings(o.melt) } : {}),
         ...(kind === 'scatter' && bool(o.fit) ? { fit: true } : {}),
@@ -427,6 +432,31 @@ function node(raw: unknown): FigNode | null {
     }
     default:
       return null
+  }
+}
+
+/** The part of a picture shown, rebuilt: shares of the whole inside it, or none (all of it). */
+function imageCrop(raw: unknown): { crop?: ImageCrop } {
+  const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null
+  if (!o) return {}
+  const [x, y, w, h] = [o.x, o.y, o.w, o.h].map((v) => (typeof v === 'number' && Number.isFinite(v) ? v : NaN))
+  if (!(x >= 0 && y >= 0 && w >= 0.02 && h >= 0.02 && x + w <= 1 + 1e-9 && y + h <= 1 + 1e-9)) return {}
+  if (x === 0 && y === 0 && w === 1 && h === 1) return {}
+  return { crop: { x, y, w, h } }
+}
+
+/** The scale of a micrograph, rebuilt: positive sizes in a known unit, or none at all. */
+function imageScale(raw: unknown): { scale?: ImageScale } {
+  const o = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null
+  if (!o) return {}
+  const pixel = typeof o.pixel === 'number' && Number.isFinite(o.pixel) && o.pixel > 0 && o.pixel < 1e6 ? o.pixel : null
+  const pixels = typeof o.pixels === 'number' && Number.isInteger(o.pixels) && o.pixels > 0 && o.pixels <= 100_000 ? o.pixels : null
+  const unit = SCALE_UNITS.find((u) => u === o.unit)
+  if (pixel === null || pixels === null || !unit) return {}
+  const bar = typeof o.bar === 'number' && Number.isFinite(o.bar) && o.bar > 0 && o.bar < 1e9 ? o.bar : 0
+  const corner = o.corner === 'bl' || o.corner === 'tl' || o.corner === 'tr' ? o.corner : undefined
+  return {
+    scale: { pixel, unit, pixels, bar, ...(corner ? { corner } : {}), ...(isHexColor(o.colour) ? { colour: normalizeHex(o.colour) } : {}), ...(o.label === false ? { label: false as const } : {}) },
   }
 }
 

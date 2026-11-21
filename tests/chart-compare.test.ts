@@ -239,6 +239,8 @@ describe('the text for the methods', () => {
       'Bars show the mean ± standard deviation (SD); points are single values. N = 6 per group. ' +
         'Control and Treated were compared with Welch’s t test (two-sided, not assuming equal variances). ' +
         'Result: t = -3.58, df = 9.98, p = 0.0051. ' +
+        'Effect size: Hedges’ g = 1.91 (difference of means over the pooled standard deviation, with Hedges’ exact small-sample correction). ' +
+        'The mean of Treated less that of Control was 1.68 (95 % confidence interval 0.634 to 2.73). ' +
         'Statistics were worked out in BioSketch, which gives the results of R 4.4 (t.test).',
     )
   })

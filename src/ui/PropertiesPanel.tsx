@@ -9,6 +9,8 @@ import {
   deleteSelection,
   distributeSelection,
   duplicateSelection,
+  copyStyle,
+  pasteStyle,
   groupSelection,
   lockSelection,
   orderSelection,
@@ -20,13 +22,14 @@ import {
   addPanels,
   addTableBeside,
   removeGuides,
+  addGrouped,
 } from '../actions'
 import { MISSING_ICON, nameFromId, getIcon } from '../icons/library'
 import { extractColors, isHexColor, normalizeHex } from '../icons/svg'
 import { finishReshape, startReshape } from '../icons/reshape'
 import { splitIcon } from '../icons/split'
 import { placeImageFile } from '../io/images'
-import { removeNodes } from '../model/doc'
+import { removeNodes, uid } from '../model/doc'
 import { MAX_NOTES, MAX_STEPS, colourSlides, slideList, slideSteps } from '../model/slides'
 import { TABLE_FONT, TABLE_HEAD_FILL, cellsText, fitTable, readCells, type TableLines } from '../model/table'
 import { SYMBOL_GROUPS, insertText, wrapSelection } from '../model/richtext'
@@ -93,7 +96,7 @@ import { PALETTES, paletteColours } from '../model/palettes'
 import { regionName, vennOf } from '../model/venn'
 import { TABLE_ACCEPT, tableFromFile } from '../io/tables'
 import { boxStats } from '../model/chartStats'
-import { STARS_KEY, TEST_DOES, TEST_NAMES, TEST_SHORT, pText, stars, testFor } from '../model/chartTests'
+import { EFFECT_DOES, STARS_KEY, TEST_DOES, TEST_NAMES, TEST_SHORT, differenceText, effectText, pText, stars, testFor } from '../model/chartTests'
 import { reversed } from '../model/connector'
 import { DASH_SCALE_MAX, DASH_SCALE_MIN, dashArray, hasDots, lineStyleOf, lineStylePatch, type Dashable, type LineStyle } from '../model/dash'
 import { growToFitLabel, realignText, SHAPE_LABEL_DEFAULT, TEXT_WIDTH_MAX, TEXT_WIDTH_MIN, textBoxed, textBulleted } from '../model/nodes'
@@ -115,6 +118,8 @@ import type {
   HeatScale,
   IconNode,
   ImageNode,
+  ImageScale,
+  ScaleUnit,
   LegendPlace,
   MembraneNode,
   PointShape,
@@ -133,12 +138,16 @@ import type {
   FacetSettings,
 } from '../model/types'
 import { STRUCTURE_COLOURS, TUBE, marksText, readMarks } from '../model/structure'
-import { IGNORE, STANDARD_MODELS, STANDARD_ROLES, readStandardText, standardGroups, standardTableText, withDilution } from '../model/standardTable'
+import { IGNORE, STANDARD_MODELS, STANDARD_ROLES, readStandardText, standardGroups, standardTableText, withDilution, type StandardTable } from '../model/standardTable'
+import { readPlates } from '../model/tableRoles'
 import { QPCR_ROLES, qpcrGroups, qpcrTableText, readQpcrText, withConditions } from '../model/qpcrTable'
 import { foldText, qpcrCells, qpcrMethods } from '../model/qpcrReport'
 import { isEfficiencyFit, readDilution } from '../model/qpcrEfficiency'
 import { qpcrPlate, type PlateColour } from '../model/qpcr'
+import { SCALE_UNITS, niceBar, scaleBarMarks } from '../model/scaleBar'
+import { blotLabelSize, cropImage, cropOf, ladderCrowded, ladderPlaces, laneLabels, markerLadder, readLaneNames, readSizes } from '../model/blot'
 import { PlateView } from './PlateView'
+import { PlateStandards } from './PlateStandards'
 import { cellsText as resultText, fitText, resultCells, sampleText, sig4, standardMethods } from '../model/standardReport'
 import { comparisonRows, fitLines, KINETICS_MODELS, kineticsCells, kineticsMethods } from '../model/kineticsReport'
 import { isFit, type KineticsFit, type NoFit } from '../model/kinetics'
@@ -845,6 +854,21 @@ function TextProps({ node, single }: { node: TextNode; single: boolean }) {
           <span>Bullet points</span>
         </label>
       </Field>
+      {/^[A-Za-z]$/.test(node.text.trim()) && (
+        <Field
+          label="Panel letter"
+          info={
+            <p>
+              Panel letters are renamed A, B, C … whenever the figure changes, in reading order: row by row from the top, left to right within a row. Move a letter to another panel and the letters follow. Letters
+              added with Panel letter or a panel layout are panel letters already.
+            </p>
+          }
+        >
+          <Check checked={!!node.letter} onChange={(v) => patch<TextNode>('text', { letter: v || undefined })}>
+            Keep in order with the other panel letters
+          </Check>
+        </Field>
+      )}
     </Section>
   )
 }
@@ -1645,7 +1669,20 @@ function StandardProps({ node }: { node: ChartNode }) {
   const live = typed && typed.groups === node.groups ? typed : null
   const text = live ? live.text : standardTableText(node)
   const reading = readStandardText(text, live?.chosen)
+  // A plate reader's grid is read by its layout of wells instead (`PlateStandards`).
+  const plates = useMemo(() => readPlates(text), [text])
+  const fromPlate = (table: StandardTable) => {
+    const { groups } = standardGroups(table)
+    const kept = groups.map((g, i) => ({ ...g, ...(node.groups[i]?.color ? { color: node.groups[i].color } : {}), ...(node.groups[i]?.shape ? { shape: node.groups[i].shape } : {}) }))
+    if (JSON.stringify(kept) === JSON.stringify(node.groups)) return
+    setTyped({ text, groups: kept })
+    set({ groups: kept }, 'chart-data')
+  }
   const read = (next: string, chosen?: string[]) => {
+    if (readPlates(next)) {
+      setTyped({ text: next, groups: node.groups })
+      return true
+    }
     const found = readStandardText(next, chosen)
     const { groups, dilution } = standardGroups(found.table)
     if (!found.table.standards.length && !found.table.samples.length) {
@@ -1742,7 +1779,12 @@ function StandardProps({ node }: { node: ChartNode }) {
                 }}
               />
             </Field>
-            {width > 0 && (
+            {plates && (
+              <Field label="Plate layout" setting="plate-layout">
+                <PlateStandards key={text} plates={plates} onTable={fromPlate} />
+              </Field>
+            )}
+            {width > 0 && !plates && (
               <Field label="What each column is" setting="roles">
                 <div className="role-row">
                   {reading.roles.map((role, i) => (
@@ -2613,6 +2655,7 @@ function ChartProps({ node }: { node: ChartNode }) {
         melt: choice === 'melt' ? {} : undefined,
         survival: undefined,
         logRank: undefined,
+        atRisk: undefined,
         fit: undefined,
         curve: undefined,
         doseBottom: undefined,
@@ -2644,7 +2687,7 @@ function ChartProps({ node }: { node: ChartNode }) {
         refLines: undefined,
       })
     }
-    if (survival) set({ survival: undefined, logRank: undefined })
+    if (survival) set({ survival: undefined, logRank: undefined, atRisk: undefined })
     onKind(choice)
   }
 
@@ -3280,6 +3323,15 @@ function ChartProps({ node }: { node: ChartNode }) {
                     <p>It is the interval R’s survfit gives by default (worked out on the logarithm of the share, with Greenwood’s variance), and it ends where the curve reaches zero.</p>
                   </Info>
                 </div>
+                <div className="with-info" data-setting="at-risk">
+                  <Check checked={!!node.atRisk} onChange={(v) => set({ atRisk: v || undefined })}>
+                    Show the number at risk under the time axis
+                  </Check>
+                  <Info about="The number at risk">
+                    <p>Under every number of the time axis, how many subjects of each group are still followed then: those whose event, or whose leaving the study, comes at that time or later.</p>
+                    <p>Journals ask for it under Kaplan–Meier curves, because a curve far to the right rests on few subjects. R gives the same numbers with summary(survfit(…), times = …)$n.risk.</p>
+                  </Info>
+                </div>
                 {lives.test ? (
                   <div className="test-result" aria-label="Result of the log-rank test">
                     <p>
@@ -3847,7 +3899,7 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
   }
   const result = outcome?.ok ? outcome.result : null
   const methods = methodsText(node)
-  const pairs = result ? result.pairs.map((p) => ({ from: compared.indexes[p.a], to: compared.indexes[p.b], a: compared.names[p.a], b: compared.names[p.b], p: p.p })) : []
+  const pairs = result ? result.pairs.map((p) => ({ from: compared.indexes[p.a], to: compared.indexes[p.b], a: compared.names[p.a], b: compared.names[p.b], p: p.p, diff: p.diff })) : []
   /** Brackets for the pairs the test finds different (with two groups: for the one pair, whatever it finds). */
   const addBrackets = () => {
     const out = withTestBrackets(node)
@@ -4027,6 +4079,29 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
               <b>{TEST_NAMES[result.test]}</b>: {result.statistic}, {pText(result.p)}
             </p>
           )}
+          {(result.effect || (k === 2 && pairs[0]?.diff)) && (
+            <div className="with-info">
+              <p>
+                {result.effect && <>Effect size: {effectText(result.effect)}</>}
+                {result.effect && k === 2 && pairs[0]?.diff && <br />}
+                {k === 2 && pairs[0]?.diff && (
+                  <>
+                    {pairs[0].b} − {pairs[0].a}: {differenceText(pairs[0].diff)}
+                  </>
+                )}
+              </p>
+              <Info about="Effect size and interval">
+                {result.effect && (
+                  <p>
+                    <b>{result.effect.name}</b>: {EFFECT_DOES[result.effect.name]}.
+                  </p>
+                )}
+                <p>A p value says how sure a difference is, not how large it is: with many values a tiny difference has a small p. Journals ask for both.</p>
+                {result.pairs.some((x) => x.diff) && <p>The difference of means comes with its 95 % confidence interval: the range that holds the true difference with 95 % confidence. {result.intervals ? `With several groups these are ${result.intervals}.` : ''}</p>}
+                <p>Every number here is the one R gives (t.test, TukeyHSD, multcomp, rstatix); the text for the methods names them.</p>
+              </Info>
+            </div>
+          )}
           {k > 2 && (
             <>
               <p className="hint">Pairs ({result.pairMethod}):</p>
@@ -4035,6 +4110,7 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
                   <li key={i}>
                     <span>
                       {p.a} and {p.b}: {p.p === null ? 'cannot be worked out' : `${pText(p.p)} (${stars(p.p)})`}
+                      {p.diff && `; ${p.b} − ${p.a} = ${differenceText(p.diff)}`}
                     </span>
                   </li>
                 ))}
@@ -4079,13 +4155,254 @@ function ChartTestProps({ node, set }: { node: ChartNode; set: (change: Partial<
   )
 }
 
-function ImageProps({ node }: { node: ImageNode }) {
+function ImageProps({ node, single }: { node: ImageNode; single: boolean }) {
   return (
     <Section title="Picture" info={<p>Drag a corner to resize the picture; hold Shift to stretch it. Arrows can attach to pictures.</p>}>
       <p className="hint">
         {Math.round(node.w)} × {Math.round(node.h)} on the page.
       </p>
+      {single && <CropSetting node={node} />}
+      {single && <ScaleBarSetting key={node.id} node={node} />}
+      {single && <BlotLabels key={`${node.id}-labels`} node={node} />}
     </Section>
+  )
+}
+
+/** Cropping: how much is cut off at each side, in per cent of the whole picture. The file itself is kept whole. */
+function CropSetting({ node }: { node: ImageNode }) {
+  const c = cropOf(node)
+  const cut = { left: c.x, right: 1 - c.x - c.w, top: c.y, bottom: 1 - c.y - c.h }
+  const setCut = (side: keyof typeof cut, percent: number) => {
+    const next = { ...cut, [side]: Math.min(0.98, Math.max(0, percent / 100)) }
+    patch<ImageNode>('image', (n) => cropImage(n, { x: next.left, y: next.top, w: 1 - next.left - next.right, h: 1 - next.top - next.bottom }), 'image-crop')
+  }
+  const pct = (v: number) => Math.round(v * 1000) / 10
+  return (
+    <Field
+      label="Crop"
+      setting="crop"
+      info={
+        <>
+          <p>Cut off part of the picture at each side, in per cent of the whole picture. What stays keeps its place and size on the page, and a scale bar stays right.</p>
+          <p>The picture itself is kept whole in the figure: set a side back to 0 to see it again. Journals ask that a cropped blot is shown whole in the supplement.</p>
+        </>
+      }
+    >
+      <div className="crop-grid">
+        {(['left', 'right', 'top', 'bottom'] as const).map((side) => (
+          <label key={side}>
+            <span>{side[0].toUpperCase() + side.slice(1)}</span>
+            <NumberInput label={`Cut from the ${side}, per cent`} value={pct(cut[side])} min={0} max={95} step={1} onChange={(v) => setCut(side, v)} />
+          </label>
+        ))}
+      </div>
+      {node.crop && (
+        <button className="btn small" onClick={() => patch<ImageNode>('image', (n) => cropImage(n, null), 'image-crop')}>
+          Show the whole picture
+        </button>
+      )}
+    </Field>
+  )
+}
+
+/** Names over the lanes and a ladder of marker sizes, put beside the picture as a group of ordinary objects. */
+function BlotLabels({ node }: { node: ImageNode }) {
+  const [lanes, setLanes] = useState('')
+  const [slanted, setSlanted] = useState(false)
+  const [margins, setMargins] = useState({ left: 0, right: 0 })
+  const [sizes, setSizes] = useState('250, 150, 100, 75, 50, 37, 25, 20, 15, 10')
+  const [ladder, setLadder] = useState({ side: 'left' as 'left' | 'right', top: 10, bottom: 90, unit: 'kDa' })
+  const mmPerUnit = useEditor((s) => (s.doc.widthMm && s.doc.width > 0 ? s.doc.widthMm / s.doc.width : null))
+  const fontSize = blotLabelSize(node.w, mmPerUnit)
+  const names = readLaneNames(lanes)
+  const read = readSizes(sizes)
+  return (
+    <>
+      <Field
+        label="Lane labels"
+        setting="lanes"
+        info={
+          <>
+            <p>One name per lane, one per line or with commas between them. They are spread evenly over the picture (less what you leave free at either side) and put above it as texts in one group: move or retype any of them afterwards.</p>
+            <p>Slant them when the names are long.</p>
+          </>
+        }
+      >
+        <textarea className="text-input" rows={3} aria-label="Names of the lanes" placeholder={'Marker\nControl\nTreated'} value={lanes} onChange={(e) => setLanes(e.target.value)} />
+        <div className="crop-grid">
+          <label>
+            <span>Free at left, %</span>
+            <NumberInput label="Share of the picture left free before the first lane, per cent" value={margins.left} min={0} max={45} step={1} onChange={(v) => setMargins({ ...margins, left: v })} />
+          </label>
+          <label>
+            <span>Free at right, %</span>
+            <NumberInput label="Share of the picture left free after the last lane, per cent" value={margins.right} min={0} max={45} step={1} onChange={(v) => setMargins({ ...margins, right: v })} />
+          </label>
+        </div>
+        <div className="row wrap">
+          <Check checked={slanted} onChange={setSlanted}>
+            Slanted
+          </Check>
+          <button
+            className="btn small"
+            disabled={!names.length}
+            onClick={() => {
+              addGrouped(laneLabels(node, names, { angle: slanted ? 45 : 0, fontSize, left: margins.left / 100, right: margins.right / 100 }, uid))
+              toast(`${names.length} lane ${names.length === 1 ? 'label' : 'labels'} added above the picture, in one group.`)
+            }}
+          >
+            Add {names.length || ''} lane {names.length === 1 ? 'label' : 'labels'}
+          </button>
+        </div>
+      </Field>
+      <Field
+        label="Marker ladder"
+        setting="ladder"
+        info={
+          <>
+            <p>The sizes of the marker bands, largest first or in any order. Say where the largest and the smallest band lie on the picture (in per cent of its height from the top); the bands between are placed by the logarithm of their size, the way proteins run.</p>
+            <p>Each size is a text with a short line, in one group beside the picture: move any of them onto its band if the gel ran unevenly.</p>
+          </>
+        }
+      >
+        <input className="text-input" aria-label="Sizes of the marker bands" value={sizes} onChange={(e) => setSizes(e.target.value)} />
+        <div className="crop-grid">
+          <label>
+            <span>Largest at, %</span>
+            <NumberInput label="Where the largest band lies, per cent of the height from the top" value={ladder.top} min={0} max={100} step={1} onChange={(v) => setLadder({ ...ladder, top: v })} />
+          </label>
+          <label>
+            <span>Smallest at, %</span>
+            <NumberInput label="Where the smallest band lies, per cent of the height from the top" value={ladder.bottom} min={0} max={100} step={1} onChange={(v) => setLadder({ ...ladder, bottom: v })} />
+          </label>
+          <label>
+            <span>Unit</span>
+            <input className="text-input" aria-label="Unit of the marker sizes" value={ladder.unit} onChange={(e) => setLadder({ ...ladder, unit: e.target.value })} />
+          </label>
+        </div>
+        <div className="row wrap">
+          <Segmented
+            label="Side of the ladder"
+            value={ladder.side}
+            options={[
+              { value: 'left', label: 'Left' },
+              { value: 'right', label: 'Right' },
+            ]}
+            onChange={(side) => setLadder({ ...ladder, side: side as 'left' | 'right' })}
+          />
+          <button
+            className="btn small"
+            disabled={!read.length}
+            onClick={() => {
+              addGrouped(markerLadder(node, read, { side: ladder.side, top: ladder.top / 100, bottom: ladder.bottom / 100, fontSize, unit: ladder.unit }, uid))
+              toast(`A ladder of ${read.length} sizes added beside the picture, in one group.`)
+            }}
+          >
+            Add the ladder
+          </button>
+        </div>
+        {read.length > 1 && ladderCrowded(ladderPlaces(read, ladder.top / 100, ladder.bottom / 100).map((p) => p * node.h), fontSize) && (
+          <p className="hint">These sizes lie too close for their numbers to stand level with their marks at this size, so thin lines will lead from each mark to its number. Leave some sizes out, or make the picture taller, to avoid them.</p>
+        )}
+      </Field>
+    </>
+  )
+}
+
+/** The width of a picture in pixels, read from its file. */
+function usePixelWidth(src: string): number | null {
+  const [width, setWidth] = useState<number | null>(null)
+  useEffect(() => {
+    let live = true
+    const img = new Image()
+    img.onload = () => live && setWidth(img.naturalWidth || null)
+    img.src = src
+    return () => {
+      live = false
+    }
+  }, [src])
+  return width
+}
+
+/** A micrograph's scale bar: the size of one pixel, typed once, and the bar drawn from it. */
+function ScaleBarSetting({ node }: { node: ImageNode }) {
+  const pixels = usePixelWidth(node.src)
+  const scale = node.scale
+  const [typed, setTyped] = useState(scale ? String(scale.pixel) : '')
+  const unit = scale?.unit ?? 'µm'
+  const setScale = (next: ImageScale | undefined) => patch<ImageNode>('image', (n) => (next ? { ...n, scale: next } : (({ scale: _s, ...rest }) => rest)(n)), 'image-scale')
+  const width = scale ? scale.pixel * scale.pixels : null
+  const onPixel = (text: string, u: ScaleUnit = unit) => {
+    setTyped(text)
+    const v = Number(text.replace(',', '.'))
+    if (!text.trim()) return setScale(undefined)
+    const count = scale?.pixels ?? pixels
+    if (!(v > 0) || !count) return
+    const bar = scale?.bar && scale.unit === u ? scale.bar : niceBar(v * count)
+    setScale({ ...(scale ?? {}), pixel: v, unit: u, pixels: count, bar })
+  }
+  const shown = scale ? scaleBarMarks(node) : null
+  return (
+    <Field
+      label="Scale bar"
+      setting="scale-bar"
+      info={
+        <>
+          <p>Type the size of one pixel of the picture, as the microscope’s software gives it (“pixel size”, “µm/px”, or the image width divided by its pixels). The bar is then drawn to that scale and stays right however the picture is resized.</p>
+          <p>Cropping the picture here keeps the bar right. If the picture was cropped or scaled before it was placed, the size of one pixel may have changed with it: work it out again from something of known length.</p>
+        </>
+      }
+    >
+      <div className="row">
+        <input className="text-input" inputMode="decimal" aria-label="Size of one pixel" placeholder="Size of one pixel" value={typed} onChange={(e) => onPixel(e.target.value)} style={{ maxWidth: 130 }} />
+        <select className="text-input" aria-label="Unit of the pixel size" value={unit} onChange={(e) => onPixel(typed, e.target.value as ScaleUnit)} style={{ maxWidth: 80 }}>
+          {SCALE_UNITS.map((u) => (
+            <option key={u} value={u}>
+              {u}
+            </option>
+          ))}
+        </select>
+        <span className="hint">per pixel</span>
+      </div>
+      {pixels !== null && <p className="hint">The picture is {pixels} pixels wide{width ? `, so ${Number(width.toPrecision(4))} ${unit} across` : ''}.</p>}
+      {pixels === null && !scale && <p className="hint">Reading the size of the picture…</p>}
+      {scale && (
+        <>
+          <div className="row">
+            <span className="hint">Bar of</span>
+            <NumberInput label="Length of the scale bar" value={scale.bar} min={0} max={1e6} step={niceBar(width ?? 10) / 2} onChange={(bar) => setScale({ ...scale, bar })} />
+            <span className="hint">{unit}</span>
+          </div>
+          {scale.bar > 0 && !shown && <p className="notice">A bar of this length does not fit the picture: choose a shorter one.</p>}
+          <Segmented
+            label="Corner of the scale bar"
+            value={scale.corner ?? 'br'}
+            options={[
+              { value: 'bl', label: 'Bottom left' },
+              { value: 'br', label: 'Bottom right' },
+              { value: 'tl', label: 'Top left' },
+              { value: 'tr', label: 'Top right' },
+            ]}
+            wrap
+            onChange={(c) => setScale(c === 'br' ? (({ corner: _c, ...rest }) => rest)(scale) : { ...scale, corner: c as 'bl' | 'tl' | 'tr' })}
+          />
+          <div className="row">
+            <Segmented
+              label="Colour of the scale bar"
+              value={scale.colour === '#000000' ? 'black' : 'white'}
+              options={[
+                { value: 'white', label: 'White' },
+                { value: 'black', label: 'Black' },
+              ]}
+              onChange={(c) => setScale(c === 'white' ? (({ colour: _c, ...rest }) => rest)(scale) : { ...scale, colour: '#000000' })}
+            />
+            <Check checked={scale.label !== false} onChange={(v) => setScale(v ? (({ label: _l, ...rest }) => rest)(scale) : { ...scale, label: false })}>
+              Write the length
+            </Check>
+          </div>
+        </>
+      )}
+    </Field>
   )
 }
 
@@ -4257,6 +4574,7 @@ function Arrange({ nodes }: { nodes: FigNode[] }) {
   const grouped = nodes.some((n) => n.groupId)
   const rotatable = nodes.length === 1 && (first.type === 'icon' || first.type === 'shape' || first.type === 'text' || first.type === 'image' || first.type === 'chart' || first.type === 'table')
   const units = new Set(nodes.map((n) => n.groupId ?? n.id)).size
+  const copied = useEditor((s) => !!s.copiedStyle)
   return (
     <Section title="Arrange">
       <div className="row wrap">
@@ -4295,6 +4613,14 @@ function Arrange({ nodes }: { nodes: FigNode[] }) {
         <button className="btn small" onClick={duplicateSelection}>
           <Icon name="copy" size={14} /> Duplicate
         </button>
+        <button className="btn small" title="Take the colours, lines and lettering of this object (⌥⌘C)" onClick={copyStyle}>
+          Copy style
+        </button>
+        {copied && (
+          <button className="btn small" title="Give the copied colours, lines and lettering to what is selected (⌥⌘V)" onClick={pasteStyle}>
+            Paste style
+          </button>
+        )}
         <button className="btn small" title="Fix in place so it cannot be moved by accident" onClick={lockSelection}>
           <Icon name="lock" size={14} /> Lock
         </button>
@@ -4686,7 +5012,7 @@ export function PropertiesPanel() {
         <>
           {nodes.length > 1 && <p className="selection-count">{nodes.length} objects selected</p>}
           {sameType && first.type === 'icon' && <IconProps node={first} single={nodes.length === 1} />}
-          {sameType && first.type === 'image' && <ImageProps node={first} />}
+          {sameType && first.type === 'image' && <ImageProps node={first} single={nodes.length === 1} />}
           {sameType &&
             first.type === 'chart' &&
             nodes.length === 1 &&

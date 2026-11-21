@@ -43,7 +43,7 @@ function start() {
           .getEntriesByType('resource')
           .map((entry) => entry.name)
           .filter((url) => url.startsWith(location.origin) && /\.(js|css|svg|png|webmanifest)$/.test(new URL(url).pathname))
-        const cache = await caches.open('biosketch-v7')
+        const cache = await caches.open('biosketch-v8')
         await Promise.all(own.map((url) => cache.add(url).catch(() => undefined)))
       })
       .catch(() => undefined)

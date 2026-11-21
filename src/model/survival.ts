@@ -94,6 +94,12 @@ export function survivalAt(km: KaplanMeier, time: number): number {
 }
 
 /**
+ * The number of subjects still followed at a time: those whose time (event or leaving) is that time
+ * or later, as R's `summary(survfit(...), times = t, extend = TRUE)$n.risk` gives it.
+ */
+export const atRiskAt = (subjects: Subject[], time: number): number => subjects.reduce((n, s) => n + (s.time >= time ? 1 : 0), 0)
+
+/**
  * The log-rank test for two or more groups (Mantel-Haenszel, R's `survdiff` with rho = 0): at every
  * time with events, the events of each group are compared with what its share of the subjects
  * still followed would lead one to expect; chi-squared with one degree of freedom fewer than
