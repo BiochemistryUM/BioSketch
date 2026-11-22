@@ -26,6 +26,7 @@ import {
 } from '../actions'
 import { MISSING_ICON, nameFromId, getIcon } from '../icons/library'
 import { extractColors, isHexColor, normalizeHex } from '../icons/svg'
+import { followShades } from '../icons/shades'
 import { finishReshape, startReshape } from '../icons/reshape'
 import { splitIcon } from '../icons/split'
 import { placeImageFile } from '../io/images'
@@ -532,10 +533,29 @@ function patch<T extends FigNode>(type: T['type'], change: Partial<T> | ((node: 
 
 // ---------- per-type sections ----------
 
+/** Whether the shades of an icon colour follow it (`followShades`): a preference kept in the browser, on unless turned off. */
+const SHADES_KEY = 'biosketch.shadesFollow'
+function loadShadesFollow(): boolean {
+  try {
+    return localStorage.getItem(SHADES_KEY) !== 'off'
+  } catch {
+    return true
+  }
+}
+function saveShadesFollow(on: boolean): void {
+  try {
+    if (on) localStorage.removeItem(SHADES_KEY)
+    else localStorage.setItem(SHADES_KEY, 'off')
+  } catch {
+    // Storage can be switched off; the choice then lasts while the page is open.
+  }
+}
+
 function IconProps({ node, single }: { node: IconNode; single: boolean }) {
   const doc = useEditor((s) => s.doc)
   const def = getIcon(doc, node.iconId)
   const reshaping = useEditor((s) => s.reshape?.nodeId === node.id)
+  const [follow, setFollow] = useState(loadShadesFollow)
   const colors = def ? extractColors(def.body).slice(0, 10) : []
   if (!def) {
     return (
@@ -557,24 +577,42 @@ function IconProps({ node, single }: { node: IconNode; single: boolean }) {
         </button>
       )}
       {colors.length > 0 && (
-        <Field label="Colours">
+        <Field
+          label="Colours"
+          info={
+            <p>
+              With <b>Shades follow</b> on, changing a colour also changes its darker and paler shades (the outline, shadow and highlight of that part), so the part keeps its light and shade. Colours of
+              another hue are left alone. Turn it off to change one colour only.
+            </p>
+          }
+        >
           <div className="swatches">
             {colors.map((c) => (
               <ColorInput
                 key={c}
                 label={`Replace colour ${c}`}
                 value={node.colors?.[c] ?? c}
-                onChange={(v) =>
+                onChange={(v) => {
+                  const change = follow ? followShades(extractColors(def.body), c, v) : { [c]: normalizeHex(v) }
                   patchSelection((n) => {
                     if (n.type !== 'icon' || n.iconId !== node.iconId) return n
-                    const next = { ...n.colors, [c]: v }
-                    if (v === c) delete next[c]
+                    const next = { ...n.colors, ...change }
+                    for (const [from, to] of Object.entries(change)) if (to === from) delete next[from]
                     return { ...n, colors: Object.keys(next).length ? next : undefined }
                   }, `icon-color-${c}`)
-                }
+                }}
               />
             ))}
           </div>
+          <Check
+            checked={follow}
+            onChange={(v) => {
+              setFollow(v)
+              saveShadesFollow(v)
+            }}
+          >
+            Shades follow
+          </Check>
         </Field>
       )}
       {def && /stroke/.test(def.body) && (
