@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getIcon, searchIcons } from '../src/icons/library'
-import { extractColors, iconMarkup, isHexColor, normalizeHex, parseSvgFile, plainSvgNames, prefixIds, recolor, sanitizeBody, scaleStrokes } from '../src/icons/svg'
+import { extractColors, hexColours, iconMarkup, isHexColor, normalizeHex, parseSvgFile, plainSvgNames, prefixIds, recolor, sanitizeBody, scaleStrokes } from '../src/icons/svg'
 import { TEMPLATES } from '../src/templates'
 import { example, stubIcon } from './helpers'
 
@@ -105,6 +105,31 @@ describe('files from drawing programs', () => {
     expect(parsed).toMatch(/<mask[^>]*><g[^>]*fill="#ffffff"/)
     expect(parsed).not.toContain('filter')
     expect(parsed).toContain('mask:url(#mask)')
+  })
+
+  it('reads colours written as rgb(), as Affinity writes them, so the icon can be recoloured', () => {
+    const parsed = parseSvgFile(
+      svg(
+        '<path d="M0 0h10v10z" style="fill:url(#_Linear1);stroke:rgb(163,72,59);stroke-width:4.58px;"/>' +
+          '<path d="M1 1h8v8z" style="fill:rgb(251,217,206);stroke:rgb(201,94,76);"/>' +
+          '<defs><linearGradient id="_Linear1"><stop offset="0" style="stop-color:rgb(242,160,140);stop-opacity:1"/><stop offset="1" stop-color="rgb(224, 122, 102)"/></linearGradient></defs>',
+      ),
+    ).body
+    expect(parsed).not.toMatch(/rgb/i)
+    expect(extractColors(parsed).sort()).toEqual(['#a3483b', '#c95e4c', '#e07a66', '#f2a08c', '#fbd9ce'])
+    expect(parsed).toContain('fill:url(#_Linear1)')
+    expect(recolor(parsed, { '#c95e4c': '#000080' })).toContain('stroke:#000080')
+  })
+
+  it('turns every way of writing an opaque rgb() colour into hex, and leaves the rest as written', () => {
+    expect(hexColours('rgb(201,94,76)')).toBe('#c95e4c')
+    expect(hexColours('fill: RGB( 201 , 94 , 76 ); stroke:rgb(201 94 76)')).toBe('fill: #c95e4c; stroke:#c95e4c')
+    expect(hexColours('rgb(100%, 0%, 50%)')).toBe('#ff0080')
+    expect(hexColours('rgb(10.4, 0, 255)')).toBe('#0a00ff')
+    expect(hexColours('rgba(1,2,3,1)')).toBe('#010203')
+    expect(hexColours('rgb(1 2 3 / 100%)')).toBe('#010203')
+    // See-through, out of range or not a colour at all: unchanged.
+    for (const kept of ['rgba(1,2,3,0.5)', 'rgb(1 2 3 / 50%)', 'rgb(300,0,0)', 'rgb(-1,0,0)', 'rgb(1,2)', 'rgb(a,b,c)', 'rgb()']) expect(hexColours(kept)).toBe(kept)
   })
 
   it('keeps links between parts of a drawing whatever prefix the file gives them', () => {

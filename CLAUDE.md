@@ -619,6 +619,9 @@ The owner's to-do list, in order of priority, is `docs/todo.md`.
   taken off the elements (`plainSvgNames`) and a link is recognised by its namespace, not its
   spelling; once, such links were dropped and every clipped part of a drawing vanished. Any
   check on the raw text must allow for the prefix too (the importer's test for embedded pictures).
+- Affinity writes colours as `rgb(201,94,76)` inside `style`, and recolouring only knows hex codes: an
+  imported icon from Affinity once had "0 recolourable colours". `parseSvgFile` turns every opaque
+  `rgb()` into hex (`hexColours`); a see-through `rgba()` is left as written and cannot be recoloured.
 - Illustrator writes a fade as a mask drawn through a filter that inverts it. Filters are not
   kept, so the inversion is worked out when the file is read (`bakeNegativeMasks`); without it
   the drawing is hidden exactly where it should show.

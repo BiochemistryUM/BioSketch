@@ -470,6 +470,26 @@ export function plainSvgNames(text: string): string {
   return text.replace(new RegExp(`<(/?)${prefix}:`, 'g'), '<$1').replace(new RegExp(`\\sxmlns:${prefix}\\s*=`), ' xmlns=')
 }
 
+/**
+ * Colours written as `rgb(201,94,76)` (Affinity writes them so) as hex codes (`#c95e4c`), the only
+ * spelling recolouring knows. Percentages and the newer `rgb(201 94 76)` are read too, and an `rgba`
+ * that is fully opaque. A colour that is partly see-through, or out of range, is left as written:
+ * it keeps its look, it just cannot be recoloured.
+ */
+export function hexColours(value: string): string {
+  return value.replace(/rgba?\(([^()]*)\)/gi, (m, inner: string) => {
+    const parts = inner.trim().split(/\s*[,/]\s*|\s+/)
+    if (parts.length === 4) {
+      const alpha = parts.pop() as string
+      if (!/^(?:1(?:\.0*)?|100(?:\.0*)?%)$/.test(alpha)) return m
+    }
+    if (parts.length !== 3) return m
+    const channels = parts.map((p) => (/^\d*\.?\d+%$/.test(p) ? (Number(p.slice(0, -1)) * 255) / 100 : /^\d*\.?\d+$/.test(p) ? Number(p) : NaN))
+    if (channels.some((n) => !(n >= 0 && n <= 255))) return m
+    return `#${channels.map((n) => Math.round(n).toString(16).padStart(2, '0')).join('')}`
+  })
+}
+
 /** Read an SVG file chosen by the user and reduce it to safe, self-contained icon markup. */
 export function parseSvgFile(text: string): ParsedSvg {
   const root = parseRoot(plainSvgNames(text))
@@ -478,6 +498,8 @@ export function parseSvgFile(text: string): ParsedSvg {
   bakeNegativeMasks(root)
   unwrap(root)
   clean(root)
+  for (const el of Array.from(root.querySelectorAll('*')))
+    for (const attr of Array.from(el.attributes)) if (/rgba?\(/i.test(attr.value)) el.setAttribute(attr.name, hexColours(attr.value))
   dropDanglingEffects(root)
   settleShading(root)
   const vb = (root.getAttribute('viewBox') ?? '')
