@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>Ions</title>
+<defs></defs>
+<g id="cation"><circle cx="141" cy="187" r="115" fill="#12B382"/></g>
+<g id="anion"><circle cx="382.5" cy="336.5" r="103.5" fill="#00ACBA"/></g>
+<g id="positive-charge"><path d="M98.6,187 L183.4,187" fill="none" stroke="#DDF5E9" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/><path d="M141,144.6 L141,229.4" fill="none" stroke="#DDF5E9" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g id="negative-charge"><path d="M340.1,336.5 L424.9,336.5" fill="none" stroke="#D8F5F8" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/></g>
+</svg>

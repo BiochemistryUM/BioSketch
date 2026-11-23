@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>Inclusion criteria</title>
+<defs><linearGradient id="sheet-gradient" x1="65.4" y1="29.4" x2="384.8" y2="462" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FDFCF9"/><stop offset="1" stop-color="#F0EEEA"/></linearGradient></defs>
+<g id="sheet"><path d="M86,29.4 H364.2 A20.6,20.6 0 0 1 384.8,50 V441.4 A20.6,20.6 0 0 1 364.2,462 H86 A20.6,20.6 0 0 1 65.4,441.4 V50 A20.6,20.6 0 0 1 86,29.4 Z" fill="url(#sheet-gradient)" stroke="#7D7A73" stroke-width="5" stroke-linejoin="round"/><path d="M129.3,115.9 L320.9,115.9 M129.3,172.2 L320.9,172.2 M129.3,228.4 L320.9,228.4 M129.3,284.6 L320.9,284.6 M129.3,340.9 L244.3,340.9" fill="none" stroke="#8F9397" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g id="included"><g id="included-sign"><circle cx="364.2" cy="400.2" r="84" fill="#0A7E3A" stroke="#0A7E3A" stroke-width="1.7" stroke-linejoin="round"/><path d="M325.6,403.7 L351.9,430 L402.7,373.9" fill="none" stroke="#FFFFFF" stroke-width="10.5" stroke-linecap="round" stroke-linejoin="round"/></g></g>
+</svg>

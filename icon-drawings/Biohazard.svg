@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>Biohazard</title>
+<defs></defs>
+<g id="biohazard"><path d="M239.5,85.1 L245,77.2 L250.5,72.5 L256,70.9 L261.5,72.5 L267,77.2 L272.5,85.1 L474.5,432.5 L478.6,441.1 L480,448.3 L478.6,453.8 L474.5,457.7 L467.7,460.1 L458.1,460.9 L53.9,460.9 L44.3,460.1 L37.5,457.7 L33.4,453.8 L32,448.3 L33.4,441.1 L37.5,432.5Z" fill="#FADE4E" stroke="#2A2E33" stroke-width="6.7" stroke-linejoin="round"/><g id="biohazard-symbol"><circle cx="256" cy="334" r="60.9" fill="none" stroke="#2A2E33" stroke-width="8" stroke-linejoin="round"/><circle cx="256" cy="288.3" r="48.2" fill="#2A2E33"/><circle cx="295.6" cy="356.8" r="48.2" fill="#2A2E33"/><circle cx="216.4" cy="356.8" r="48.2" fill="#2A2E33"/><circle cx="256" cy="270.6" r="34.3" fill="#FADE4E"/><circle cx="310.9" cy="365.7" r="34.3" fill="#FADE4E"/><circle cx="201.1" cy="365.7" r="34.3" fill="#FADE4E"/><path d="M256,334 L282.4,318.8 M256,334 L256,364.5 M256,334 L229.6,318.8" fill="none" stroke="#FADE4E" stroke-width="4.3" stroke-linecap="butt" stroke-linejoin="round"/><circle cx="256" cy="334" r="12.7" fill="#FADE4E"/></g></g>
+</svg>

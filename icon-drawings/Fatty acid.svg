@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>Fatty acid</title>
+<defs><linearGradient id="head-gradient" x1="29" y1="214.6" x2="131.4" y2="317" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FCE2D3"/><stop offset="1" stop-color="#F3CBB4"/></linearGradient></defs>
+<g id="chain"><path d="M80.2,265.8 L133.6,265.8 L191.5,232.4 L249.3,265.8 L307.2,232.4 L365,265.8 L422.9,232.4 L480.7,265.8" fill="none" stroke="#AF6E45" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g id="head"><circle cx="80.2" cy="265.8" r="51.2" fill="url(#head-gradient)" stroke="#AF6E45" stroke-width="6" stroke-linejoin="round"/></g>
+</svg>

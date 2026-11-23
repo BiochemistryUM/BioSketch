@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>Phospholipid</title>
+<defs><linearGradient id="head-gradient" x1="184.3" y1="35.1" x2="312.5" y2="163.4" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FCE2D3"/><stop offset="1" stop-color="#F3CBB4"/></linearGradient></defs>
+<g id="tails"><path d="M210.4,208.5 L192.6,238.1 L228.2,267.6 L192.6,297.2 L228.2,326.7 L192.6,356.3 L228.2,385.8 L192.6,415.4 L228.2,444.9 L210.4,474.5" fill="none" stroke="#AF6E45" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M286.4,208.5 L304.2,239.4 L268.6,270.3 L304.2,301.1 L286.4,332 L281.1,367.1 L325.5,382.4 L303.7,424.1 L331.5,446" fill="none" stroke="#AF6E45" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M210.4,208.5 L286.4,208.5" fill="none" stroke="#AF6E45" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/><path d="M248.4,208.5 L248.4,180" fill="none" stroke="#AF6E45" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g id="head-group"><circle cx="248.4" cy="99.3" r="64.1" fill="url(#head-gradient)" stroke="#AF6E45" stroke-width="6" stroke-linejoin="round"/></g>
+<g id="phosphate"><circle cx="248.4" cy="180" r="24.9" fill="#B79400"/><g id="phosphate-letter"><path d="M241.4,193 L241.4,167 L248.1,167 C257,167 257,181 248.1,181 L241.4,181" fill="none" stroke="#F6EED8" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/></g></g>
+</svg>

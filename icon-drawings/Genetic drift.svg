@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>Genetic drift</title>
+<defs></defs>
+<g id="axes"><path d="M43.9,29.5 L43.9,458.4 L468.1,458.4" fill="none" stroke="#808080" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g id="lost"><path d="M72.8,256 L90.7,270.5 L108.5,246.4 L126.3,227.1 L144.2,241.5 L162,212.6 L179.8,231.9 L197.7,203 L215.5,222.3 L233.3,246.4 L251.2,227.1 L269,260.8 L286.8,280.1 L304.7,265.6 L322.5,299.4 L340.4,328.3 L358.2,313.8 L376,352.4 L393.9,386.1 L411.7,419.9 L429.5,458.4" fill="none" stroke="#D87F35" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/><circle cx="429.5" cy="458.4" r="25.1" fill="#D87F35" stroke="#9E5200" stroke-width="3"/></g>
+<g id="fixed"><path d="M72.8,256 L90.7,236.7 L108.5,260.8 L126.3,275.3 L144.2,256 L162,284.9 L179.8,270.5 L197.7,246.4 L215.5,265.6 L233.3,231.9 L251.2,212.6 L269,227.1 L286.8,193.3 L304.7,207.8 L322.5,174.1 L340.4,150 L358.2,164.4 L376,125.9 L393.9,106.6 L411.7,121 L429.5,82.5 L447.4,53.6" fill="none" stroke="#7294EE" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/><circle cx="447.4" cy="53.6" r="25.1" fill="#7294EE" stroke="#4563B9" stroke-width="3"/></g>
+</svg>

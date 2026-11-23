@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>Dot plot</title>
+<defs></defs>
+<g id="axes"><path d="M30.5,36 L30.5,476 L480.5,476" fill="none" stroke="#868686" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g id="low"><circle cx="120.5" cy="106" r="13.5" fill="#7294EE"/><circle cx="220.5" cy="206" r="13.5" fill="#7294EE"/><circle cx="320.5" cy="306" r="13.5" fill="#7294EE"/><circle cx="420.5" cy="406" r="13.5" fill="#7294EE"/></g><g id="middle"><circle cx="220.5" cy="106" r="27" fill="#B97CD3"/><circle cx="420.5" cy="106" r="20.3" fill="#B97CD3"/><circle cx="320.5" cy="206" r="20.3" fill="#B97CD3"/><circle cx="120.5" cy="306" r="20.3" fill="#B97CD3"/><circle cx="420.5" cy="306" r="27" fill="#B97CD3"/><circle cx="220.5" cy="406" r="20.3" fill="#B97CD3"/></g><g id="high"><circle cx="320.5" cy="106" r="40.5" fill="#E2726C"/><circle cx="120.5" cy="206" r="33.8" fill="#E2726C"/><circle cx="420.5" cy="206" r="47.3" fill="#E2726C"/><circle cx="220.5" cy="306" r="40.5" fill="#E2726C"/><circle cx="120.5" cy="406" r="47.3" fill="#E2726C"/><circle cx="320.5" cy="406" r="33.8" fill="#E2726C"/></g>
+</svg>

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>Mass spectrum</title>
+<defs><linearGradient id="spectrum-gradient" x1="28.5" y1="62.6" x2="483.5" y2="449.4" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FDFCF9"/><stop offset="1" stop-color="#F0EEEA"/></linearGradient></defs>
+<g id="spectrum"><g id="spectrum-card"><rect x="28.5" y="62.6" width="455" height="386.8" rx="27.3" fill="url(#spectrum-gradient)" stroke="#7D7A73" stroke-width="5.1" stroke-linejoin="round"/></g><g id="spectrum-axes"><path d="M78.6,100.2 L78.6,399.3 L446,399.3" fill="none" stroke="#2A2E33" stroke-width="6.8" stroke-linecap="round" stroke-linejoin="round"/></g><g id="spectrum-series1"><path d="M113.4,397 L113.4,277.2 M138.2,397 L138.2,185.8 M166.5,397 L166.5,331.4 M191.3,397 L191.3,208.7 M219.6,397 L219.6,100.2 M244.3,397 L244.3,248.6 M272.6,397 L272.6,302.9 M297.4,397 L297.4,154.4 M325.7,397 L325.7,237.2 M354,397 L354,331.4 M385.8,397 L385.8,262.9 M410.6,397 L410.6,345.7" fill="none" stroke="#657EBC" stroke-width="8.9" stroke-linecap="butt" stroke-linejoin="round"/></g></g>
+</svg>

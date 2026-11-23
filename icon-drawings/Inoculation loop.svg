@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>Inoculation loop</title>
+<defs><linearGradient id="handle-gradient" x1="47.5" y1="315.3" x2="193.1" y2="460.9" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#DEE8FF"/><stop offset="1" stop-color="#C4D4FA"/></linearGradient></defs>
+<g id="film"><circle cx="406.3" cy="107.3" r="61.4" fill="#FFE9E2"/><ellipse cx="385.5" cy="86.5" rx="21.6" ry="9.5" transform="rotate(-45 385.5 86.5)" fill="#FFF8F6"/></g>
+<g id="wire"><path d="M172.3,336.1 L358.5,155.1" fill="none" stroke="#767B81" stroke-width="10.7" stroke-linecap="round"/><circle cx="406.3" cy="107.3" r="67.6" fill="none" stroke="#767B81" stroke-width="10.7"/><path d="M172.3,336.1 L358.5,155.1" fill="none" stroke="#D0D5DA" stroke-width="4.6" stroke-linecap="round"/><circle cx="406.3" cy="107.3" r="67.6" fill="none" stroke="#D0D5DA" stroke-width="4.6"/></g>
+<g id="handle"><path d="M33.9,426.7 L158.9,301.7 L206.7,349.5 L81.7,474.5 Z" fill="url(#handle-gradient)" stroke="#657EBC" stroke-width="5.1" stroke-linejoin="round"/><path d="M73.5,369.9 L125.5,317.9" fill="none" stroke="#F8FAFF" stroke-width="3.1" stroke-linecap="round" stroke-linejoin="round"/></g>
+</svg>

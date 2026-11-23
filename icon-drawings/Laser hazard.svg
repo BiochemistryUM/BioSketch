@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>Laser hazard</title>
+<defs></defs>
+<g id="laser"><path d="M239.5,75.1 L245,67.2 L250.5,62.5 L256,60.9 L261.5,62.5 L267,67.2 L272.5,75.1 L474.5,422.5 L478.6,431.1 L480,438.3 L478.6,443.8 L474.5,447.7 L467.7,450.1 L458.1,450.9 L53.9,450.9 L44.3,450.1 L37.5,447.7 L33.4,443.8 L32,438.3 L33.4,431.1 L37.5,422.5Z" fill="#FADE4E" stroke="#2A2E33" stroke-width="6.7" stroke-linejoin="round"/><g id="laser-symbol"><circle cx="219.9" cy="324" r="20.3" fill="#2A2E33"/><path d="M219.9,290.2 L219.9,269.9 M243.8,300.1 L258.2,285.7 M253.7,324 L274,324 M243.8,347.9 L258.2,362.3 M219.9,357.8 L219.9,378.1 M196,347.9 L181.6,362.3 M186.1,324 L165.8,324 M196,300.1 L181.6,285.7" fill="none" stroke="#2A2E33" stroke-width="7.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M238,324 L341.7,324" fill="none" stroke="#2A2E33" stroke-width="8.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M337.2,308.2 L364.3,324 L337.2,339.8Z" fill="#2A2E33"/></g></g>
+</svg>

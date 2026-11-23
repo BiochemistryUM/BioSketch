@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+<title>UV hazard</title>
+<defs></defs>
+<g id="uv"><path d="M239.5,75.1 L245,67.2 L250.5,62.5 L256,60.9 L261.5,62.5 L267,67.2 L272.5,75.1 L474.5,422.5 L478.6,431.1 L480,438.3 L478.6,443.8 L474.5,447.7 L467.7,450.1 L458.1,450.9 L53.9,450.9 L44.3,450.1 L37.5,447.7 L33.4,443.8 L32,438.3 L33.4,431.1 L37.5,422.5Z" fill="#FADE4E" stroke="#2A2E33" stroke-width="6.7" stroke-linejoin="round"/><g id="uv-symbol"><circle cx="256" cy="301.4" r="20.3" fill="#2A2E33"/><path d="M256,267.6 L256,247.3 M279.9,277.5 L294.3,263.2 M289.8,301.4 L310.1,301.4 M279.9,325.4 L294.3,339.7 M256,335.3 L256,355.6 M232.1,325.4 L217.7,339.7 M222.2,301.4 L201.9,301.4 M232.1,277.5 L217.7,263.2" fill="none" stroke="#2A2E33" stroke-width="7.6" stroke-linecap="round" stroke-linejoin="round"/><g id="uv-symbol-letters"><path d="M225.1,371.4 L225.1,398.2 C225.1,414.4 249.5,414.4 249.5,398.2 L249.5,371.4 M260.1,371.4 L273.5,412 L286.9,371.4" fill="none" stroke="#2A2E33" stroke-width="4.1" stroke-linecap="round" stroke-linejoin="round"/></g></g></g>
+</svg>
