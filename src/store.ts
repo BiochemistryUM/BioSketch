@@ -73,8 +73,10 @@ export interface EditorState {
   slidesShown: boolean
   /** The slides are being shown full screen, one after the other. */
   presenting: boolean
-  /** The animations panel is open in the place of the properties panel. */
+  /** The animations panel is open (beside the properties panel in a wide window, in its place otherwise). */
   animations: boolean
+  /** The animations of the open slide being played on the page, from press `from` to press `to`; `n` makes a repeat a new request. */
+  playing: { from: number; to: number; n: number } | null
   /** The page shown as seen with a colour-vision deficiency (`src/model/vision.ts`); null = as it is. Never exported. */
   vision: VisionKind | null
   /** The light or the dark look of the interface (not of the figure). */
@@ -146,6 +148,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   slidesShown: false,
   presenting: false,
   animations: false,
+  playing: null,
   vision: null,
   theme: startTheme(),
   favouriteIcons: storedFavourites(),

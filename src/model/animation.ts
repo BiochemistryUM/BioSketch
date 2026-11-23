@@ -19,11 +19,17 @@ export const DEFAULT_MS = 500
 export const MIN_MS = 100
 export const MAX_MS = 5000
 
-export const EFFECT_KINDS: Effect['kind'][] = ['fade', 'fly', 'wipe', 'zoom']
+export const EFFECT_KINDS: Effect['kind'][] = ['fade', 'fly', 'float', 'wipe', 'split', 'circle', 'zoom']
 export const SIDES: Side[] = ['left', 'right', 'top', 'bottom']
 
+/** The sides an effect can take: none for most, two for a split (sideways or up and down). */
+export const sidesOf = (kind: Effect['kind']): Side[] => (kind === 'fly' || kind === 'float' || kind === 'wipe' ? SIDES : kind === 'split' ? ['left', 'top'] : [])
+
 /** True for effects that have a side. */
-export const hasSide = (kind: Effect['kind']): boolean => kind === 'fly' || kind === 'wipe'
+export const hasSide = (kind: Effect['kind']): boolean => sidesOf(kind).length > 0
+
+/** The side an effect takes when none is stated. */
+const usualSide = (kind: Effect['kind']): Side => (kind === 'float' ? 'bottom' : 'left')
 
 /** An effect as read from a file or an AI answer: every field checked, null when it is not one. */
 export function readEffect(raw: unknown): Effect | null {
@@ -31,16 +37,16 @@ export function readEffect(raw: unknown): Effect | null {
   const o = raw as Record<string, unknown>
   const kind = EFFECT_KINDS.find((k) => k === o.kind)
   if (!kind) return null
-  const from = hasSide(kind) ? SIDES.find((s) => s === o.from) : undefined
+  const from = sidesOf(kind).find((s) => s === o.from)
   const ms = typeof o.ms === 'number' && Number.isFinite(o.ms) ? Math.round(Math.min(MAX_MS, Math.max(MIN_MS, o.ms))) : undefined
-  return { kind, ...(from && from !== 'left' ? { from } : {}), ...(ms !== undefined && ms !== DEFAULT_MS ? { ms } : {}) }
+  return { kind, ...(from && from !== usualSide(kind) ? { from } : {}), ...(ms !== undefined && ms !== DEFAULT_MS ? { ms } : {}) }
 }
 
 /** How long an effect takes. */
 export const effectMs = (fx: Effect): number => fx.ms ?? DEFAULT_MS
 
 /** The side of an effect that has one. */
-export const effectSide = (fx: Effect): Side => fx.from ?? 'left'
+export const effectSide = (fx: Effect): Side => (fx.from && sidesOf(fx.kind).includes(fx.from) ? fx.from : usualSide(fx.kind))
 
 /** True when the object is drawn after `step` presses of its slide. */
 export const shownAt = (n: FigNode, step: number): boolean => !n.hidden && (n.appear ?? 0) <= step && !(n.exit !== undefined && n.exit <= step)
@@ -324,6 +330,32 @@ export function layerFrames(layer: Layer, width: number, height: number): [Frame
       shown.transform = 'translate(0, 0)'
       break
     }
+    case 'float': {
+      // A short way, fading as it goes: a tenth of the slide.
+      const shift = side === 'left' ? 'translate(-10%, 0)' : side === 'right' ? 'translate(10%, 0)' : side === 'top' ? 'translate(0, -10%)' : 'translate(0, 10%)'
+      hidden = { opacity: 0, transform: shift }
+      Object.assign(shown, { opacity: 1, transform: 'translate(0, 0)' })
+      break
+    }
+    case 'split': {
+      // From a line through the middle of the object outwards.
+      const t = pct(Math.max(0, top))
+      const l = pct(Math.max(0, left))
+      const r = pct(Math.max(0, 1 - right))
+      const btm = pct(Math.max(0, 1 - bottom))
+      const cx = (left + right) / 2
+      const cy = (top + bottom) / 2
+      hidden = { clipPath: side === 'top' ? `inset(${pct(cy)} ${r} ${pct(1 - cy)} ${l})` : `inset(${t} ${pct(1 - cx)} ${btm} ${pct(cx)})` }
+      shown.clipPath = `inset(${t} ${r} ${btm} ${l})`
+      break
+    }
+    case 'circle': {
+      // A circle (an ellipse on the slide's shares) growing from the middle until it holds the whole box.
+      const at = `at ${pct((left + right) / 2)} ${pct((top + bottom) / 2)}`
+      hidden = { clipPath: `ellipse(0% 0% ${at})` }
+      shown.clipPath = `ellipse(${pct(((right - left) / 2) * Math.SQRT2)} ${pct(((bottom - top) / 2) * Math.SQRT2)} ${at})`
+      break
+    }
     case 'wipe': {
       // Clipped to nothing at the side it comes from, then to the whole slide.
       const t = pct(Math.max(0, top))
@@ -363,5 +395,11 @@ export function effectName(fx: Effect | null, way: 'in' | 'out'): string {
       return way === 'in' ? `Fly in from the ${side}` : `Fly out to the ${side}`
     case 'wipe':
       return way === 'in' ? `Wipe in from the ${side}` : `Wipe out to the ${side}`
+    case 'float':
+      return way === 'in' ? `Float in from the ${side}` : `Float out to the ${side}`
+    case 'split':
+      return way === 'in' ? (side === 'top' ? 'Split in, up and down' : 'Split in, sideways') : side === 'top' ? 'Split out, up and down' : 'Split out, sideways'
+    case 'circle':
+      return way === 'in' ? 'Circle in' : 'Circle out'
   }
 }

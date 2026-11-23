@@ -61,8 +61,11 @@ export type Side = 'left' | 'right' | 'top' | 'bottom'
 
 /** An animation of an object while its slide is presented (`src/model/animation.ts`). */
 export interface Effect {
-  kind: 'fade' | 'fly' | 'wipe' | 'zoom'
-  /** For `fly` and `wipe`: the side. Absent = left. */
+  kind: 'fade' | 'fly' | 'float' | 'wipe' | 'split' | 'circle' | 'zoom'
+  /**
+   * For `fly`, `float` and `wipe`: the side. For `split`: left (opening sideways from the middle) or
+   * top (opening up and down). Absent = the effect's usual side (`effectSide`).
+   */
   from?: Side
   /** How long it takes, in milliseconds. Absent = 500. */
   ms?: number

@@ -7,6 +7,7 @@ import { nodeLabel } from './model/describe'
 import { findNode } from './model/nodes'
 import { useEditor } from './store'
 import { Icon } from './ui/Icon'
+import { PagePlayer } from './ui/PagePlayer'
 import { Dialogs, LazyAnimationsPanel, LazyPropertiesPanel } from './ui/lazyDialogs'
 import { LibraryPanel } from './ui/LibraryPanel'
 import { PanelResizer } from './ui/PanelResizer'
@@ -16,6 +17,21 @@ import { ToolRail } from './ui/ToolRail'
 import { TopBar } from './ui/TopBar'
 
 const isWide = () => window.innerWidth >= 1000
+
+/** Wide enough for the animations panel beside the properties panel. */
+const ROOMY = '(min-width: 1280px)'
+
+function useRoomy(): boolean {
+  const [roomy, setRoomy] = useState(() => window.matchMedia?.(ROOMY).matches ?? true)
+  useEffect(() => {
+    const list = window.matchMedia?.(ROOMY)
+    if (!list) return
+    const change = () => setRoomy(list.matches)
+    list.addEventListener('change', change)
+    return () => list.removeEventListener('change', change)
+  }, [])
+  return roomy
+}
 
 function EmptyState() {
   // Only for a figure that is still one empty page: an example takes the place of the whole figure,
@@ -73,9 +89,11 @@ export function App() {
   const showSlides = useEditor((s) => s.slidesShown || !!s.doc.slides)
   const [showLibrary, setShowLibrary] = useState(isWide)
   const [propsWanted, setShowProps] = useState(isWide)
-  // The animations panel takes the place of the properties panel, and opens it when it was closed.
+  // The animations panel stands beside the properties panel in a wide window, and in its place otherwise.
   const animations = useEditor((s) => s.animations)
-  const showProps = propsWanted || animations
+  const roomy = useRoomy()
+  const showProps = animations && !roomy ? false : propsWanted
+  const rightSide = showProps || animations
 
   useEffect(() => installKeyboard(), [])
   // Search asked for icons: the library must be open to show them.
@@ -85,14 +103,17 @@ export function App() {
   }, [libraryRequest])
 
   return (
-    <div className={`app${showLibrary ? ' with-library' : ''}${showProps ? ' with-props' : ''}${showSlides ? ' with-slides' : ''}`}>
+    <div className={`app${showLibrary ? ' with-library' : ''}${rightSide ? ' with-props' : ''}${showSlides ? ' with-slides' : ''}`}>
       <TopBar
         showLibrary={showLibrary}
         showProps={showProps}
         onToggleLibrary={() => setShowLibrary((v) => !v)}
         onToggleProps={() => {
-          if (animations) useEditor.setState({ animations: false })
-          setShowProps(animations ? true : (v) => !v)
+          // In a narrow window the animations panel is in the properties panel's place: the button brings the properties back.
+          if (animations && !roomy) {
+            useEditor.setState({ animations: false })
+            setShowProps(true)
+          } else setShowProps((v) => !v)
         }}
       />
       <div className="workspace">
@@ -102,11 +123,13 @@ export function App() {
           <div className="stage-page">
             <Canvas />
             <EmptyState />
+            <PagePlayer />
           </div>
           {showSlides && <SlideStrip />}
         </main>
+        {animations && <LazyAnimationsPanel />}
         {showProps && <PanelResizer />}
-        {showProps && (animations ? <LazyAnimationsPanel /> : <LazyPropertiesPanel />)}
+        {showProps && <LazyPropertiesPanel />}
       </div>
       <Dialogs />
       <Presenter />

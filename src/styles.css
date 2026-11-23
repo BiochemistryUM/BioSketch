@@ -235,7 +235,8 @@ h2 {
 
 @media (max-width: 999px) {
   .library,
-  .properties {
+  .properties,
+  .anim-panel {
     position: absolute;
     top: 0;
     bottom: 0;
@@ -245,7 +246,8 @@ h2 {
   .library {
     left: var(--rail);
   }
-  .properties {
+  .properties,
+  .anim-panel {
     right: 0;
   }
   .panel-resizer {
@@ -3192,6 +3194,293 @@ button.link {
 
 /* ---------- animations panel (AnimationsPanel.tsx) ---------- */
 
+/* Beside the properties panel in a wide window; in its place (and as wide) otherwise. */
+.anim-panel {
+  width: 296px;
+  border-left: 1px solid var(--border);
+}
+
+@media (max-width: 1279px) {
+  .anim-panel {
+    width: var(--props-width, 340px);
+  }
+}
+
+.anim-play {
+  padding: 0 12px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.anim-play-row {
+  display: flex;
+  gap: 6px;
+}
+
+.anim-play-row .btn {
+  padding: 0 9px;
+}
+
+.anim-play-main {
+  flex: 1;
+}
+
+.anim-stop {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.anim-auto {
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.anim-target {
+  margin-top: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.anim-ways {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--hover);
+  margin-bottom: 8px;
+}
+
+.anim-ways button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.anim-ways button.on {
+  background: var(--field);
+  color: inherit;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.fx-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  --fx: #2e9d5b;
+}
+
+.fx-tiles.out {
+  --fx: #d1453b;
+}
+
+.fx-tile {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 7px 2px 5px;
+  min-height: 58px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field);
+  font: inherit;
+  font-size: 11.5px;
+  color: inherit;
+}
+
+.fx-tile:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.fx-tile:disabled {
+  opacity: 0.45;
+}
+
+.fx-tile.on {
+  border-color: var(--fx);
+  box-shadow: inset 0 0 0 1px var(--fx);
+}
+
+.fx-tile svg {
+  width: 30px;
+  height: 24px;
+  overflow: visible;
+}
+
+.fx-mark {
+  fill: var(--fx);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.fx-frame {
+  fill: none;
+  stroke: var(--fx);
+  stroke-width: 1.2;
+  opacity: 0.55;
+}
+
+.fx-frame.dashed {
+  stroke-dasharray: 2 2;
+}
+
+.fx-rays {
+  fill: none;
+  stroke: var(--fx);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+/* The small picture of a tile plays its effect while the pointer is on the tile; an exit plays backwards. */
+@media (prefers-reduced-motion: no-preference) {
+  .fx-tile:hover:not(:disabled) .fx-mark {
+    animation: 0.9s ease-out infinite both;
+  }
+  .fx-tiles.out .fx-tile:hover:not(:disabled) .fx-mark {
+    animation-direction: reverse;
+  }
+  .fx-plain:hover .fx-mark {
+    animation-name: fx-appear !important;
+  }
+  .fx-fade:hover .fx-mark {
+    animation-name: fx-fade !important;
+  }
+  .fx-fly:hover .fx-mark {
+    animation-name: fx-fly !important;
+  }
+  .fx-float:hover .fx-mark {
+    animation-name: fx-float !important;
+  }
+  .fx-wipe:hover .fx-mark {
+    animation-name: fx-wipe !important;
+  }
+  .fx-split:hover .fx-mark {
+    animation-name: fx-split !important;
+  }
+  .fx-circle:hover .fx-mark,
+  .fx-zoom:hover .fx-mark {
+    animation-name: fx-zoom !important;
+  }
+}
+
+@keyframes fx-appear {
+  0%,
+  45% {
+    opacity: 0;
+  }
+  50%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes fx-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes fx-fly {
+  from {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+}
+
+@keyframes fx-float {
+  from {
+    transform: translateY(5px);
+    opacity: 0;
+  }
+}
+
+@keyframes fx-wipe {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+}
+
+@keyframes fx-split {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes fx-zoom {
+  from {
+    transform: scale(0.1);
+    opacity: 0;
+  }
+}
+
+.anim-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 8px;
+  margin-top: 10px;
+}
+
+.anim-remove {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin-top: 2px;
+}
+
+.anim-empty {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.anim-empty b {
+  color: var(--text, inherit);
+}
+
+/* The slide played on the page (PagePlayer): over the page, in the page's own place and size, cut to the canvas. */
+.page-player-clip {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.page-player {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.page-player-note {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  transform: translateX(-50%);
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .anim-head {
   display: flex;
   align-items: center;
@@ -3206,53 +3495,6 @@ button.link {
 
 .anim-head .spacer {
   flex: 1;
-}
-
-.anim-preview {
-  padding: 0 12px 10px;
-  border-bottom: 1px solid var(--border);
-}
-
-.anim-screen {
-  position: relative;
-  aspect-ratio: 16 / 10;
-  background: var(--hover);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.anim-screen .anim-box {
-  inset: 6px;
-}
-
-.anim-controls {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.anim-count {
-  flex: 1;
-  text-align: center;
-  font-size: 12px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.anim-way {
-  margin-bottom: 4px;
-}
-
-.anim-way-more {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 8px;
-}
-
-.anim-way-more .field:only-child {
-  grid-column: 1 / -1;
 }
 
 .anim-summary {
@@ -3383,4 +3625,9 @@ button.link {
     width: 40px;
     height: 40px;
   }
+}
+
+.anim-settings select {
+  width: 100%;
+  min-width: 0;
 }
