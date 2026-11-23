@@ -143,7 +143,7 @@ const rrect = (g, x0, y0, x1, y1, r) => {
 // ---------------------------------------------------------------------------------------------------------------------
 {
   const g = page(5.2, [-7.9, 8.6]), w = objW(90 * g.k)
-  const lc = [21, -20], R = 13
+  const lc = [21, -20], R = 7.5
   const wireW = Math.max(4, w * 0.9), cx = lc[0] - R * Math.SQRT1_2, cy = lc[1] + R * Math.SQRT1_2
   const wireD = `M${g.P([-24, 24]).map(f).join(',')} L${g.P([cx, cy]).map(f).join(',')}`
   const ring = (stroke, sw) => `<circle cx="${f(g.X(lc[0]))}" cy="${f(g.Y(lc[1]))}" r="${f(R * g.k)}" fill="none" stroke="${stroke}" stroke-width="${f(sw)}"/>`

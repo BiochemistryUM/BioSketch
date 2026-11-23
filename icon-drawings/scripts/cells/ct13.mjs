@@ -14,7 +14,7 @@
 // osteoid yellow-green (Osteoblast, Osteocyte), every nucleus lilac. Nothing is lettered: no original writes a label.
 // Usage: node ct13.mjs <folder>
 import { mkdirSync } from 'node:fs'
-import { NUC, PEACH, cellTypes, page } from '../cellkit.mjs'
+import { IVORY, NUC, PEACH, cellTypes, page } from '../cellkit.mjs'
 import { deep, hueOf, rich, soft, toHex } from '../colour.mjs'
 import { f } from '../shapes.mjs'
 import { arrow, placeCellType, vessel } from '../parts/tissue.mjs'
@@ -34,7 +34,7 @@ const ACHR = soft(160) // receptors, green as in Synapse
 const STEM = soft(163) // SiliCoDraw's green neural stem cell (#5fae8b)
 const CSF = soft(200) // cerebrospinal fluid: aqua, clear of the vein's blue (SiliCoDraw's pale blue is the vein's hue)
 const ARTERY = deep(hueOf('#f3c6c6')), VEIN = deep(262) // artery and vein are known by their colours: the vessel's rose and SiliCoDraw's vein blue, fuller
-const BONE = soft(70), OSTEOID = rich(110) // the approved Osteocyte and Osteoblast
+const BONE = IVORY, OSTEOID = rich(110) // the approved Osteocyte and Osteoblast (ivory since the review of 23 November 2026)
 const OSTEOCLAST = soft(218), OSTEOBLAST = soft(258) // approved 222° and 255° lie 33° apart: moved to 40° apart
 const MARROW = deep(10) // red marrow, a fuller rose: SiliCoDraw's 25° lies 27° from the adipocyte's peach (52°)
 // Greys (chroma below 0.012): BioSketch never recolours them with a part, so they are not listed for the hue check.
@@ -44,7 +44,7 @@ const INK = grey(0.5, 0.008) // arrows that are not the colour of anything
 const GHOST = toHex({ l: 0.74, c: 0.004, h: 50 }) // what is gone (as Synapse loss)
 // Cortical bone round marrow fat: an ivory near grey. Bone's tan (70°) lies 18° from the adipocyte's peach and 26° from
 // its fat; as a grey it never recolours with them.
-const IVORY = { light: toHex({ l: 0.985, c: 0.004, h: 85 }), base: toHex({ l: 0.95, c: 0.011, h: 85 }), shadow: toHex({ l: 0.89, c: 0.011, h: 85 }), small: toHex({ l: 0.76, c: 0.011, h: 85 }), outline: toHex({ l: 0.58, c: 0.011, h: 85 }) }
+// (IVORY is cellkit's bone.)
 
 // ---------- helpers ----------
 const boxGrad = (id, pal) => `<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${pal.base}"/><stop offset="1" stop-color="${pal.shadow}"/></linearGradient>`

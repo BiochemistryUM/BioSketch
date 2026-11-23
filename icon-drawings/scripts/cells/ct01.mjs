@@ -128,14 +128,17 @@ const shine = (g, x, y, r, pal) => g.hl(x - r * 0.42, y - r * 0.45, f(r * g.k * 
 // Microtubule: a tube built of tubulin dimers, alpha and beta tubulin in turn along it.
 // (Corrected: SiliCoDraw sets the two kinds like a chessboard in two rows of seven; in a microtubule neighbours across the
 // tube are of one kind, each row a little further along than the one before, so the kinds form slanting rings. Three rows of
-// eight here: whole dimers, alpha at one end and beta at the other.)
+// eight here: whole dimers, alpha at one end and beta at the other.
+// After the review of 23 November 2026 the tube is no longer a closed rounded box, which read as a tray of beads: it is a
+// cylinder seen from the side, its right end open, so that the hollow shows.)
 {
   const g = page(4.87, [0, 0]), tube = soft(TUBE), alpha = deep(ALPHA)
-  const xs = [-36.75, -26.25, -15.75, -5.25, 5.25, 15.75, 26.25, 36.75], rows = [[-10.4, -1.3], [0, 0], [10.4, 1.3]]
+  const xs = [-36.75, -26.25, -15.75, -5.25, 5.25, 15.75, 26.25, 36.75].map((x) => x - 5), rows = [[-10.4, -1.3], [0, 0], [10.4, 1.3]]
   const beads = (odd, fill) => rows.map(([y, dx]) => xs.filter((_, i) => i % 2 === odd).map((x) => g.circle(x + dx, y, 4.7, fill)).join('')).join('')
+  const wall = g.D('M-42,-18 L42,-18 C48.7,-18 48.7,18 42,18 L-42,18 C-48.7,18 -48.7,-18 -42,-18 Z')
   cellType('Microtubule', [['tube', tube], ['alpha tubulin', alpha]],
     g.grad('tube-gradient', [-46, -18, 46, 18], tube),
-    `<g id="tube">${g.path(rrect(g, -46, -18, 92, 36, 8), 'url(#tube-gradient)', tube.outline, 12)}</g>\n` +
+    `<g id="tube">${g.path(wall, 'url(#tube-gradient)', tube.outline, 12)}</g>\n<g id="lumen">${g.ellipse(42, 0, 5, 18, 0, tube.small, tube.outline, 8)}</g>\n` +
       `<g id="beta-tubulin">${beads(1, tube.small)}</g>\n` +
       `<g id="alpha-tubulin">${beads(0, alpha.outline)}</g>`)
 }

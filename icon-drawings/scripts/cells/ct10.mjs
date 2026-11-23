@@ -1,6 +1,6 @@
 // Eight icons of SiliCoDraw's "Cells & tissues" (github.com/Alex-D-C/SiliCoDraw, MIT, © 2026 Alexander David Carlsson;
 // see ../../LICENSE-SiliCoDraw.txt), redrawn in the soft look of icon-drawings/STYLE.md with the kit in ../cellkit.mjs:
-// signalling (G protein, calcium signalling, caspase, JAK-STAT, Notch signalling), IVF and two stained sections (H and E,
+// signalling (G protein, calcium signalling, caspase, JAK-STAT, Notch signalling), ICSI and two stained sections (H and E,
 // TUNEL). Their shapes are read by hand from the source in a 100 × 100 box centred on 0,0 and scaled onto a 512 page.
 // Nothing is lettered: SiliCoDraw names the subunits, GTP, Ca²⁺, JAK, STAT, Delta and Notch in letters; here each is a
 // shape of its own colour, and a phosphate is a small mustard dot (see each icon).
@@ -10,6 +10,7 @@
 // Usage: node ct10.mjs <folder>
 import { BLUE, NUC, PEACH, cellTypes, circleD, page } from '../cellkit.mjs'
 import { deep, hueOf, rich, soft, toHex } from '../colour.mjs'
+import { DARK } from '../parts/lab.mjs'
 import { f } from '../shapes.mjs'
 
 const OUT = process.argv[2]
@@ -149,17 +150,18 @@ function toHexHue(pal) { return hueOf(pal.base) }
 // ---------- Caspase ----------
 // The enzyme (rose) with its active site, and scissors cutting a protein chain (amber) in two: caspases are proteases.
 // (SiliCoDraw's substrate is a plain blue bar over open scissors; here it is a chain of amber beads in two pieces, the
-// cut between them.)
+// cut between them. After the review of 23 November 2026 the blades are wider and the chain longer with larger beads:
+// thin blades tipped with three beads read as scissors with beaded tips.)
 {
   const g = page(4.83, [0.7, -10.9]), enzyme = soft(CASPASE), chain = rich(CHAIN), steel = grey(260)
-  const bead = (pts) => pts.map(([x, y]) => g.circle(x, y, 3.6, 'url(#chain-gradient)', chain.outline, 6)).join('')
+  const bead = (pts) => pts.map(([x, y]) => g.circle(x, y, 4.8, 'url(#chain-gradient)', chain.outline, 6)).join('')
   cellType('Caspase', [['caspase', enzyme], ['substrate', chain], ['scissors', steel]],
     g.grad('enzyme-gradient', [-44, -28, 10, 22], enzyme) + boxGrad('chain-gradient', chain),
     `<g id="caspase">${g.path(g.smooth([[-44, 0], [-30, -22], [-6, -28], [10, -14], [6, 6], [-10, 22], [-32, 20], [-44, 10]]), 'url(#enzyme-gradient)', enzyme.outline, 12)}` +
       `${g.hl(-29, -14, 24, 8, -35, enzyme.light)}${g.path(g.smooth([[-24, -2], [-18, -6], [-12, -3], [-12, 4], [-18, 6], [-23, 4]]), enzyme.small)}</g>\n` +
-      `<g id="scissors">${g.line([[13, -36], [34, 10]], steel.outline, 12)}${g.line([[33, -36], [12, 10]], steel.outline, 12)}` +
+      `<g id="scissors">${g.line([[13, -34], [34, 10]], steel.outline, 19)}${g.line([[33, -34], [12, 10]], steel.outline, 19)}` +
       `${[[10, 17], [36, 17]].map(([x, y]) => g.circle(x, y, 6.5, steel.light, steel.outline, 9)).join('')}${g.circle(23, -12.3, 2.2, steel.small)}</g>\n` +
-      `<g id="substrate">${bead([[2, -36], [8, -39.5], [14, -42]])}${bead([[32, -42], [38, -39.5], [44, -36]])}</g>`)
+      `<g id="substrate">${bead([[-7, -34], [0.5, -38.5], [8, -41], [15.5, -42.5]])}${bead([[30.5, -42.5], [38, -41], [45, -38.5]])}</g>`)
 }
 
 // ---------- JAK-STAT ----------
@@ -210,7 +212,7 @@ function toHexHue(pal) { return hueOf(pal.base) }
       envelope(g, nx, ny, nr))
 }
 
-// ---------- IVF ----------
+// ---------- ICSI (SiliCoDraw: IVF; what is drawn is sperm injection) ----------
 // The approved Oocyte (inside its zona pellucida, with its nucleus and polar body) and a glass needle from the right that
 // brings a sperm into it, as in ICSI. (SiliCoDraw's needle comes from the top right and its words "in vitro" are left
 // out. The sperm is teal: the blue of the approved Sperm is the blue of the zona.)
@@ -222,7 +224,7 @@ function toHexHue(pal) { return hueOf(pal.base) }
   const ny0 = cy + 1, tip = 10
   // The needle: a glass tube that narrows to a bevelled tip.
   const needle = g.D(`M50,${ny0 - 5.2} L${tip + 9},${ny0 - 3.4} L${tip},${ny0 - 3.6} L${tip + 4},${ny0 + 3.4} L50,${ny0 + 5.2} Z`)
-  cellType('IVF', [['oocyte', egg], ['zona pellucida', zona], ['nucleus', NUC], ['sperm', sperm], ['needle', glass]],
+  cellType('ICSI', [['oocyte', egg], ['zona pellucida', zona], ['nucleus', NUC], ['sperm', sperm], ['needle', glass]],
     g.grad('zona-gradient', [O[0] - R(44), O[1] - R(44), O[0] + R(44), O[1] + R(44)], zona) + ballGrad(g, 'cell-gradient', cx, cy, R(30), egg) +
       ballGrad(g, 'polar-body-gradient', px, py, R(3.6), egg) + ballGrad(g, 'nucleus-gradient', nx, ny, R(12), NUC) + g.grad('needle-gradient', [tip, ny0 - 6, 50, ny0 + 6], glass),
     `<g id="perivitelline-space">${g.circle(...O, R(37), zona.light)}</g>\n` +
@@ -255,9 +257,11 @@ function toHexHue(pal) { return hueOf(pal.base) }
 // A field of a stained section: most nuclei are unstained (pale blue-grey), the nuclei of apoptotic cells, whose broken DNA
 // TUNEL labels, are green, smaller and denser, one of them in pieces. (SiliCoDraw shows a dark fluorescence field with
 // a glow round each green nucleus and writes "TUNEL⁺"; here the field is pale like the other icons of the set, the
-// green is the label's, and the glow is a pale green rim.)
+// green is the label's, and the glow is a pale green rim.
+// After the review of 23 November 2026 the field is the dark screen grey of the other fluorescence pictures (FISH image,
+// Immunofluorescence, Calcium imaging), the counterstained nuclei a fuller blue and the glow a dim green rim.)
 {
-  const g = page(4.69, [0, 0]), field = grey(FIELD), plain = soft(COUNTERSTAIN), label = deep(TUNEL), halo = soft(TUNEL)
+  const g = page(4.69, [0, 0]), field = DARK, plain = deep(COUNTERSTAIN), label = deep(TUNEL), halo = { base: toHex({ l: 0.5, c: 0.09, h: TUNEL }) }
   const unstained = [[-30, -18, 7.5, 20], [-6, -2, 8, -15], [26, -18, 7, 35], [-34, 12, 7, -30], [4, 22, 7.5, 10], [34, 8, 7, -10]]
   const positive = [[22, 18, 5.5], [-15, 22, 5], [8, -23, 5]], pieces = [[11.5, -3, 2.6], [16.5, -0.5, 3.2], [13, 4.4, 2.4]]
   cellType('TUNEL assay', [['field', field], ['unstained nuclei', plain], ['TUNEL-positive nuclei', label]],

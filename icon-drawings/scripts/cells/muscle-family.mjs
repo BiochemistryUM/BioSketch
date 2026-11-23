@@ -113,8 +113,8 @@ fitted('Myoblast', (g) => fieldCell(g, myoblastField(), { id: 'myoblast', scale:
 // ---------- 5–7. Smooth muscle cells ----------
 // 1: the classic spindle with a long central, cigar-shaped nucleus. 2: longer and thinner, slightly bent.
 // 3: contracted: shorter and wider, the membrane drawn into blebs, the nucleus twisted into a corkscrew.
-fitted('Smooth muscle cell 1', (g) => spindleCell(g, { scale: 1, length: 100, aspect: 6.6, bend: 2, taper: 1.1, w: 10, pal: SMOOTH, nucleus: { ratio: 0.28, size: 34 }, shine: { length: 14, near: 35 } }))
-fitted('Smooth muscle cell 2', (g) => spindleCell(g, { scale: 1, length: 100, width: 10, bend: 5, taper: 1.35, w: 9, turn: -12, pal: SMOOTH, nucleus: { ratio: 0.22, size: 26 }, shine: { length: 14, near: 40 } }))
+fitted('Smooth muscle cell (spindle)', (g) => spindleCell(g, { scale: 1, length: 100, aspect: 6.6, bend: 2, taper: 1.1, w: 10, pal: SMOOTH, nucleus: { ratio: 0.28, size: 34 }, shine: { length: 14, near: 35 } }))
+fitted('Smooth muscle cell (long, thin)', (g) => spindleCell(g, { scale: 1, length: 100, width: 10, bend: 5, taper: 1.35, w: 9, turn: -12, pal: SMOOTH, nucleus: { ratio: 0.22, size: 26 }, shine: { length: 14, near: 40 } }))
 
 /**
  * A corkscrew nucleus along x (the nucleus of a contracted smooth muscle cell): a long nucleus whose middle line winds
@@ -138,7 +138,7 @@ function corkscrew(g, { x, y, length, half, turns = 2.5, wave = 1.6, id = 'nucle
 {
   const base = spindleField({ length: 62, width: 24, bend: 2, taper: 0.75 })
   const fd = { ...base, field: (u, v) => base.field(u, v) - 0.75 * Math.sin(u * 0.42 + (v > 0 ? 1.9 : 0.3)) }
-  fitted('Smooth muscle cell 3', (g) => {
+  fitted('Smooth muscle cell (contracted)', (g) => {
     const r = fieldCell(g, fd, { id: 'smooth-muscle-cell', scale: 1, w: 10, pal: SMOOTH, shine: { length: 11, near: 22 } })
     const n = corkscrew(g, { x: 0.5, y: 0, length: 32, half: 4.2, id: 'smooth-muscle-cell-nucleus', w: 9 })
     return { ...join(r, n), pts: r.pts }

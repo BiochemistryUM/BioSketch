@@ -269,7 +269,55 @@ Saved the same day with the owner's approval (553 icons in this folder afterward
   the colours of pathogens, receptors, cytokines, vessels and epidemiological status). Organs, mould, malaria parasite,
   helminth, hand, globe and map are drawn in their own icons. "Inverted CD4-CD8 ratio" has a dash because a colon is
   not allowed in Windows file names.
+- Anatomy, 112 icons, saved later on 23 November 2026 (843 icons in this folder afterwards): `anatomy/anA.mjs` to
+  `anN.mjs`, built from `parts/anatomy.mjs` (organ by kind and state, brain with lit regions, eye, ear, skin in section,
+  tooth, bone, vertebra, joint, bloodVessel by kind, muscle, lesion, flame; its top comment sets the organ colours and how a
+  highlighted or diseased part is shown: a deeper tone of the organ). Organs are glossed, bones, teeth and tubes flat.
+  Drawn in their own icons: skull, foot, hand, rib cage, hip, capillary bed, spinal cord, nerve, ovary, breast, placenta,
+  adrenal gland, braces, the menstrual cycle wheel. Names changed from SiliCoDraw: Oesophagus, Haemorrhage, GH–IGF-1
+  axis, Skin and hair follicle, Skin ageing, Hair greying. Known weak ones: Vertebral compression fracture close to Spine,
+  the gap of Hip fracture about a pixel at 40 px, Placenta mauve and the Menstrual cycle periwinkle (kept apart in hue
+  from their neighbours).
+- Organisms, 122 icons, saved later on 23 November 2026 (965 icons in this folder afterwards): `organisms/orA.mjs` to
+  `orP.mjs`, built from `parts/organisms.mjs` (mammal, face, bat, seaMammal, fish, bird, amphibian, reptile, insect,
+  arthropod, invertebrate, plant, fungus, micro, human, scene, plantCell; its top comment sets the colours of each family,
+  one eye for every animal, and which bodies are glossed: only closed round ones such as yeast, egg, pollen, Volvox).
+  Animals face left as SiliCoDraw draws them; flat animals are seen from above, head up; cat, hamster and macaque are faces.
+  The nematode is the `worm` of `parts/assays.mjs`, which now takes `pal` (the dark Dauer larva, drawn wavy because the
+  part cannot spiral). Drawn in their own icons: the medal of Centenarian, the thermometer, the balance of Dysbiosis, the
+  limb of Limb regeneration, the killifish eggs, the soil and fungal sheath of Mycorrhiza, the organs of worms. Names
+  changed from SiliCoDraw: Slime mould, Ageing companion dog. Known weak ones: Ageing companion dog close to Dog, Plant
+  growth stages small, Slime mould and Stoma pale, Mosquito legs thin at 40 px.
 Twenty-two large scenes are over 40 kB, as they were before the gloss (Karyotype, Brown adipocyte, Heteroplasmy, …).
+
+After the review of all 965 icons (23 November 2026, `icon-work/review/REVIEW.md`), with the owner's go-ahead:
+- Names: Ageing cell atlas, Proteomic ageing clock, Heart (section) (was "Heart (anatomical)"), Smooth muscle cell
+  (spindle), (long, thin) and (contracted) (were 1, 2, 3), Transmission electron microscope, Super-resolution microscopy,
+  Two-photon microscopy, NF-κB, Tortoise (was "Turtle"), ICSI (was "IVF": a needle injects the sperm), Stem
+  cross-section (was "Vascular bundle").
+- Bone has one colour: `IVORY` of `scripts/cellkit.mjs`, a near grey as the bones of Anatomy (Osteoblast, Osteoclast,
+  Osteocyte and Bone remodelling unit stood on sand before). `cells/tissue.mjs` therefore no longer gives the icons of
+  22 November byte for byte.
+- The lysosome part holds three small pieces of cargo, not one large lump that read as a nucleus (Lysosome and the scenes
+  with a large lysosome). Microtubule is an open tube. Recombination shows two chromatids side by side, each with the
+  other's colour below the point of exchange. Mitochondrial DNA and Heteroplasmy are the owner's mitochondrion (short
+  cristae clear of the DNA). TUNEL assay is a dark fluorescence field. Pedigree is flat. `geneBlock` takes `letterScale`
+  (Operon). Eleven icons were centred or given their margins.
+- Kept on purpose, although they differ from the same thing elsewhere: the blue antibodies of Serology and Surface
+  plasmon resonance (amber lies within 36° of the plasma and of the gold film), the red-brown liver of FGF21 (the tan of
+  the organ part lies beside the lipids' peach), Antagonist high on its page (it lines up with Agonist and Partial
+  agonist), and arrows in the colour of what moves in the early cell scenes.
+- Removed as drawn twice (owner's choice; 961 icons in this folder afterwards): Cell (3D, face on) and Hepatocyte (3D,
+  face on), the same as Cell and Hepatocyte since every cell has the gloss; Red blood cell (3D, face on), the same
+  drawing as Red blood cell, which `molecules/shaded.mjs` now writes under that name; NAD precursor, the subject of NMN
+  and NR. The four files are kept in `icon-work/review/before/deleted/`.
+- Weak icons improved the same day (list and reasons in the review): no sign on Blinding; a larger mouse in the `arena`
+  part; a small Inoculation loop; Coronary artery with wide, deeper arteries (`plaque: true` of the heart); the crushed
+  vertebra in a deeper tone; Skin with one hair; larger amygdala and hypothalamus in the `brain` part; the old dog in a
+  faded coat (`OLD_DOG`); wider mosquito legs; deeper `SLIME`, guard cells in `GUARD`; the peroxisome's core without a
+  cross; the Monocyte's nucleus with blunt ends; Caspase with a longer chain; "p16" lettered.
+- Not changed: `Mitochondrion.svg` (3 to 5 px from the page edges) and `Golgi apparatus.svg` (56 px low). Other icons
+  place them by reading these files, and neither comes out of a script as it is saved.
 
 `scripts/mitokit.mjs` holds the owner's mitochondrion as functions (palette and proportions of `Mitochondrion.svg`);
 `mito-dynamics.mjs` draws fission, fusion, damage and the network with it. `scripts/iconkit.mjs` places any icon of this

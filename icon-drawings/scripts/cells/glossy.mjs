@@ -16,7 +16,7 @@
 //   bodies (bone, matrix, zona, myelin, vessels, other organelles, the red blood cells beside other cells) are left as
 //   they are.
 // - Nuclei (every gradient in the nucleus colours): one flat fill, the outline, no highlight.
-// - Red blood cell: the approved face-on red blood cell (`Red blood cell (3D, face on).svg`) under its name.
+// - Red blood cell: the approved face-on red blood cell, kept as it is (`Red blood cell.svg`, written by ../molecules/shaded.mjs).
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -182,7 +182,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const found = {}
   for (const s of SOURCES) for (const name of CELL_TYPES) { const p = join(work, s.replace(/\W+/g, '-'), `${name}.svg`); try { found[name] = readFileSync(p, 'utf8') } catch {} }
   for (const name of CELL_TYPES) {
-    if (name === 'Red blood cell') { writeFileSync(join(out, `${name}.svg`), readFileSync(join(ICONS, 'Red blood cell (3D, face on).svg'), 'utf8').replace(/<title>[^<]*<\/title>/, `<title>${name}</title>`)); continue }
+    if (name === 'Red blood cell') { writeFileSync(join(out, `${name}.svg`), readFileSync(join(ICONS, 'Red blood cell.svg'), 'utf8').replace(/<title>[^<]*<\/title>/, `<title>${name}</title>`)); continue }
     if (!found[name]) { console.log(`not drawn by any script: ${name}`); continue }
     writeFileSync(join(out, `${name}.svg`), glossy(found[name]))
   }

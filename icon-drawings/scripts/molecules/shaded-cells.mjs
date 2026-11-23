@@ -15,8 +15,8 @@ const icon = (name, p) => cellType(name, p.parts, p.defs, p.body)
 const g = page(4.6, [0, 0]) // 100 units fill the page less margins of 26 px
 
 icon('Cell (3D)', cell3d(g, { x: 0, y: 0, size: 100, kind: 'generic', view: 'tilted' }))
-icon('Cell (3D, face on)', cell3d(g, { x: 0, y: 0, size: 100, kind: 'generic', view: 'face' }))
 icon('Hepatocyte (3D)', cell3d(g, { x: 0, y: 0, size: 100, kind: 'hepatocyte', view: 'tilted' }))
-icon('Hepatocyte (3D, face on)', cell3d(g, { x: 0, y: 0, size: 100, kind: 'hepatocyte', view: 'face' }))
+// The face-on views ("Cell (3D, face on)", "Hepatocyte (3D, face on)": cell3d with view 'face') were removed on 23 November
+// 2026: since every cell has the gloss they were the same as Cell and Hepatocyte.
 check()
 console.log('written to', OUT)

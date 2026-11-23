@@ -52,7 +52,7 @@ const rot = (g, x, y, turn) => (turn ? ` transform="rotate(${f(turn)} ${f(g.X(x)
 /** Lymphocytes that are drawn without a surface fill the size they are given with their cytoplasm at 0.94 of it. */
 const PLAIN = 0.94
 
-// A clock face as an object (as Proteomic aging clock, tbO): paper, twelve ticks, two hands in ink.
+// A clock face as an object (as Proteomic ageing clock, tbO): paper, twelve ticks, two hands in ink.
 function clock(g, { x, y, r, id = 'clock' }) {
   const defs = [], w = objW(2 * r * g.k)
   let s = g.circle(x, y, r, objFill(g, `${id}-gradient`, [x - r, y - r, x + r, y + r], PAPER, defs), PAPER.outline, w)

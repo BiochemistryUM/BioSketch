@@ -123,9 +123,10 @@ icon('Placebo', [5.3, 1, 2], (g) => join(
 
 // Blinding: a participant with a blindfold; a red sign with a cross says that what was given is not known. Its red is
 // crimson (deep 10), not the signs' red (27), to stay 36° from the skin (52).
-icon('Blinding', [5.18, 5.4, 0.4], (g) => join(
+// (The red cross sign was taken out after the review of 23 November 2026: it is the sign of Exclusion criteria and read
+// as "not blinded" or "excluded"; the blindfold says it.)
+icon('Blinding', [5.18, -6, -3], (g) => join(
   person(g, { x: -6, y: -3, size: 92, blindfold: true, id: 'participant' }),
-  badge(g, { x: 34, y: 30, size: 30, mark: 'cross', pal: deep(10), id: 'not-known' }),
 ))
 
 // Crossover design: two groups, each a timeline of two treatment periods with a washout between them: A then B, and

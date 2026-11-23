@@ -199,9 +199,9 @@ const bead = (g, { x, y, size, id = 'bead', pal = GREY, w = 6 }) => {
 {
   const g = page(4.42, [0, -4.5]), y = 10, H = 27
   const d = dna(g, { x: 0, y, size: 104, width: 15, turns: 5, id: 'DNA' })
-  const prom = geneBlock(g, { x: -41.5, y, size: 15, height: H, pal: GREY, w: 7, pointed: false, letter: 'P', id: 'promoter' })
-  const op = geneBlock(g, { x: -24.5, y, size: 14, height: H, pal: soft(ORANGE), w: 7, pointed: false, letter: 'O', id: 'operator' })
-  const genePal = soft(GREEN), genes = [[-14.5, 6], [9, 29.5], [32.5, 52]].map(([a, b], i) => geneBlock(g, { x: (a + b) / 2, y, size: b - a, height: H + 3, pal: genePal, w: 7, letter: 'ZYA'[i], id: `gene-${i + 1}` }))
+  const prom = geneBlock(g, { x: -41.5, y, size: 15, height: H, pal: GREY, w: 7, pointed: false, letter: 'P', letterScale: 0.72, id: 'promoter' })
+  const op = geneBlock(g, { x: -24.5, y, size: 14, height: H, pal: soft(ORANGE), w: 7, pointed: false, letter: 'O', letterScale: 0.72, id: 'operator' })
+  const genePal = soft(GREEN), genes = [[-14.5, 6], [9, 29.5], [32.5, 52]].map(([a, b], i) => geneBlock(g, { x: (a + b) / 2, y, size: b - a, height: H + 3, pal: genePal, w: 7, letter: 'ZYA'[i], letterScale: 0.72, id: `gene-${i + 1}` }))
   const rep = protein(g, { x: -24.5, y: -18.5, size: 32, turn: 8, id: 'repressor', pal: rich(PINK) })
   const all = join(d, prom, op, ...genes, rep)
   cellType('Operon', [...d.parts, ['promoter', GREY], ['operator', soft(ORANGE)], ['genes', genePal], ['repressor', rich(PINK)]], all.defs, all.body)

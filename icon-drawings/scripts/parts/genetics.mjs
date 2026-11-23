@@ -399,14 +399,14 @@ export function fibre(g, { x = 0, y = 0, size = 100, turn = 0, id = 'chromatin-f
  * default 0.37 × height), `pal`, `dnaPal`.
  * `geneBlock(g, { x: 0, y: 0, size: 60, onDna: true })`
  */
-export function geneBlock(g, { x, y, size, turn = 0, id = 'gene', w, pal = PALS.gene, height, pointed = true, letter, onDna = false, dnaLength, dnaWidth, dnaPal = PALS.dna, dnaTurns }) {
+export function geneBlock(g, { x, y, size, turn = 0, id = 'gene', w, pal = PALS.gene, height, pointed = true, letter, letterScale = 1, onDna = false, dnaLength, dnaWidth, dnaPal = PALS.dna, dnaTurns }) {
   const h = height ?? size * 0.63, x0 = x - size / 2, x1 = x + size / 2, hpx = h * g.k
   const W = w ?? clamp(hpx * 0.05, 3.5, 9), tip = pointed ? Math.min(h * 0.55, size * 0.45) : 0
   const pts = (pointed ? [[x0, y - h / 2], [x1 - tip, y - h / 2], [x1, y], [x1 - tip, y + h / 2], [x0, y + h / 2]] : [[x0, y - h / 2], [x1, y - h / 2], [x1, y + h / 2], [x0, y + h / 2]]).map(g.P)
   const body = Math.min(h, size - tip)
   const lit = hpx >= 70 ? highlight(...g.P([x0 + body * 0.42, y - h * 0.26]), f(body * g.k * 0.26), f(hpx * 0.08), -8, pal.light) : ''
   const lh = h * 0.5
-  const lettered = letter && fits(g, lh) ? lettering(g, { x: x - tip / 2, y, h: Math.min(lh, ((size - tip) * 0.7) / textWidth(letter)), text: letter, colour: pal.outline, id: `${id}-letter`, turn: -turn }).body : ''
+  const lettered = letter && fits(g, lh) ? lettering(g, { x: x - tip / 2, y, h: Math.min(lh, ((size - tip) * 0.7) / textWidth(letter)) * letterScale, text: letter, colour: pal.outline, id: `${id}-letter`, turn: -turn }).body : ''
   const strand = onDna ? dna(g, { x, y, size: dnaLength ?? size * 1.63, width: dnaWidth ?? h * 0.37, turns: dnaTurns, id: `${id}-DNA`, pal: dnaPal }) : null
   return {
     defs: (strand?.defs ?? '') + gradient2(`${id}-gradient`, [g.X(x0), g.Y(y - h / 2), g.X(x1), g.Y(y + h / 2)], pal.base, pal.shadow),

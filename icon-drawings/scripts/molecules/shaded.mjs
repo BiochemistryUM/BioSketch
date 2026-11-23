@@ -25,6 +25,7 @@ icon('Protein (cylinder)', shadedProtein(g, { x: 0, y: 0, size: 100, shape: 'cyl
 icon('Protein (arc)', shadedProtein(g, { x: 0, y: 0, size: 100, shape: 'arc', seed: 1 }))
 icon('Protein (dimer)', shadedProtein(g, { x: 0, y: 0, size: 100, shape: 'dimer', seed: 1 }))
 icon('Red blood cell (3D)', redBloodCell3d(g, { x: 0, y: 0, size: 100, view: 'tilted' }))
-icon('Red blood cell (3D, face on)', redBloodCell3d(g, { x: 0, y: 0, size: 100, view: 'face' }))
+// Saved as "Red blood cell" since 23 November 2026: the icon "Red blood cell (3D, face on)" was the same drawing twice.
+icon('Red blood cell', redBloodCell3d(g, { x: 0, y: 0, size: 100, view: 'face' }))
 check()
 console.log('written to', OUT)

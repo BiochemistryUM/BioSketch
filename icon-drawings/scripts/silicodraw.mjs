@@ -80,7 +80,7 @@ const { cellType, check } = cellTypes(OUT)
     g.grad('cell-gradient', [-36, -36, 36, 36], cyto) + g.grad('nucleus-gradient', [-18, -24, 22, 26], NUC),
     `<g id="cytoplasm">${g.circle(0, 0, 36, 'url(#cell-gradient)', cyto.outline, 12)}${g.hl(-22, -21, 24, 9, -45, cyto.light)}</g>\n` +
       `<g id="granules">${[[-24, 8], [-21, -8], [-24, 21], [-8, 28]].map(([x, y]) => g.circle(x, y, 2.4, cyto.small)).join('')}</g>\n` +
-      `<g id="nucleus">${g.path(g.D('M-18,-16C0,-30 22,-16 22,2C22,18 6,30 -12,24C-2,16 -2,-6 -18,-16Z'), 'url(#nucleus-gradient)', NUC.outline, 10)}${g.hl(2, -15, 14, 5, -20, NUC.light)}</g>`)
+      `<g id="nucleus">${g.path(g.D('M-17,-12C-22,-20 -14,-25 -4,-25C12,-25 22,-14 22,2C22,17 9,28 -4,27C-12,27 -17,22 -13,17C-3,10 -3,-4 -17,-12Z') /* blunt ends since the review of 23 November 2026 (a crescent with sharp tips before) */, 'url(#nucleus-gradient)', NUC.outline, 10)}${g.hl(2, -15, 14, 5, -20, NUC.light)}</g>`)
 }
 // Macrophage: a large cell of irregular outline, a round nucleus, vacuoles of what it has taken in.
 {

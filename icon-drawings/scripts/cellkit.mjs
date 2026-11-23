@@ -4,13 +4,16 @@
 // (granules, vacuoles, knobs) are flat and have no outline. Nuclei share one lilac palette (NUC) in all of them.
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { hueGap, hueOf, soft, toLch } from './colour.mjs'
+import { hueGap, hueOf, soft, toHex, toLch } from './colour.mjs'
 import { f, gradient2, svg } from './shapes.mjs'
 
 export const highlight = (cx, cy, rx, ry, rot, fill) => `<ellipse cx="${f(cx)}" cy="${f(cy)}" rx="${rx}" ry="${ry}" transform="rotate(${rot} ${f(cx)} ${f(cy)})" fill="${fill}"/>`
 
 export const NUC = soft(hueOf('#6f86c8') + 50)
 export const PEACH = hueOf('#f6d9c8'), BLUE = hueOf('#cfe3f5'), GREEN = hueOf('#cfe8d8')
+// Bone, wherever it is drawn: an ivory near grey (chroma 0.011, so BioSketch never recolours it with a coloured part),
+// the tone of the bones of Anatomy. Until the review of 23 November 2026 the bone cells stood on a sand-coloured bone.
+export const IVORY = { light: toHex({ l: 0.985, c: 0.004, h: 85 }), base: toHex({ l: 0.95, c: 0.011, h: 85 }), shadow: toHex({ l: 0.89, c: 0.011, h: 85 }), small: toHex({ l: 0.76, c: 0.011, h: 85 }), outline: toHex({ l: 0.58, c: 0.011, h: 85 }) }
 
 /** A smooth closed outline through the points (Catmull–Rom as cubic Béziers), as SiliCoDraw's smoothClosed. */
 export const smoothD = (p) => {

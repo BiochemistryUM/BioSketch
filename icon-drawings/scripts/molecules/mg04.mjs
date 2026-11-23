@@ -166,12 +166,29 @@ const centreLine = (pts) => {
 // with one chromatid each, turned so that each changes sides; they cross below their centromeres, on the arms, where
 // crossing over happens.)
 {
-  const turn = 19, size = 86, yc = 13 // the crossing, below the centromeres
+  // (After the review of 23 November 2026: crossed bars, one colour each or with the colours changed at the crossing,
+  // read as two bars lying over or beside each other. The chromatids now stand side by side, leaning to each other, as
+  // they are after the exchange: each carries the other's colour below the point of crossing over.)
+  const turn = 7, size = 86, yc = 13 // the point of exchange, below the centromeres
   const g = page(5.12, [0, 0]), lilac = NUC, orange = soft(ORANGE)
-  const ox = yc * Math.tan((turn * Math.PI) / 180) // centres placed so that both chromatids pass through (0, yc)
+  const ox = -15 // half the distance between the two centres
   const a = chromosome(g, { x: -ox, y: 0, size, turn: -turn, chromatids: 1, pal: lilac, id: 'chromatid-1' })
   const b = chromosome(g, { x: ox, y: 0, size, turn, chromatids: 1, pal: orange, id: 'chromatid-2' })
-  cellType('Recombination', [['chromatid 1', lilac], ['chromatid 2', orange]], a.defs + b.defs, `${a.body}\n${b.body}`)
+  // The exchanged arm is the chromatid's own outline cut straight across at the point of exchange, in its own turned
+  // frame, drawn again in the other palette (flat: the other's gradient lies in another frame).
+  const arm = (part, pal, id) => {
+    const turnOf = part.body.match(/transform="(rotate\([^"]+\))"/)[1], w = part.body.match(/stroke-width="([\d.]+)"/)[1]
+    const pts = part.body.match(/ d="M([^"]+?) ?Z?"/)[1].split(' L').map((s) => s.split(',').map(Number))
+    const cut = 256 + (yc / Math.cos((turn * Math.PI) / 180)) * g.k, out = []
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i], q = pts[(i + 1) % pts.length], inP = p[1] >= cut, inQ = q[1] >= cut
+      if (inP) out.push(p)
+      if (inP !== inQ) out.push([p[0] + ((q[0] - p[0]) * (cut - p[1])) / (q[1] - p[1]), cut])
+    }
+    const d = `${lineD(out)} Z`
+    return `<g id="${id}" transform="${turnOf}"><path d="${d}" fill="${pal.outline}" stroke="${pal.outline}" stroke-width="${w}" stroke-linejoin="round"/><path d="${d}" fill="${pal.shadow}"/></g>`
+  }
+  cellType('Recombination', [['chromatid 1', lilac], ['chromatid 2', orange]], a.defs + b.defs, `${a.body}\n${b.body}\n${arm(a, orange, 'chromatid-1-exchanged-arm')}\n${arm(b, lilac, 'chromatid-2-exchanged-arm')}`)
 }
 
 // DNA methylation: DNA with methyl groups on some of its cytosines, shown as pins: a filled head is a methylated site,

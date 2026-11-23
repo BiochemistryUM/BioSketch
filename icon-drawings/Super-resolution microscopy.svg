@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-<title>Super-resolution</title>
+<title>Super-resolution microscopy</title>
 <defs></defs>
 <g id="panel1"><path d="M28.1,110.9 L28.8,103.1 L30.9,96.7 L34.5,91.7 L39.4,88.1 L45.8,86 L53.7,85.3 L215.8,85.3 L223.7,86 L230.1,88.1 L235,91.7 L238.6,96.7 L240.7,103.1 L241.5,110.9 L241.5,401.1 L240.7,408.9 L238.6,415.3 L235,420.3 L230.1,423.9 L223.7,426 L215.8,426.7 L53.7,426.7 L45.8,426 L39.4,423.9 L34.5,420.3 L30.9,415.3 L28.8,408.9 L28.1,401.1Z" fill="#34383D" stroke="#1C2024" stroke-width="2.2" stroke-linejoin="round"/><path d="M49.4,153.6 L66.5,126.3" fill="none" stroke="#51565B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><g id="panel1-display"></g></g>
 <g id="panel2"><path d="M270.6,110.9 L271.3,103.1 L273.4,96.7 L277,91.7 L281.9,88.1 L288.3,86 L296.2,85.3 L458.3,85.3 L466.2,86 L472.6,88.1 L477.5,91.7 L481.1,96.7 L483.2,103.1 L484,110.9 L484,401.1 L483.2,408.9 L481.1,415.3 L477.5,420.3 L472.6,423.9 L466.2,426 L458.3,426.7 L296.2,426.7 L288.3,426 L281.9,423.9 L277,420.3 L273.4,415.3 L271.3,408.9 L270.6,401.1Z" fill="#34383D" stroke="#1C2024" stroke-width="2.2" stroke-linejoin="round"/><path d="M291.9,153.6 L309,126.3" fill="none" stroke="#51565B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><g id="panel2-display"></g></g>

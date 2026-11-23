@@ -9,6 +9,7 @@
 import { BLUE, NUC, PEACH, cellTypes, page } from '../cellkit.mjs'
 import { deep, hueOf, rich, soft, toHex } from '../colour.mjs'
 import { f, pathOf } from '../shapes.mjs'
+import { lettering } from '../parts/letters.mjs'
 
 const OUT = process.argv[2]
 const { cellType, check } = cellTypes(OUT)
@@ -176,7 +177,7 @@ const grey = (h) => ({ light: toHex({ l: 0.99, c: 0.003, h }), base: toHex({ l: 
     phases.map(([n, pal]) => boxGrad(`${n.toLowerCase()}-gradient`, pal)).join('') + g.grad('p16-gradient', [-17, -16, 17, 8.5], p16),
     phases.map(([n, pal, a0, a1, lit]) => `<g id="${n.toLowerCase()}-phase"><path d="${ringArrow(a0, a1)}" fill="url(#${n.toLowerCase()}-gradient)" stroke="${pal.outline}" stroke-width="10" stroke-linejoin="round"/>${shine(lit, pal.light)}</g>`).join('\n') + '\n' +
       `<g id="p16">${g.line([[0, 2], [0, 16]], p16.outline, 11)}${g.line([[-8.5, 16.5], [8.5, 16.5]], p16.outline, 13)}` +
-      `${g.path(g.smooth(blob), 'url(#p16-gradient)', p16.outline, 10)}${g.hl(-7, -9.5, 13, 4.4, -22, p16.light)}</g>`)
+      `${g.path(g.smooth(blob), 'url(#p16-gradient)', p16.outline, 10)}${g.hl(-7, -9.5, 13, 4.4, -22, p16.light)}${lettering(g, { x: 0, y: -4, h: 9, text: 'p16', colour: p16.light, id: 'p16-letters' }).body}</g>`) // lettered since the review of 23 November 2026, as p21: unlettered it read as a lamp
 }
 // Mitochondrial UPR: misfolded proteins (amber tangles) pile up in a mitochondrion; a signal (the blue dot, ATFS-1 or ATF5)
 // is carried to the nucleus, which answers with chaperones (the green double ring of HSP60) sent back to the mitochondrion.

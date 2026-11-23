@@ -61,7 +61,7 @@ icon('qPCR curves', plot(g, { x: 0, y: 0, size: S, show: 'qpcr', id: 'qpcr' }))
 {
   const h = 7
   const vmax = letters('V_m_a_x', PF.X(0.8), PF.Y(0.92) - 2 - h / 2, h, 'vmax')
-  const km = letters('K_m', PF.X(0.17), PF.axisY + 1.6 + h / 2, h * 0.9, 'km')
+  const km = letters('K_m', PF.X(0.17), PF.axisY + 3.4 + h / 2, h * 0.9, 'km')
   icon('Enzyme kinetics', plot(g, { x: 0, y: 0, size: S, show: 'saturation', id: 'kinetics' }), { body: `<g id="letters">${vmax.body}${km.body}</g>` })
 }
 

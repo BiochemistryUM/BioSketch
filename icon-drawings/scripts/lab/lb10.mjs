@@ -118,7 +118,7 @@ const glassTube = (g, pts, width, w, pal = GLASS) => {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Two-photon: an objective focuses two infrared beams (wavy, long wavelength) to one point deep in a block of tissue,
+// Two-photon microscopy: an objective focuses two infrared beams (wavy, long wavelength) to one point deep in a block of tissue,
 // and only there a fluorophore glows green. (SiliCoDraw's beams come from two red dots; here they leave a microscope
 // objective in the accent, drawn here, so that it reads as imaging. The tissue is three rows of the epithelium part
 // in SiliCoDraw's peach; its wavy line and the caption "2 × IR → 1 × vis" are left out.)
@@ -137,11 +137,11 @@ const glassTube = (g, pts, width, w, pal = GLASS) => {
     return beam(g, { x: (sx + focus[0]) / 2, y: (sy + focus[1]) / 2, size: L, turn: (Math.atan2(dy, dx) * 180) / Math.PI, colour: 'infrared', kind: 'wave', id: `infrared-beam${i + 1}` })
   })
   const glow = own('fluorescence', g.circle(focus[0], focus[1], 7, GLOW.light, GLOW.outline, Math.max(2, w * 0.5)) + g.circle(focus[0], focus[1], 3.6, GLOW.base), [['fluorescence', GLOW]])
-  icon('Two-photon', join(...rows, ...beams, glow, own('objective', obj, [['objective', ACCENT]], defs.join(''))))
+  icon('Two-photon microscopy', join(...rows, ...beams, glow, own('objective', obj, [['objective', ACCENT]], defs.join(''))))
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Super-resolution: the same two structures seen twice on dark screens: at the left as two blurred, diffraction-limited
+// Super-resolution microscopy: the same two structures seen twice on dark screens: at the left as two blurred, diffraction-limited
 // spots, at the right resolved into the single molecules that make them up. (Both panels are the screen part; the spots
 // are drawn here, in one fluorophore colour for both panels where SiliCoDraw has a see-through blue and an orange, so
 // that the right panel reads as the left one resolved. The captions "diffraction" and "~20 nm" are left out.)
@@ -155,7 +155,7 @@ const glassTube = (g, pts, width, w, pal = GLASS) => {
   for (const [y, r] of blobs) tones.forEach((t, i) => { blur += g.circle(-25, y, r * (1 - i * 0.22), t) })
   const dots = [[-3, -17], [3, -13], [-1, -9], [5, -19], [-6, -12], [1, -21], [-3, 7], [3, 11], [0, 15], [-5, 12], [5, 7]]
   const sharp = dots.map(([dx, y]) => g.circle(25 + dx, y, 2.1, FLUO.base)).join('')
-  icon('Super-resolution', join(...panels, own('fluorescence', `<g id="blurred">${blur}</g><g id="localised">${sharp}</g>`, [['fluorophore', FLUO]])))
+  icon('Super-resolution microscopy', join(...panels, own('fluorescence', `<g id="blurred">${blur}</g><g id="localised">${sharp}</g>`, [['fluorophore', FLUO]])))
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

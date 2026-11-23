@@ -529,7 +529,7 @@ export function instrument(g, { x, y, size, turn = 0, id = 'instrument', w, aspe
 // and eyepiece) | 'stereo' (dissecting microscope: plate, pillar, head with two eyepieces) | 'electron' (a column with
 // lenses on a desk); pal (tube, knobs, lenses: ACCENT).
 // Used by: Microscope, Stereo microscope, Confocal, Live-cell imaging, Two-photon, Super-resolution, Slide scanner,
-// Electron microscope, TEM microscope, Light-sheet microscope.
+// Electron microscope, Transmission electron microscope, Light-sheet microscope.
 // Example: microscope(g, { x: 0, y: 0, size: 50, id: 'scope' })
 export function microscope(g, { x, y, size, turn = 0, id = 'microscope', w, kind = 'upright', pal = ACCENT }) {
   const F = frame(g, x, y, size), defs = []

@@ -203,14 +203,15 @@ const membraneBody = (q, id, R, inner, pal, lw, full, at) => {
     : `<g id="${id}-lumen">${q.circle(0, 0, R, `url(#${id}-gradient)`, pal.outline, lw)}${gl(R, lw)}</g>`
 }
 
-// Lysosome: rose, with the material being broken down (contents) and enzymes (dots). Options: contents, enzymes.
+// Lysosome: rose, with the material being broken down (contents: three small pieces; one large lump read as a nucleus,
+// review of 23 November 2026) and enzymes (dots). Options: contents, enzymes.
 // Example: lysosome(g, { x: 30, y: 20, size: 14 })
 export function lysosome(g, { x, y, size, turn = 0, id = 'lysosome', w, pal = soft(HUES.lysosome), contents = true, enzymes = true }) {
   const px = size * g.k, lw = w ?? roundLine(px), full = px >= 72, q = frame(g, x, y, (px - lw) / 100), R = 50, s = R / 36
   const lump = [[-12, -7], [-2, -13], [10, -5], [16, 7], [8, 17], [-6, 15], [-14, 5]].map(([a, b]) => [a * s, b * s])
   const dots = full ? [[-21, 8], [13, -20], [22, 12], [-9, 23]] : [[-16, -12], [16, -6], [2, 18]]
   const body = membraneBody(q, id, R, 0.833, pal, lw, full, [g, x, y, turn]) +
-    (contents && full ? `<g id="${id}-contents">${q.path(q.smooth(lump), pal.small)}</g>` : '') +
+    (contents && full ? `<g id="${id}-contents">${[[-9, -9, 0.42, 0], [11, 3, 0.36, 2.1], [-5, 13, 0.3, 4.2]].map(([a, b, k, t]) => q.path(q.smooth(lump.map(([u, v]) => [a * s + (u * Math.cos(t) - v * Math.sin(t)) * k, b * s + (u * Math.sin(t) + v * Math.cos(t)) * k])), pal.small)).join('')}</g>` : '') +
     (enzymes ? `<g id="${id}-enzymes">${dots.map(([a, b]) => q.circle(a * s, b * s, full ? 3.1 * s : 4.4 * s, pal.outline)).join('')}</g>` : '')
   return { defs: q.grad(`${id}-gradient`, [-R, -R, R, R], glossPal(pal)), body: wrap(g, x, y, turn, id, body), parts: [['lysosome', pal]] }
 }
@@ -262,7 +263,7 @@ export function peroxisome(g, { x, y, size, turn = 0, id = 'peroxisome', w, pal 
   if (full) {
     defs += q.grad(`${id}-core-gradient`, [-16 * s, -16 * s, 16 * s, 14 * s], { base: core.base, shadow: core.shadow })
     body += `<g id="${id}-granules">${[[-21, 15], [22, -17], [18, 19]].map(([a, b]) => q.circle(a * s, b * s, 2.6 * s, pal.small)).join('')}</g>` +
-      `<g id="${id}-core">${q.path(roundPoly(q, corners, 2.2 * s), `url(#${id}-core-gradient)`, pal.outline, f(lw * 0.67))}${q.line([[0, -11 * s], [0, 9.5 * s]], core.small, f(lw * 0.42))}${q.line([[-10.5 * s, -3.2 * s], [10.5 * s, -3.2 * s]], core.small, f(lw * 0.42))}</g>`
+      `<g id="${id}-core">${q.path(roundPoly(q, corners, 2.2 * s), `url(#${id}-core-gradient)`, pal.outline, f(lw * 0.67))}</g>` // the cross on the core is gone (review of 23 November 2026: it made the crystal a gem or a window)
   } else body += `<g id="${id}-core">${q.path(roundPoly(q, corners, 3 * s), core.small)}</g>`
   return { defs, body: wrap(g, x, y, turn, id, body), parts: [['peroxisome', pal]] }
 }

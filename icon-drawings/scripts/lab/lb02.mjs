@@ -133,7 +133,7 @@ const line = (g, pts, colour, w) => `<path d="M${pts.map(P2(g)).join(' L')}" fil
 // (Eight channels, as SiliCoDraw's search words say; its drawing shows seven.)
 // ---------------------------------------------------------------------------------------------------------------------
 {
-  const g = page(K, [0, 0])
+  const g = page(K, [0, -7.6])
   icon('Multichannel pipette', pipette(g, { x: 0, y: 0, size: 100, kind: 'multi', channels: 8, liquid: 'water', level: 0.25, id: 'pipette' }))
 }
 

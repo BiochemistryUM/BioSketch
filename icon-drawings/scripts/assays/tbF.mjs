@@ -102,7 +102,7 @@ const DSRNA = deep(345)
 // (As SiliCoDraw. The bacteria are the green bacterium part, the dsRNA the double helix of the DNA part in magenta.)
 // ---------------------------------------------------------------------------------------------------------------------
 {
-  const g = page(4.95, [1, 0])
+  const g = page(4.71, [-0.5, 0])
   const W = { x: 7, y: 9, size: 82, amp: 0.1, waves: 0.85, phase: 0.3 }
   const body = worm(g, { ...W, gut: true, id: 'worm' })
   const line = wormLine(W)
@@ -220,7 +220,7 @@ const DSRNA = deep(345)
 // skeletal formula part. The fragments are drawn here as small flat lumps.)
 // ---------------------------------------------------------------------------------------------------------------------
 {
-  const g = page(4.95, [0, -5]), POI = soft(215), TAG = rich(62)
+  const g = page(4.66, [0.4, -5]), POI = soft(215), TAG = rich(62)
   const poi = glossed(protein(g, { x: -25, y: 2, size: 50, pal: glossPal(POI), id: 'protein' }), POI, 50 * g.k)
   const tag = glossed(protein(g, { x: -2, y: 27, size: 19, pal: glossPal(TAG), id: 'degron' }), TAG, 19 * g.k)
   const linker = own('linker', strokePath(g.D('M-10,16 C-9,20 -8,22 -6,23'), TAG.outline, 5))

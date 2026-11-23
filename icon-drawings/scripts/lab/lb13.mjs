@@ -217,7 +217,7 @@ const tubing = (g, ds, width, pal, w) => g.union(ds.map((d) => ({ d, width: widt
 // flask part with a side arm added.)
 // ---------------------------------------------------------------------------------------------------------------------
 {
-  const g = page(4.75, [-0.5, -1.9]), w = objW(60 * g.k), cw = Math.max(2, w * 0.75), fine = Math.max(1.5, w * 0.45)
+  const g = page(4.75, [9.4, -1.9]), w = objW(60 * g.k), cw = Math.max(2, w * 0.75), fine = Math.max(1.5, w * 0.45)
   const fx = -6, fy = 24, FS = 46, u = FS / 100 // receiving flask: neck ±4.6 from y 4.2 to 16.6, base at 45.6
   const flask = glassware(g, { x: fx, y: fy, size: FS, kind: 'flask', liquid: 'water', level: 0.24, id: 'receiving-flask' })
   // side arm from the neck to the right, the hose on it

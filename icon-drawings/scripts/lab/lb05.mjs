@@ -1,7 +1,7 @@
 // Eight icons of SiliCoDraw's "Lab & equipment" (github.com/Alex-D-C/SiliCoDraw, MIT, © 2026 Alexander David Carlsson;
 // see ../../LICENSE-SiliCoDraw.txt), redrawn in the soft look of icon-drawings/STYLE.md from the shared parts in ../parts/
 // and the conventions of objects in ../parts/lab.mjs: lab notebook, stopwatch, safety goggles, lab glove, biohazard,
-// confocal microscope, light-sheet microscope and TEM microscope. Their compositions are read by hand from the source in
+// confocal microscope, light-sheet microscope and Transmission electron microscope. Their compositions are read by hand from the source in
 // a 100 × 100 box centred on 0,0 and scaled onto a 512 page (`page` of ../cellkit.mjs).
 // Parts used: hazardSign (ISO 7010 biohazard triangle), beam (laser, emission, light sheet), screen, microscope
 // (electron) (lab.mjs); placeCellType (the approved Morula, as the embryo in the light sheet) (tissue.mjs).
@@ -182,7 +182,7 @@ const lens = (g, x0, x1, y, t) => {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// TEM microscope: the electron microscope part (the column with its gun, three lenses and the beam, on a desk with its
+// Transmission electron microscope: the electron microscope part (the column with its gun, three lenses and the beam, on a desk with its
 // screen and a lamp that is on) and, on the desk, a monitor showing a micrograph of a cell in greys.
 // (SiliCoDraw's small panel beside the column becomes the monitor; its lines of text become the micrograph, which tells
 // a transmission microscope from a scanning one.)
@@ -197,7 +197,7 @@ const lens = (g, x0, x1, y, t) => {
   const grey = (l) => toHex({ l, c: 0.004, h: 250 })
   const img = g.path(rrect(g, mx - 12.2, my - 8.6, mx + 12.2, my + 8.6, 1.2), grey(0.86)) + g.ellipse(mx - 1, my + 0.5, 10, 7, -12, grey(0.68), grey(0.4), cw * 0.6) +
     g.circle(mx - 3, my + 1, 3.6, grey(0.42)) + g.ellipse(mx + 4.5, my - 2.5, 2.4, 1.2, 30, grey(0.5)) + g.ellipse(mx + 4, my + 3.5, 1.8, 1, -20, grey(0.5))
-  icon('TEM microscope', join(own('monitor-stand', stand), scope, { ...mon, parts: [] }, own('micrograph', img)))
+  icon('Transmission electron microscope', join(own('monitor-stand', stand), scope, { ...mon, parts: [] }, own('micrograph', img)))
 }
 
 check()

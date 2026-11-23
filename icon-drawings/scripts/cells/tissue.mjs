@@ -4,7 +4,7 @@
 // Muscle cells share one rose hue, bone-forming cells one blue (the osteoclast a lighter blue beside it), and the matrix around
 // bone and cartilage cells is a part of its own: sand for bone, aqua for cartilage, yellow for osteoid.
 // Usage: node tissue.mjs <folder>
-import { NUC, cellTypes, page } from '../cellkit.mjs'
+import { IVORY, NUC, cellTypes, page } from '../cellkit.mjs'
 import { rich, soft } from '../colour.mjs'
 import { f } from '../shapes.mjs'
 
@@ -88,7 +88,7 @@ const smallNucleus = (g, x, y, rx, ry, rot, w, light = true) =>
 }
 // Osteoclast: a large multinucleated cell on bone, its ruffled border resorbing a pit (Howship's lacuna) into it.
 {
-  const g = page(4.5, [0, 12.75]), cell = soft(OSTEOCLAST), bone = soft(BONE)
+  const g = page(4.5, [0, 12.75]), cell = soft(OSTEOCLAST), bone = IVORY
   const zig = Array.from({ length: 14 }, (_, i) => [-26 + 4 * i, i % 2 ? 21.5 : 27.5])
   cellType('Osteoclast', [['cytoplasm', cell], ['bone', bone], ['nucleus', NUC]],
     g.grad('bone-gradient', [-50, 22, 50, 46], bone) + g.grad('cell-gradient', [-36, -20, 36, 32], cell) + boxGrad('nucleus-gradient', NUC),
@@ -99,7 +99,7 @@ const smallNucleus = (g, x, y, rx, ry, rot, w, light = true) =>
 }
 // Osteoblasts: a row of cuboidal cells laying down osteoid (unmineralised matrix) on bone.
 {
-  const g = page(4.5, [0, 8]), cell = soft(BONE_CELL), bone = soft(BONE), osteoid = rich(OSTEOID)
+  const g = page(4.5, [0, 8]), cell = soft(BONE_CELL), bone = IVORY, osteoid = rich(OSTEOID)
   cellType('Osteoblast', [['cytoplasm', cell], ['bone', bone], ['osteoid', osteoid], ['nucleus', NUC]],
     g.grad('bone-gradient', [-50, 10, 50, 40], bone) + g.grad('osteoid-gradient', [-50, 2, 50, 10], osteoid) + boxGrad('cell-gradient', cell) + boxGrad('nucleus-gradient', NUC),
     `<g id="bone">${g.path(rrect(g, -50, 10, 100, 30, 6), 'url(#bone-gradient)', bone.outline, 10)}${[[-44, 22, 10], [-30, 31, 12], [-10, 20, 10], [12, 31, 12], [30, 19, 10]].map(([x, y, w]) => g.line([[x, y], [x + w, y]], bone.small, 6)).join('')}</g>\n` +
@@ -109,7 +109,7 @@ const smallNucleus = (g, x, y, rx, ry, rot, w, light = true) =>
 }
 // Osteocyte: a cell walled into bone in its lacuna, its processes reaching out through the matrix (lamellae drawn faint).
 {
-  const g = page(4.88, [0, 0]), cell = soft(BONE_CELL), bone = soft(BONE)
+  const g = page(4.88, [0, 0]), cell = soft(BONE_CELL), bone = IVORY
   // Corrected: in SiliCoDraw the processes start at the rim of the lacuna; here they grow from the cell itself.
   const processes = [[[-11, -6], [-36, -22]], [[-13, 3], [-42, 6]], [[-9, 7], [-30, 30]], [[11, -6], [36, -22]], [[13, 3], [42, 6]], [[9, 7], [30, 30]], [[-4, -8], [-8, -35]], [[4, -8], [8, -35]], [[0, 8], [0, 37]]]
   cellType('Osteocyte', [['cytoplasm', cell], ['bone', bone], ['nucleus', NUC]],

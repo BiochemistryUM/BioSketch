@@ -130,7 +130,7 @@ const K = 4.55 // a composition 100 units across fills 455 px of the page: margi
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Aging cell atlas: an embedding of single cells in which each cell type shifts with age, young cells (open rings) to old
+// Ageing cell atlas: an embedding of single cells in which each cell type shifts with age, young cells (open rings) to old
 // ones (filled), an arrow for each shift, and a clock for age.
 // (SiliCoDraw: the same, with a small pair of axes. The clock is a paper dial with ink hands; the three cell types are the
 // first three series colours. Young cells are white with their type's outline, as SiliCoDraw draws them.)
@@ -147,7 +147,7 @@ const K = 4.55 // a composition 100 units across fills 455 px of the page: margi
   let clock = g.circle(cx, cy, R, PAPER.base, PAPER.outline, wc)
   clock += [0, 90, 180, 270].map((a) => { const t = (a * Math.PI) / 180; return g.line([[cx + Math.cos(t) * (R - 3.2), cy + Math.sin(t) * (R - 3.2)], [cx + Math.cos(t) * (R - 1.6), cy + Math.sin(t) * (R - 1.6)]], INK, f(wc * 0.7)) }).join('')
   clock += g.line([[cx, cy], [cx, cy - R * 0.68]], INK, f(wc * 0.9)) + g.line([[cx, cy], [cx + R * 0.45, cy + R * 0.26]], INK, f(wc * 0.9)) + g.circle(cx, cy, 1.3, INK)
-  icon('Aging cell atlas', chart, own('shifts', shifts.join('')), own('clock', clock))
+  icon('Ageing cell atlas', chart, own('shifts', shifts.join('')), own('clock', clock))
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

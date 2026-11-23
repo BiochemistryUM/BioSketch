@@ -205,7 +205,8 @@ const element = (g, { x0, y, h, full = true, id, pal = soft(L1), dark = deep(L1)
   const g = page(4.72, [0, -1.3])
   const mol = nucleotide(g, { x: -10, y: 4, s: 1.3, id: 'NMN' })
   const pill = capsule(g, { x: 22, y: 29, len: 46, wid: 21, turn: -28 })
-  icon('NAD precursor', join(mol, pill))
+  // Not written since 23 November 2026 (owner's choice after the review): "NMN and NR" below shows the same subject.
+  void [mol, pill] // icon('NAD precursor', join(mol, pill))
 }
 
 // NMN and NR: the two NAD⁺ precursors, nicotinamide riboside (NR, left) and nicotinamide mononucleotide (NMN, right),
@@ -281,7 +282,7 @@ const element = (g, { x0, y, h, full = true, id, pal = soft(L1), dark = deep(L1)
   const move = arrow(g, { x: -12.5, y: 7, size: 12, colour: p65.outline, id: 'to-nucleus' })
   const ib = protein(g, { x: -28, y: -24, size: 25, turn: -30, id: 'IkB', pal: ikb })
   const ub = ubiquitin(g, { x: -10, y: -37, size: 22, count: 4, turn: -36, id: 'ubiquitin' })
-  icon('NF-kB', join(nuc, site, bound, free, { ...move, parts: [] }, ib, ub))
+  icon('NF-κB', join(nuc, site, bound, free, { ...move, parts: [] }, ib, ub))
 }
 
 // LINE-1 retrotransposon: a LINE-1 element in the genome (5′ UTR, ORF1, ORF2, poly(A) tail) is transcribed; its RNA, with

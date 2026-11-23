@@ -87,11 +87,12 @@ const curve = (g, d, colour, w) => `<path d="${g.D(d)}" fill="none" stroke="${co
 
 // ---------- Heteroplasmy ----------
 // One mitochondrion holding a mix of mitochondrial DNA: whole rings of the normal genome (the DNA part's blue) and rings
-// with a deletion (crimson), the gap marked by a dot. The mitochondrion has no cristae here, so that the rings show.
+// with a deletion (crimson), the gap marked by a dot. The mitochondrion has only short cristae here, so that the rings show.
 // (SiliCoDraw's normal rings are a deeper tone of the mitochondrion and its mutant red lies 6° from it; two stray dots
 // in the matrix are left out.)
 {
-  const m = mitoShape({ L: 228, H: 146, fingers: [], n: 2.6, minGap: 26 })
+  // Short cristae between the rings (review of 23 November 2026: without any it was not the set's mitochondrion).
+  const m = mitoShape({ L: 228, H: 146, fingers: [[-92, -1], [0, -1], [92, -1], [-100, 1], [100, 1]].map(([x, side]) => ({ x, side, depth: 0.14 })), n: 2.6, minGap: 26 })
   const mito = drawMito(m, { dx: 256, dy: 256, L: 228, bend: -10 }, 'mitochondrion-gradient', [-184, -58, 22, 8, -62], 7)
   const mut = deep(352), S = 4.65, R = 80
   const at = ([x, y]) => [256 + x * S, 256 + y * S]

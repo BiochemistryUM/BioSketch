@@ -89,7 +89,7 @@ const ray = (g, [x0, y0], [x1, y1], opts) => beam(g, { x: (x0 + x1) / 2, y: (y0 
 // (SiliCoDraw's composition; the block now sits in a metal holder, as on a rotary microtome, and the knife is a wedge.)
 // ---------------------------------------------------------------------------------------------------------------------
 {
-  const g = page(5.05, [0, 2]), w = objW(90 * g.k), cw = Math.max(2, w * 0.75)
+  const g = page(4.72, [0, -0.9]), w = objW(90 * g.k), cw = Math.max(2, w * 0.75)
   const WAX = soft(95), TISSUE = soft(hueOf('#f3b6a0'))
   const base = g.path(rrect(g, -48, 30, 48, 40, 3), 'url(#microtome-base-gradient)', METAL.outline, w)
   const holder = g.path(rrect(g, -48, -16, -40, 30, 2), METAL.shadow, METAL.outline, cw)
@@ -115,7 +115,7 @@ const ray = (g, [x0, y0], [x1, y1], opts) => beam(g, { x: (x0 + x1) / 2, y: (y0 
 // liquid, so the junction makes sense. The chip is glass, the oil the blue of water, the droplets orange.)
 // ---------------------------------------------------------------------------------------------------------------------
 {
-  const g = page(5.0, [0, 0]), w = objW(96 * g.k), cw = Math.max(2, w * 0.75)
+  const g = page(4.71, [0, 0]), w = objW(96 * g.k), cw = Math.max(2, w * 0.75)
   const OIL = soft(222), DROP = soft(hueOf('#e3955a'))
   const chip = g.path(rrect(g, -48, -30, 48, 30, 6), 'url(#chip-gradient)', GLASS.outline, w) + g.hl(-40, -25, 10, 2.5, 0, GLASS.light)
   const cwid = 6.5 * g.k, D = (pts) => `M${pts.map((p) => g.P(p).map(f).join(',')).join(' L')}`
@@ -135,7 +135,7 @@ const ray = (g, [x0, y0], [x1, y1], opts) => beam(g, { x: (x0 + x1) / 2, y: (y0 
 // a carriage on the cross bar. The bioink keeps SiliCoDraw's pink.)
 // ---------------------------------------------------------------------------------------------------------------------
 {
-  const g = page(5.05, [0, 0]), w = objW(92 * g.k), cw = Math.max(2, w * 0.75)
+  const g = page(4.82, [0, -0.5]), w = objW(92 * g.k), cw = Math.max(2, w * 0.75)
   const INK = soft(hueOf('#f6d0dc'))
   const frame = g.path(rrect(g, -42, -40, -36, 38, 2), METAL.shadow, METAL.outline, cw) + g.path(rrect(g, 36, -40, 42, 38, 2), METAL.shadow, METAL.outline, cw) +
     g.path(rrect(g, -47, -47, 47, -36, 3), 'url(#printer-bar-gradient)', METAL.outline, w)
@@ -200,7 +200,7 @@ const ray = (g, [x0, y0], [x1, y1], opts) => beam(g, { x: (x0 + x1) / 2, y: (y0 
 // plate part, in the accent.)
 // ---------------------------------------------------------------------------------------------------------------------
 {
-  const g = page(5.05, [0, 2]), w = objW(92 * g.k)
+  const g = page(5.05, [0, -6.7]), w = objW(92 * g.k)
   const lid = g.path(poly(g, [[-44, -14], [-38, -44], [38, -44], [44, -14]]), ACCENT.shadow, ACCENT.outline, w) +
     g.path(poly(g, [[-36, -18], [-32, -38], [32, -38], [36, -18]]), ACCENT.light, ACCENT.outline, Math.max(1.5, w * 0.45))
   const box = wellPlate(g, { x: 0, y: 12, size: 92, kind: 'tips', rows: 4, cols: 8, view: 'angled', id: 'tip-box' })

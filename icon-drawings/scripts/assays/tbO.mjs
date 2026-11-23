@@ -1,7 +1,7 @@
 // Eight icons of SiliCoDraw's "Techniques & assays" (github.com/Alex-D-C/SiliCoDraw, MIT, © 2026 Alexander David Carlsson;
 // see ../../LICENSE-SiliCoDraw.txt), redrawn in the soft look of icon-drawings/STYLE.md from the shared parts of the
 // category (../parts/assays.mjs), the objects of ../parts/lab.mjs and the approved cells: Cell passage, Confluence,
-// Transwell assay, Matrix dome, Brain slice, Proteomic aging clock, Faecal microbiota transplant and Diastolic
+// Transwell assay, Matrix dome, Brain slice, Proteomic ageing clock, Faecal microbiota transplant and Diastolic
 // dysfunction (E/A reversal). Compositions are read by hand from the source in its 100 × 100 box centred on 0,0 and
 // scaled onto a 512 page (`page` of ../cellkit.mjs); outlines at 60 % (setStrokeScale), gloss on (the approved cells
 // placed by placeCellType are glossy already; the proteins are surfaces.mjs's shaded proteins, with their own depth).
@@ -124,10 +124,10 @@ icon('Brain slice', [4.63, 0.0, 0.0], (g) => {
   return join({ defs: S.defs, body, parts: S.parts.filter(([n]) => n !== 'tissue') }, own('coronal-section', s, [['section', BRAIN]]))
 })
 
-// Proteomic aging clock: proteins measured in the blood feed a clock that reads a biological age (the filled share of
+// Proteomic ageing clock: proteins measured in the blood feed a clock that reads a biological age (the filled share of
 // its face). The proteins are the set's amber shaded proteins; the share of the face rose (SiliCoDraw's #c8618a).
 const AGE = soft(hueOf('#c8618a'))
-icon('Proteomic aging clock', [4.813, -0.37, 1.79], (g) => {
+icon('Proteomic ageing clock', [4.813, -0.37, 1.79], (g) => {
   const cx = 16, cy = 2, R = 31, defs = [], w = objW(2 * R * g.k)
   const prots = [[-36, -30, 21, 3], [-39, 3, 19, 5], [-35, 34, 20, 8]].map(([x, y, s, seed], i) => shadedProtein(g, { x, y, size: s, seed, id: `protein${i + 1}` }))
   const arrows = [[[-26, -21], [-15, -12]], [[-27, 3], [-16, 3]], [[-25, 26], [-15, 18]]].map((pts, i) => arrow(g, { points: pts, corners: true, colour: INK, w: 5.5, id: `into-clock${i + 1}` }))

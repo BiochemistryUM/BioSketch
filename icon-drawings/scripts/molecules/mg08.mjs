@@ -174,10 +174,11 @@ function ringWith(g, { x, y, size, turn = 0, id = 'circular-DNA', w, pal = dnaPa
   const W = 8, S = 24, H = S / 2
   let defs = ''
   const shape = (id, kind, [x, y], pal) => {
-    defs += g.grad(`${id}-gradient`, [x - H, y - H, x + H, y + H], pal)
+    // Flat (review of 23 November 2026): the symbols of a chart are a picture of data, not bodies; with a gradient and
+    // the gloss they looked like buttons.
     const d = kind === 'square' ? rrectD(g, x - H, y - H, S, S, 2.6) : null
-    const outline = d ? `<path d="${d}" fill="url(#${id}-gradient)" stroke="${pal.outline}" stroke-width="${W}" stroke-linejoin="round"/>` : g.circle(x, y, H, `url(#${id}-gradient)`, pal.outline, W)
-    return `<g id="${id}">${outline}${g.hl(x - H * 0.42, y - H * 0.48, 15, 5, kind === 'square' ? -12 : -40, pal.light)}</g>`
+    const outline = d ? `<path d="${d}" fill="${pal.base}" stroke="${pal.outline}" stroke-width="${W}" stroke-linejoin="round"/>` : g.circle(x, y, H, pal.base, pal.outline, W)
+    return `<g id="${id}">${outline}</g>`
   }
   const lines = `<g id="lines">${g.line([[-8, -30], [8, -30]], GREY.outline, W)}${g.line([[0, -30], [0, -6]], GREY.outline, W)}${g.line([[-30, -6], [30, -6]], GREY.outline, W)}` +
     [-30, 0, 30].map((x) => g.line([[x, -6], [x, 10]], GREY.outline, W)).join('') + '</g>'

@@ -10,6 +10,7 @@
 import { NUC, PEACH, cellTypes, page } from '../cellkit.mjs'
 import { deep, hueOf, rich, soft, toHex } from '../colour.mjs'
 import { f } from '../shapes.mjs'
+import { MITO as MITO_KIT, drawMito, mitochondrion as mitoShape } from '../mitokit.mjs'
 
 const OUT = process.argv[2]
 const { cellType, check } = cellTypes(OUT)
@@ -213,32 +214,19 @@ const atp = (g, x, y, dir, pal) =>
 
 // Mitochondrial DNA: a mitochondrion (outer membrane, inner membrane folded into cristae) with its small circular genome
 // in the matrix, drawn as a ring of two strands wound round each other.
-// (The mitochondrion is drawn as BioSketch's own: the space between the membranes and inside the cristae in a deeper
-// tone, the matrix pale. SiliCoDraw's DNA is a blue ring with a white dashed line; the blue is kept.)
+// (The mitochondrion is the owner's, from ../mitokit.mjs, since the review of 23 November 2026; before, it was a rounded
+// box with four tongues in a paler rose. Its cristae stand at the two ends, clear of the ring. SiliCoDraw's DNA is a
+// blue ring with a white dashed line; the blue is kept.)
 {
-  const g = page(4.47, [0, 0]), mito = soft(MITO), dna = deep(PROTEIN)
-  const out = [50, 27, 22], inn = [43, 20, 15] // half width, half height and corner radius of each membrane
-  const box = ([hx, hy, r]) => rrect(g, -hx, -hy, 2 * hx, 2 * hy, r)
-  // Where the inner membrane runs at x, above (s = -1) or below (s = 1).
-  const edge = (x, s) => { const [hx, hy, r] = inn, dx = Math.abs(x) - (hx - r); return s * (dx <= 0 ? hy : hy - r + Math.sqrt(r * r - dx * dx)) }
-  const cristae = [[-31, -1, -7], [29, -1, -7], [-23, 1, 7], [23, 1, 7]] // x, side, where the tip ends
-  const W = 5, lip = 4.5 / g.k
-  const tongue = ([x, s, tip]) => {
-    const [x0, x1] = [x - W, x + W], r = W * g.k, [ax, ay] = g.P([x0, edge(x0, s)]), [bx, by] = g.P([x1, edge(x1, s)]), [, ty] = g.P([0, tip + s * W])
-    const fill = `M${f(ax)},${f(g.Y(edge(x0, s) + s * lip * 1.4))} L${f(bx)},${f(g.Y(edge(x1, s) + s * lip * 1.4))} L${f(bx)},${f(ty)} A${f(r)},${f(r)} 0 0 ${s < 0 ? 1 : 0} ${f(ax)},${f(ty)} Z`
-    const line = `M${f(ax)},${f(ay)} L${f(ax)},${f(ty)} A${f(r)},${f(r)} 0 0 ${s < 0 ? 0 : 1} ${f(bx)},${f(ty)} L${f(bx)},${f(by)}`
-    return { fill: `<path d="${fill}" fill="${mito.small}"/>`, line: `<path d="${line}" fill="none" stroke="${mito.outline}" stroke-width="9" stroke-linejoin="round"/>` }
-  }
+  const g = page(4.47, [0, 0]), dna = deep(PROTEIN)
+  const m = mitoShape({ L: 228, H: 120, fingers: [[-150, -1], [-108, 1], [108, -1], [150, 1]].map(([x, side]) => ({ x, side, depth: 0.55 })), n: 2.6, minGap: 22 })
+  const mito = drawMito(m, { dx: 256, dy: 256, L: 228, bend: -8 }, 'mitochondrion-gradient', [-184, -46, 22, 8, -62], 7)
   const strand = (phase) => {
     const pts = Array.from({ length: 96 }, (_, i) => { const t = (i / 96) * Math.PI * 2, r = 12.5 + 2.6 * Math.sin(8 * t + phase); return [r * Math.cos(t), r * Math.sin(t)] })
     return `<path d="${g.smooth(pts)}" fill="none" stroke="${phase ? dna.small : dna.outline}" stroke-width="6.5"/>`
   }
-  cellType('Mitochondrial DNA', [['mitochondrion', mito], ['DNA', dna]],
-    g.grad('matrix-gradient', [-43, -20, 43, 20], mito),
-    `<g id="outer-membrane">${g.path(box(out), mito.small, mito.outline, 12)}</g>\n` +
-      `<g id="inner-membrane">${g.path(box(inn), 'url(#matrix-gradient)', mito.outline, 9)}${g.hl(-35.5, -8, 16, 5, -60, mito.light)}` +
-      `${cristae.map(tongue).map((t) => t.fill).join('')}${cristae.map(tongue).map((t) => t.line).join('')}</g>\n` +
-      `<g id="DNA">${strand(Math.PI)}${strand(0)}</g>`)
+  cellType('Mitochondrial DNA', [['mitochondrion', MITO_KIT], ['DNA', dna]], mito.defs,
+    `<g id="mitochondrion">${mito.body}</g>\n<g id="DNA">${strand(Math.PI)}${strand(0)}</g>`)
 }
 
 // Electron transport chain: the four complexes of the inner mitochondrial membrane and ATP synthase. Complexes I, III
