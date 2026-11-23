@@ -31,7 +31,8 @@ import { finishReshape, startReshape } from '../icons/reshape'
 import { splitIcon } from '../icons/split'
 import { placeImageFile } from '../io/images'
 import { removeNodes, uid } from '../model/doc'
-import { MAX_NOTES, MAX_STEPS, colourSlides, slideList, slideSteps } from '../model/slides'
+import { effectName } from '../model/animation'
+import { MAX_NOTES, colourSlides, slideList } from '../model/slides'
 import { TABLE_FONT, TABLE_HEAD_FILL, cellsText, fitTable, readCells, type TableLines } from '../model/table'
 import { SYMBOL_GROUPS, insertText, wrapSelection } from '../model/richtext'
 import { SHAPE_KINDS, shapePath } from '../model/shapes'
@@ -4683,45 +4684,29 @@ function Arrange({ nodes }: { nodes: FigNode[] }) {
   )
 }
 
-/** When an object comes on screen while its slide is presented: with the slide, or on a press of its own. */
+/** When an object comes in and goes while its slide is presented; the animations panel changes it. */
 function Appears({ nodes }: { nodes: FigNode[] }) {
   const slides = useEditor((s) => s.slidesShown || !!s.doc.slides)
-  const most = useEditor((s) => slideSteps(s.doc.nodes))
-  const now = nodes[0].appear ?? 0
-  if (!slides && !nodes.some((n) => n.appear)) return null
-  const mixed = nodes.some((n) => (n.appear ?? 0) !== now)
-  const last = Math.min(MAX_STEPS, Math.max(most, now) + 1)
+  if (!slides && !nodes.some((n) => n.appear || n.exit)) return null
+  const first = nodes[0]
+  const same = nodes.every((n) => n.appear === first.appear && n.exit === first.exit && JSON.stringify([n.enterFx, n.exitFx]) === JSON.stringify([first.enterFx, first.exitFx]))
+  const words = !same
+    ? 'Differs between the objects'
+    : [first.appear ? `${effectName(first.enterFx ?? null, 'in')} on press ${first.appear}` : 'There from the start', first.exit ? `${effectName(first.exitFx ?? null, 'out').toLowerCase()} on press ${first.exit}` : ''].filter(Boolean).join(', ')
   return (
-    <Field
-      label="When presenting, it appears"
-      info={
-        <>
-          <p>An object can wait for a press of its own while its slide is presented: the slide comes up without it, and it appears on the first press, the second, and so on. Several objects can appear on the same press.</p>
+    <div className="field" role="group" aria-label="When presenting">
+      <span className="field-head">
+        <span className="field-label">When presenting</span>
+        <Info about="When presenting">
+          <p>An object can come in on a press of its own while its slide is presented, and go on a later one, with an animation. The animations panel lists them all in order.</p>
           <p>On the page and in exported files everything is always drawn.</p>
-        </>
-      }
-    >
-      <select
-        aria-label="When the object appears while presenting"
-        value={mixed ? -1 : now}
-        onChange={(e) => {
-          const step = Number(e.target.value)
-          if (step < 0) return
-          patchSelection((n) => {
-            const { appear: _drop, ...rest } = n
-            return (step ? { ...rest, appear: step } : rest) as FigNode
-          })
-        }}
-      >
-        {mixed && <option value={-1}>At different times</option>}
-        <option value={0}>With the slide</option>
-        {Array.from({ length: last }, (_, i) => (
-          <option key={i + 1} value={i + 1}>
-            On press {i + 1}
-          </option>
-        ))}
-      </select>
-    </Field>
+        </Info>
+      </span>
+      <span className="anim-summary">{words}</span>
+      <button className="btn small" onClick={() => useEditor.setState({ animations: true })}>
+        <Icon name="animate" size={14} /> Animations…
+      </button>
+    </div>
   )
 }
 

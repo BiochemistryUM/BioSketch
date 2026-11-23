@@ -99,6 +99,7 @@ export const COMMANDS: Entry[] = [
   { id: 'cmd-calculators', name: 'Lab calculators', description: 'Molarity, dilution, molecular weight', keywords: ['molarity', 'dilution', 'c1v1', 'weigh', 'molecular weight', 'mw', 'formula', 'pubchem', 'buffer'], icon: 'calculator', run: open('calculators') },
   { id: 'cmd-ai', name: 'Create a figure with AI', keywords: ['claude', 'sketch', 'describe'], icon: 'sparkles', run: open('ai') },
   { id: 'cmd-present', name: 'Present the slides', keywords: ['presentation', 'full screen', 'slideshow'], icon: 'play', run: present },
+  { id: 'cmd-animations', name: 'Animations', description: 'How objects come in and go while the slides are presented: fade, fly in, wipe, zoom', keywords: ['animation', 'animate', 'entrance', 'exit', 'fade', 'fly in', 'wipe', 'zoom', 'build', 'appear', 'transition', 'presentation'], icon: 'animate', run: () => useEditor.setState({ animations: true, slidesShown: true }) },
   { id: 'cmd-slides', name: 'Show the slides', keywords: ['presentation', 'pages'], icon: 'slides', run: () => useEditor.setState({ slidesShown: true }) },
   { id: 'cmd-theme', name: 'Dark or light theme', keywords: ['dark mode', 'night', 'colours'], icon: 'moon', run: toggleTheme },
   { id: 'cmd-news', name: "What's new", description: 'The version and what changed', keywords: ['version', 'update', 'changes'], icon: 'sparkles', run: open('whats-new') },

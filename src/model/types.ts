@@ -48,6 +48,24 @@ interface NodeBase {
    * first, 2 on the second). Absent = there from the start. On the page and in exports it is always drawn.
    */
   appear?: number
+  /** How the object comes in on its press (`appear`). Absent = it is simply there. */
+  enterFx?: Effect
+  /** Presenting: the object goes on this press (after `appear`). Absent = it stays until the slide ends. */
+  exit?: number
+  /** How the object goes on its press (`exit`). Absent = it is simply gone. */
+  exitFx?: Effect
+}
+
+/** Where an object flies or wipes from (coming in) or to (going). */
+export type Side = 'left' | 'right' | 'top' | 'bottom'
+
+/** An animation of an object while its slide is presented (`src/model/animation.ts`). */
+export interface Effect {
+  kind: 'fade' | 'fly' | 'wipe' | 'zoom'
+  /** For `fly` and `wipe`: the side. Absent = left. */
+  from?: Side
+  /** How long it takes, in milliseconds. Absent = 500. */
+  ms?: number
 }
 
 /** True when the object can be picked up on the page: neither locked nor hidden. */

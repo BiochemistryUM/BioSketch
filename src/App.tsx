@@ -7,7 +7,7 @@ import { nodeLabel } from './model/describe'
 import { findNode } from './model/nodes'
 import { useEditor } from './store'
 import { Icon } from './ui/Icon'
-import { Dialogs, LazyPropertiesPanel } from './ui/lazyDialogs'
+import { Dialogs, LazyAnimationsPanel, LazyPropertiesPanel } from './ui/lazyDialogs'
 import { LibraryPanel } from './ui/LibraryPanel'
 import { PanelResizer } from './ui/PanelResizer'
 import { Presenter } from './ui/Presenter'
@@ -72,7 +72,10 @@ export function App() {
   // A figure with several slides always shows them; one with a single slide when they were asked for.
   const showSlides = useEditor((s) => s.slidesShown || !!s.doc.slides)
   const [showLibrary, setShowLibrary] = useState(isWide)
-  const [showProps, setShowProps] = useState(isWide)
+  const [propsWanted, setShowProps] = useState(isWide)
+  // The animations panel takes the place of the properties panel, and opens it when it was closed.
+  const animations = useEditor((s) => s.animations)
+  const showProps = propsWanted || animations
 
   useEffect(() => installKeyboard(), [])
   // Search asked for icons: the library must be open to show them.
@@ -87,7 +90,10 @@ export function App() {
         showLibrary={showLibrary}
         showProps={showProps}
         onToggleLibrary={() => setShowLibrary((v) => !v)}
-        onToggleProps={() => setShowProps((v) => !v)}
+        onToggleProps={() => {
+          if (animations) useEditor.setState({ animations: false })
+          setShowProps(animations ? true : (v) => !v)
+        }}
       />
       <div className="workspace">
         <ToolRail />
@@ -100,7 +106,7 @@ export function App() {
           {showSlides && <SlideStrip />}
         </main>
         {showProps && <PanelResizer />}
-        {showProps && <LazyPropertiesPanel />}
+        {showProps && (animations ? <LazyAnimationsPanel /> : <LazyPropertiesPanel />)}
       </div>
       <Dialogs />
       <Presenter />

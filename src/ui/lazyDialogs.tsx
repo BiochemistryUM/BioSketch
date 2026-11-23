@@ -33,7 +33,7 @@ const loaders: Record<Name, () => Promise<{ default: ComponentType }>> = {
 const views = Object.fromEntries(Object.entries(loaders).map(([name, load]) => [name, lazy(load)])) as unknown as Record<Name, ComponentType>
 
 /** Fetch every dialog now (they are small next to the editor), and the tour of the features with them. Never fails: what cannot be fetched is fetched when it is opened. */
-export const preloadDialogs = (): Promise<unknown> => Promise.allSettled([...Object.values(loaders).map((load) => load()), loadPanel(), import('../tutorial'), import('../templates')])
+export const preloadDialogs = (): Promise<unknown> => Promise.allSettled([...Object.values(loaders).map((load) => load()), loadPanel(), loadAnimations(), import('../tutorial'), import('../templates')])
 
 // The properties panel is the largest part of the editor (every setting of every kind of chart), so
 // it is a file of its own too: the page is drawn first and the panel follows a moment later. It is
@@ -57,6 +57,20 @@ class PanelFetched extends Component<{ children: ReactNode }, { failed: boolean 
 }
 
 /** The properties panel, fetched on its own. */
+const loadAnimations = () => import('./AnimationsPanel').then((m) => ({ default: m.AnimationsPanel }))
+const AnimationsView = lazy(loadAnimations)
+
+/** The animations panel, fetched when first opened (and in the background with the dialogs). */
+export function LazyAnimationsPanel() {
+  return (
+    <PanelFetched>
+      <Suspense fallback={emptyPanel()}>
+        <AnimationsView />
+      </Suspense>
+    </PanelFetched>
+  )
+}
+
 export function LazyPropertiesPanel() {
   return (
     <PanelFetched>

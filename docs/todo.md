@@ -148,6 +148,15 @@ come). Rule 3 applies to every analysis still to build. Rule 7's plate picture c
 - [ ] Resize, turn and connect objects from the keyboard.
 - [x] Copy style and paste style (⌥⌘C, ⌥⌘V) between objects (21 November 2026).
 
+## 7. Presenting
+
+- [x] A panel for animations (asked for by the owner, 23 November 2026; built the same day):
+      "Animate" beside "Slides". Fade, fly, wipe and zoom, coming in and going, a side and a
+      duration, the order of play with "together with the row above", a preview that plays the
+      slide, and the presenter plays them.
+- [ ] Animations in the PowerPoint export (its timing XML, `p:timing`).
+- [ ] Slide transitions and motion paths: not built; decide whether they fit rule 8 first.
+
 ## Later
 
 Parked by rule 8 on 21 November 2026: they turn BioSketch towards processing instrument data.

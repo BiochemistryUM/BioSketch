@@ -14,8 +14,8 @@ import type { Endpoint, FigDoc, FigNode, Slide } from './types'
 export const MAX_SLIDES = 200
 /** The longest notes a slide holds, in characters. */
 export const MAX_NOTES = 5000
-/** The most presses on which objects of one slide can appear. */
-export const MAX_STEPS = 50
+// Objects that come in and go on presses: `src/model/animation.ts`.
+export { MAX_STEPS, nodesAtStep, slideSteps } from './animation'
 
 export const slideCount = (doc: FigDoc): number => 1 + (doc.slides ? doc.slides.before.length + doc.slides.after.length : 0)
 
@@ -127,27 +127,6 @@ export function mapSlides(doc: FigDoc, fn: (nodes: FigNode[]) => FigNode[]): Fig
 export function colourSlides(doc: FigDoc, background: string): FigDoc {
   if (!doc.slides) return doc.background === background ? doc : { ...doc, background }
   return withSlides(doc, slideList(doc).map((slide) => ({ ...slide, background })), slideIndex(doc))
-}
-
-// ---------- objects that appear one by one ----------
-
-/** On how many presses objects of this slide appear while it is presented: 0 when everything is there from the start. */
-export const slideSteps = (nodes: FigNode[]): number => nodes.reduce((most, n) => Math.max(most, n.hidden ? 0 : (n.appear ?? 0)), 0)
-
-const atStep = new WeakMap<FigNode[], Map<number, FigNode[]>>()
-
-/**
- * The objects of a slide as they are shown after `step` presses: what appears later is not drawn
- * yet. It stays among the objects (hidden), so that an arrow attached to it keeps its place when
- * it is the arrow that is shown first. The same list comes back for the same slide and step.
- */
-export function nodesAtStep(nodes: FigNode[], step: number): FigNode[] {
-  if (step >= slideSteps(nodes)) return nodes
-  let known = atStep.get(nodes)
-  if (!known) atStep.set(nodes, (known = new Map()))
-  let shown = known.get(step)
-  if (!shown) known.set(step, (shown = nodes.map((n) => ((n.appear ?? 0) > step ? { ...n, hidden: true } : n))))
-  return shown
 }
 
 /**

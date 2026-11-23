@@ -21,10 +21,10 @@ const load = (): Promise<RenderSvg> =>
     }))
 
 /** What the picture of a slide depends on besides its objects: the page, and the drawings of the icons it places. */
-export function thumbStamp(slide: FigDoc, sketch: boolean): unknown[] {
+export function thumbStamp(slide: FigDoc, sketch: boolean, transparent = false): unknown[] {
   const icons = new Set<string>()
   for (const n of slide.nodes) if (n.type === 'icon') icons.add(n.iconId)
-  return [slide.width, slide.height, slide.background, sketch, ...[...icons].map((id) => slide.customIcons[id])]
+  return [slide.width, slide.height, slide.background, sketch, transparent, ...[...icons].map((id) => slide.customIcons[id])]
 }
 
 const same = (a: unknown[], b: unknown[]): boolean => a.length === b.length && a.every((v, i) => v === b[i])
@@ -38,24 +38,27 @@ interface Thumb {
 const made = new Map<FigNode[], Thumb>()
 
 /** The picture of a slide when it has been made already; null otherwise. */
-export function thumbNow(slide: FigDoc, sketch: boolean): string | null {
+export function thumbNow(slide: FigDoc, sketch: boolean, transparent = false): string | null {
   const have = made.get(slide.nodes)
-  return have && same(have.stamp, thumbStamp(slide, sketch)) ? have.url : null
+  return have && same(have.stamp, thumbStamp(slide, sketch, transparent)) ? have.url : null
 }
 
-/** The picture of a slide, as an address the browser can show. */
-export async function slideThumb(slide: FigDoc, sketch: boolean): Promise<string> {
-  const ready = thumbNow(slide, sketch)
+/**
+ * The picture of a slide, as an address the browser can show. A transparent one has no page colour:
+ * it is laid over another picture while an object of the slide is animated.
+ */
+export async function slideThumb(slide: FigDoc, sketch: boolean, transparent = false): Promise<string> {
+  const ready = thumbNow(slide, sketch, transparent)
   if (ready) return ready
   const renderSvg = await load()
-  const again = thumbNow(slide, sketch)
+  const again = thumbNow(slide, sketch, transparent)
   if (again) return again
   const { slides: _others, widthMm: _mm, notes: _notes, ...page } = slide
-  const { svg } = renderSvg(page, { area: 'page', transparent: false, includeSketch: sketch }, false)
+  const { svg } = renderSvg(page, { area: 'page', transparent, includeSketch: sketch }, false)
   const old = made.get(slide.nodes)
   if (old) URL.revokeObjectURL(old.url)
   const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
-  made.set(slide.nodes, { stamp: thumbStamp(slide, sketch), url })
+  made.set(slide.nodes, { stamp: thumbStamp(slide, sketch, transparent), url })
   return url
 }
 

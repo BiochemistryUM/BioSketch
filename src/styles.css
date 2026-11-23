@@ -2263,6 +2263,32 @@ kbd {
   object-fit: contain;
 }
 
+/* A slide at a step, playing its animations (AnimatedSlide): a frame of the page's shape, as large as its box allows. */
+.anim-box {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  container-type: size;
+}
+
+.anim-frame {
+  position: relative;
+  overflow: hidden;
+  width: min(100cqw, calc(100cqh * var(--ratio)));
+  height: min(100cqh, calc(100cqw / var(--ratio)));
+}
+
+.anim-pic {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
 /* For the speaker: the slide at the left, and beside it what comes next, the time and the notes. */
 .presenting.speaker .present-stage {
   right: min(34%, 460px);
@@ -2414,7 +2440,8 @@ kbd {
 }
 
 /* The press on which an object appears while its slide is presented. */
-.appear-badge circle {
+.appear-badge circle,
+.appear-badge rect {
   fill: #7a5ab5;
   stroke: #fff;
   stroke-width: 1.5;
@@ -3162,3 +3189,198 @@ button.link {
 .journal-check .check-warn .check-mark { background: #b7791f; }
 .journal-check .check-problem .check-mark { background: #c0392b; }
 .journal-check .check-problem { font-weight: 500; }
+
+/* ---------- animations panel (AnimationsPanel.tsx) ---------- */
+
+.anim-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 6px;
+}
+
+.anim-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.anim-head .spacer {
+  flex: 1;
+}
+
+.anim-preview {
+  padding: 0 12px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.anim-screen {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.anim-screen .anim-box {
+  inset: 6px;
+}
+
+.anim-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.anim-count {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.anim-way {
+  margin-bottom: 4px;
+}
+
+.anim-way-more {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 8px;
+}
+
+.anim-way-more .field:only-child {
+  grid-column: 1 / -1;
+}
+
+.anim-summary {
+  display: block;
+  font-size: 12.5px;
+  margin-bottom: 6px;
+}
+
+.anim-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.anim-row {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 2px 6px;
+  align-items: center;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field);
+}
+
+.anim-row.joined {
+  margin-top: -2px;
+  border-top-style: dashed;
+}
+
+.anim-row.selected {
+  border-color: var(--accent);
+  background: var(--accent-weak);
+}
+
+.anim-step {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: #7a5ab5;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.anim-row.joined .anim-step {
+  background: none;
+  color: var(--muted);
+}
+
+.anim-name {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 6px;
+  align-items: center;
+  min-width: 0;
+  min-height: 34px;
+  padding: 2px 4px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.anim-name:hover {
+  background: var(--hover);
+}
+
+.anim-dot {
+  grid-row: span 2;
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+}
+
+.anim-dot.in {
+  background: #2e9d5b;
+}
+
+.anim-dot.out {
+  background: #d1453b;
+}
+
+.anim-what {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.anim-fx {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.anim-tools {
+  grid-column: 2;
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.anim-tools .icon-only {
+  width: 30px;
+  height: 30px;
+}
+
+.anim-tools .icon-only[aria-pressed='true'] {
+  background: var(--accent-weak);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.turn-up,
+.turn-down {
+  display: inline-grid;
+  transform: rotate(90deg);
+}
+
+@media (pointer: coarse) {
+  .anim-tools .icon-only {
+    width: 40px;
+    height: 40px;
+  }
+}

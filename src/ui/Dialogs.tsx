@@ -504,7 +504,7 @@ export function HelpDialog() {
             <li>
               “Slides” in the top bar shows the slides of the figure under the page: add, copy, move and delete them there. With nothing selected, the arrow keys open the next and the previous slide. “Present” shows them full screen: the arrow keys or a
               press move on, Escape goes back. Export can save all slides as one PDF or one PowerPoint file. The button beside “+” has slide layouts and your own saved slide templates; notes for the
-              speaker are typed under “Page”, and an object can be made to appear on a press of its own (under “Arrange”).
+              speaker are typed under “Page”, and “Animate”, beside “Slides”, makes objects come in and go on presses (fade, fly, wipe, zoom) and plays the slide to try them.
             </li>
             <li>With the membrane brush, draw a line. Finish near the start to close it into a cell.</li>
             <li>Sketch with the pen, then use “AI” to turn the sketch into a clean figure, or to change a figure you already have.</li>

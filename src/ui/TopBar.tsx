@@ -201,6 +201,7 @@ export function TopBar({ showLibrary, showProps, onToggleLibrary, onToggleProps 
   const showSketch = useEditor((s) => s.showSketch)
   const slides = useEditor((s) => slideCount(s.doc))
   const slidesShown = useEditor((s) => s.slidesShown || !!s.doc.slides)
+  const animations = useEditor((s) => s.animations)
   const set = useEditor((s) => s.set)
   const undo = useEditor((s) => s.undo)
   const redo = useEditor((s) => s.redo)
@@ -243,6 +244,16 @@ export function TopBar({ showLibrary, showProps, onToggleLibrary, onToggleProps 
           // A figure with several slides always shows them: the button then leads to the open slide in the row.
           onClick={() => (slides < 2 ? set({ slidesShown: !slidesShown }) : document.querySelector<HTMLElement>('.slide-thumb.current')?.focus())}
         />
+        {slidesShown && (
+          <BarButton
+            icon="animate"
+            label={animations ? 'Close the animations' : 'Animations: how objects come in and go while the slides are presented'}
+            text="Animate"
+            active={animations}
+            className="slim"
+            onClick={() => set({ animations: !animations })}
+          />
+        )}
       </div>
       <ToolsGroup />
       <div className="spacer" />

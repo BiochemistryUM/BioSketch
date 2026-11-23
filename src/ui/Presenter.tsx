@@ -1,14 +1,16 @@
 // Presenting: the slides of the figure full screen, one after the other, on black. A slide is shown
 // as the picture an export would give (panel frames and hidden objects are left out). The arrow
 // keys, Space, a press on the slide or a swipe move on; Escape or the cross goes back to the editor.
-// Objects that appear on a press come one by one before the next slide does. The view for the
+// Objects that come in or go on a press do so one press at a time, with their animations
+// (`AnimatedSlide`), before the next slide comes. The view for the
 // speaker shows the notes, the time and what comes next, and a second window can show the slides
 // alone, to be put on the projector.
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
-import { nodesAtStep, slideDocs, slideIndex, slideSteps } from '../model/slides'
+import { slideDocs, slideIndex, slideSteps } from '../model/slides'
 import type { FigDoc } from '../model/types'
 import { toast, useEditor } from '../store'
+import { AnimatedSlide, frameOf, prepareStep } from './AnimatedSlide'
 import { Icon } from './Icon'
 import { slideThumb, thumbNow } from './slideThumbs'
 
@@ -75,6 +77,12 @@ export function presentMove(at: Place, move: 1 | -1 | 'first' | 'last', steps: n
   return at.slide > 0 ? { slide: at.slide - 1, step: steps[at.slide - 1] } : at
 }
 
+/** Where a step leads, and whether it is one press forward on the same slide (its animations are then played). */
+function stepTo(at: Place, move: 1 | -1 | 'first' | 'last', steps: number[]): Place & { play: boolean } {
+  const to = presentMove(at, move, steps)
+  return { ...to, play: move === 1 && to.slide === at.slide && to.step === at.step + 1 }
+}
+
 /** A length of time as minutes and seconds, or hours, minutes and seconds. */
 export function clock(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000))
@@ -105,7 +113,8 @@ function Show() {
   const sketch = useEditor((s) => s.showSketch)
   const slides = useMemo(() => slideDocs(doc), [doc])
   const steps = useMemo(() => slides.map((s) => slideSteps(s.nodes)), [slides])
-  const [place, setPlace] = useState<Place>(() => ({ slide: slideIndex(doc), step: 0 }))
+  // `play`: the place was reached by one press forward, so its animations are played.
+  const [place, setPlace] = useState<Place & { play?: boolean }>(() => ({ slide: slideIndex(doc), step: 0 }))
   const [, setLoaded] = useState(0)
   const [controls, setControls] = useState(true)
   const [speaker, setSpeaker] = useState(false)
@@ -118,16 +127,12 @@ function Show() {
   const count = slides.length
   const at: Place = { slide: Math.min(place.slide, count - 1), step: Math.min(place.step, steps[Math.min(place.slide, count - 1)] ?? 0) }
 
-  /** The slide as it is shown at a place: what appears on a later press is not drawn yet. */
-  const frame = (p: Place): FigDoc => {
-    const slide = slides[p.slide]
-    const nodes = nodesAtStep(slide.nodes, p.step)
-    return nodes === slide.nodes ? slide : { ...slide, nodes }
-  }
+  /** The slide as it is shown at a place: what comes on a later press is not drawn yet, what has gone is not drawn. */
+  const frame = (p: Place): FigDoc => frameOf(slides[p.slide], p.step)
   // The newest of everything the listeners below need, so that they are set up once.
   const live = useRef({ steps, audience })
   live.current = { steps, audience }
-  const go = (move: 1 | -1 | 'first' | 'last') => setPlace((p) => presentMove(p, move, live.current.steps))
+  const go = (move: 1 | -1 | 'first' | 'last') => setPlace((p) => stepTo(p, move, live.current.steps))
   const stop = () => {
     live.current.audience?.close()
     leave()
@@ -154,6 +159,8 @@ function Show() {
         .then(() => !gone && setLoaded((n) => n + 1))
         .catch(() => undefined)
     }
+    // The pictures the next press plays its animations from.
+    if (next.slide === at.slide && next.step === at.step + 1) void prepareStep(slides[next.slide], next.step, sketch)
     return () => {
       gone = true
     }
@@ -209,7 +216,7 @@ function Show() {
     }
     const press = () => {
       audience.document.getElementById('hint')?.remove()
-      setPlace((p) => presentMove(p, 1, live.current.steps))
+      setPlace((p) => stepTo(p, 1, live.current.steps))
     }
     const closed = () => setAudience(null)
     audience.addEventListener('keydown', key)
@@ -266,11 +273,13 @@ function Show() {
       onPointerUp={onPointerUp}
       onPointerCancel={() => (down.current = null)}
     >
-      <div className="present-stage">{url && <img className="present-slide" src={url} alt={where} draggable={false} />}</div>
+      <div className="present-stage">
+        <AnimatedSlide slide={slides[at.slide]} step={at.step} play={!!place.play && place.slide === at.slide && place.step === at.step} sketch={sketch} alt={where} />
+      </div>
       {speaker && (
         <aside className="speaker-side" aria-label="For the speaker">
           <div className="speaker-next">
-            <span>{atEnd ? 'This is the last slide' : next.slide === at.slide ? 'Next: the next object appears' : `Next: slide ${next.slide + 1}`}</span>
+            <span>{atEnd ? 'This is the last slide' : next.slide === at.slide ? 'Next: the next animation' : `Next: slide ${next.slide + 1}`}</span>
             {nextUrl && <img src={nextUrl} alt="" draggable={false} />}
           </div>
           <div className="speaker-time" role="timer">

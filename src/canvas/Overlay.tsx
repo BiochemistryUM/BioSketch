@@ -179,17 +179,17 @@ export function Overlay({ marquee, attachHint, guides }: Props) {
     parts.push(<polygon key="chart-part" className="part-outline" points={corners.map((p) => `${p.x},${p.y}`).join(' ')} />)
   }
 
-  // On which press an object appears while its slide is presented: a small number at its corner.
+  // On which press an object comes in (and goes) while its slide is presented: a small number at its corner.
   if (slides) {
     for (const node of doc.nodes) {
-      if (!node.appear || node.hidden) continue
+      if ((!node.appear && !node.exit) || node.hidden) continue
       const r = getRect(node, doc)
       const at = toScreen({ x: r.x, y: r.y })
       parts.push(
         <g key={`appear-${node.id}`} className="appear-badge" pointerEvents="none">
-          <circle cx={at.x} cy={at.y} r={9} />
+          <rect x={at.x - (node.exit ? 16 : 9)} y={at.y - 9} width={node.exit ? 32 : 18} height={18} rx={9} />
           <text x={at.x} y={at.y + 3.5} textAnchor="middle">
-            {node.appear}
+            {node.exit ? `${node.appear ?? 0}–${node.exit}` : node.appear}
           </text>
         </g>,
       )

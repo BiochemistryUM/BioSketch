@@ -15,6 +15,7 @@ import { CELL_MAX, TABLE_COLS_MAX, TABLE_ROWS_MAX } from '../model/table'
 import { wellName } from '../model/tableRoles'
 import { SCALE_UNITS } from '../model/scaleBar'
 import { STRUCTURE_CHAINS_MAX, STRUCTURE_MARKS_MAX, STRUCTURE_RESIDUES_MAX } from '../model/structure'
+import { readEffect } from '../model/animation'
 import { MAX_NOTES, MAX_SLIDES, MAX_STEPS, openSlide, uniqueIds, withSlides } from '../model/slides'
 import type { ImageCrop, ImageScale, StandardModel, StandardSettings, KineticsSettings, BindingSettings, MeltSettings, FacetSettings, ChartNode, QpcrSettings, StructureChain, StructureMark, ChartBracket, ChartGroup, ChartKind, ChartTest, ConnectorKind, DashStyle, ElbowLegs, Endpoint, FigDoc, FigNode, FontFamily, IconDef, Point, ShapeKind, ShapeLabel, TextAlign, Slide } from '../model/types'
 
@@ -85,6 +86,22 @@ function endpoint(v: unknown): Endpoint | null {
   return port ? { ...p, nodeId, port: { x: Math.min(1, Math.max(-1, port.x)), y: Math.min(1, Math.max(-1, port.y)) } } : { ...p, nodeId }
 }
 
+/** When and how an object comes in and goes while its slide is presented; a going before the coming in is dropped. */
+function animationFields(o: Record<string, unknown>): Pick<FigNode, 'appear' | 'enterFx' | 'exit' | 'exitFx'> {
+  const step = (v: unknown): number | undefined => (typeof v === 'number' && v >= 1 ? Math.round(num(v, 1, 1, MAX_STEPS)) : undefined)
+  const appear = step(o.appear)
+  const exit = step(o.exit)
+  const enterFx = appear ? readEffect(o.enterFx) : null
+  const keepExit = exit !== undefined && exit > (appear ?? 0)
+  const exitFx = keepExit ? readEffect(o.exitFx) : null
+  return {
+    ...(appear ? { appear } : {}),
+    ...(enterFx ? { enterFx } : {}),
+    ...(keepExit ? { exit } : {}),
+    ...(exitFx ? { exitFx } : {}),
+  }
+}
+
 function node(raw: unknown): FigNode | null {
   const o = obj(raw)
   if (!o) return null
@@ -97,7 +114,7 @@ function node(raw: unknown): FigNode | null {
     ...(bool(o.hidden) ? { hidden: true as const } : {}),
     ...(bool(o.guide) ? { guide: true as const } : {}),
     ...(typeof o.name === 'string' && o.name.trim() ? { name: o.name.trim().slice(0, 60) } : {}),
-    ...(typeof o.appear === 'number' && o.appear >= 1 ? { appear: Math.round(num(o.appear, 1, 1, MAX_STEPS)) } : {}),
+    ...animationFields(o),
   }
   switch (o.type) {
     case 'icon': {
