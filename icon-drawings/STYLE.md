@@ -263,6 +263,12 @@ Saved the same day with the owner's approval (553 icons in this folder afterward
   blots, plates, image fields, sections, worm, mouse from above, arenas, person, timeline, badge, micropipette) with the
   lab and biology parts. Cells, proteins and bacteria are glossed, objects and data pictures are not. Known weak ones:
   Camera trap cut at the left, Hypnogram without stage names, SPR without a prism, small mice in the arenas.
+- Immunology & infection, 56 icons (the other 48 of the category were already drawn elsewhere), saved later on 23
+  November 2026 (731 icons in this folder afterwards): `immune/imA.mjs` to `imG.mjs`, built from `parts/immune.mjs` (virus
+  by kind, microbe, lymphocyte, surfaceProtein, targetCell, synapse, cytokines, antibodyCoat, crowd; its top comment sets
+  the colours of pathogens, receptors, cytokines, vessels and epidemiological status). Organs, mould, malaria parasite,
+  helminth, hand, globe and map are drawn in their own icons. "Inverted CD4-CD8 ratio" has a dash because a colon is
+  not allowed in Windows file names.
 Twenty-two large scenes are over 40 kB, as they were before the gloss (Karyotype, Brown adipocyte, Heteroplasmy, …).
 
 `scripts/mitokit.mjs` holds the owner's mitochondrion as functions (palette and proportions of `Mitochondrion.svg`);
