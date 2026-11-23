@@ -3,7 +3,9 @@ and the organelles Centrosome, Chloroplast, Endoplasmic reticulum, Endosome, Lip
 Nucleus, Peroxisome, Ribosome and Vesicle), the icons of Cells & tissues written by scripts/cells/ct01.mjs to ct19.mjs, the
 icons of Molecules & genetics written by scripts/molecules/mg01.mjs to mg24.mjs, and the icons of Lab & equipment written by
 scripts/lab/lb01.mjs to lb13.mjs, the icons of Techniques & assays written by scripts/assays/tbA.mjs to tbP.mjs,
-and the icons of Immunology & infection written by scripts/immune/imA.mjs to imG.mjs, all listed in STYLE.md, are redrawn from icons of SiliCoDraw,
+the icons of Immunology & infection written by scripts/immune/imA.mjs to imG.mjs,
+the icons of Anatomy written by scripts/anatomy/anA.mjs to anN.mjs,
+and the icons of Organisms written by scripts/organisms/orA.mjs to orP.mjs, all listed in STYLE.md, are redrawn from icons of SiliCoDraw,
 https://github.com/Alex-D-C/SiliCoDraw, which is published under this licence:
 
 MIT License

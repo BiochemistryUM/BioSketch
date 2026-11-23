@@ -119,7 +119,7 @@ const uniq = (parts) => parts.filter(([, p], i) => parts.findIndex(([, q]) => q.
 // spectrum sticks), 'volcano', 'manhattan', 'clusters' (UMAP), 'sensorgram' (SPR), 'bars' (with error bars), 'trend'
 // (measurements over a dashed baseline), 'scatter' (points and a fitted line), 'trace' (a bare recording, no card or axes).
 // Used by: Mass spectrum, Volcano plot, Manhattan plot, UMAP / clusters, Growth curve, qPCR curves, Enzyme kinetics,
-// Action potential, Surface plasmon resonance, Baseline, Hypnogram, Insulin clamp, Aging cell atlas, Pseudotime trajectory,
+// Action potential, Surface plasmon resonance, Baseline, Hypnogram, Insulin clamp, Ageing cell atlas, Pseudotime trajectory,
 // MAG binning, Lipidomics, Microsensor profile, DNA methylation array; as a trace: Patch clamp, Recording electrode,
 // Wearable sensor, Calcium imaging, Diastolic dysfunction.
 // Example: plot(g, { x: 0, y: 0, size: 60, show: 'volcano', id: 'volcano' })
@@ -453,7 +453,7 @@ export function tissueSection(g, { x, y, size, turn = 0, id = 'section', w, stai
 // Used by: RNAi by feeding, FUdR sterile cohort, Worm thrashing assay, Pharyngeal pumping, Worm paralysis assay, Worm
 // motility classes, Auxin-inducible degradation; lab: Worm picking, Lifespan Machine, Microfluidic worm chip.
 // Example: worm(g, { x: 0, y: 0, size: 40, bend: 140, id: 'worm' })
-export function worm(g, { x, y, size, turn = 0, id = 'worm', w, amp = 0.1, waves = 1, phase = 0, width = 0.09, bend = 0, gut = false }) {
+export function worm(g, { x, y, size, turn = 0, id = 'worm', w, amp = 0.1, waves = 1, phase = 0, width = 0.09, bend = 0, gut = false, pal = WORM }) {
   const len = size, W = width * len, N = 36, a = rad(turn), ca = Math.cos(a), sa = Math.sin(a)
   let C, T
   if (bend) {
@@ -476,10 +476,10 @@ export function worm(g, { x, y, size, turn = 0, id = 'worm', w, amp = 0.1, waves
   const place = ([u, v]) => g.P([x + u * ca - v * sa, y + u * sa + v * ca])
   const px = len * g.k
   w ??= Math.max(1.6, Math.min(3.5, px / 40))
-  let s = `<path d="${smoothD(L.concat(R).map(place))}" fill="${WORM.shadow}" stroke="${WORM.outline}" stroke-width="${f(w)}" stroke-linejoin="round"/>`
-  if (gut && px >= 60) s += linePath(`M${gl.map(place).map(P2).join(' L')}`, WORM.small, Math.max(1.5, W * g.k * 0.7))
-  if (px >= 80) s += linePath(`M${mid.map(place).map(P2).join(' L')}`, WORM.light, Math.max(1.5, W * g.k * 0.35))
-  return { defs: '', body: `<g id="${id}">${s}</g>`, parts: [['worm', WORM]] }
+  let s = `<path d="${smoothD(L.concat(R).map(place))}" fill="${pal.shadow}" stroke="${pal.outline}" stroke-width="${f(w)}" stroke-linejoin="round"/>`
+  if (gut && px >= 60) s += linePath(`M${gl.map(place).map(P2).join(' L')}`, pal.small, Math.max(1.5, W * g.k * 0.7))
+  if (px >= 80) s += linePath(`M${mid.map(place).map(P2).join(' L')}`, pal.light, Math.max(1.5, W * g.k * 0.35))
+  return { defs: '', body: `<g id="${id}">${s}</g>`, parts: [['worm', pal]] }
 }
 
 // =====================================================================================================================
@@ -547,7 +547,7 @@ export function arena(g, { x, y, size, turn = 0, id = 'arena', w, kind = 'open',
   }
   if (path) s += `<g id="${id}-path">${lines(F, [catmull(path, 10)], ACCENT.outline, Math.max(1.6, w * 0.6))}</g>`, parts.push(['path', ACCENT])
   let mb = ''
-  if (mouse) { const m = mouseTop(g, { x: F.gx(start[0]), y: F.gy(start[1]), size: (kind === 'pool' ? 22 : kind === 'open' ? 30 : 26) * F.u / g.k, turn: ang, id: `${id}-mouse` }); mb = m.body; defs.push(m.defs); parts.push(...m.parts) }
+  if (mouse) { const m = mouseTop(g, { x: F.gx(start[0]), y: F.gy(start[1]), size: (kind === 'pool' ? 31 : kind === 'open' ? 42 : 36) * F.u / g.k, turn: ang, id: `${id}-mouse` }); mb = m.body; defs.push(m.defs); parts.push(...m.parts) }
   return { defs: defs.join(''), body: group(id, F, turn, s + mb), parts: uniq(parts) }
 }
 
