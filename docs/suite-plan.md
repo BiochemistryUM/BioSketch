@@ -83,6 +83,30 @@ Analyze can be placed in Sketch or embedded in a Labbook entry, drawn by the sam
 3. An MCP server over the notebook, so Claude in the app can read, write and query entries.
    Build once the entry format is stable.
 
+## Lab notebook: next steps (as of 27 November 2026)
+
+Built so far (branch `labbook/first-version`): entries of kinds note/experiment/genome-editing/
+clone-validation from a template, plots from pasted tables (the editor's charts), search, storage
+in the browser or a folder on the computer, and organisation by **project** (a heading in the list)
+and free **tags** (chips with counts, filterable). See the notebook rows in `CLAUDE.md`.
+
+The owner thinks of a project as a whole research programme that spans many experiments and recurring
+threads — e.g. "VK ferroptosis" (KO of GGCX/VKORC1/VKORC1L1 and FSP1, testing vitamin K across
+experiments) and "MGO" (KO/editing of MGP-deficient lines, VSMC differentiation). Decided next:
+
+1. **Sub-projects** (chosen 27 November 2026): an explicit second level inside a project — a project
+   contains named sub-projects (VK ferroptosis → FSP1 arm, VKORC1 arm; MGO → MGP editing, VSMC
+   differentiation), and an entry is filed under project + sub-project. The sidebar nests
+   sub-projects under their project. Keep tags as the cross-cutting axis (gene, model, technique,
+   assay) on top of this; the two are complementary. Data model: add `subproject?: string` to
+   `Entry` beside `project` (clean round trip: absent when empty, like `project`/`tags`), group the
+   list by project then sub-project, add a sub-project filter and field. Consider a lightweight
+   **project overview** later (an editable aim/hypothesis/results-so-far home per project).
+2. **Entry-to-entry links**: a clone-validation entry points at its editing experiment (a picker
+   over existing entries + back-references), instead of naming it in words.
+3. **Publishing**: merge `labbook/first-version` into `develop`, then `develop` into `main`, which
+   GitHub Pages publishes; the notebook is then live at `…/BioSketch/labbook/` for daily use.
+
 ## Open questions for the owner
 
 - Name of the suite.
