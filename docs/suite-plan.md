@@ -71,6 +71,38 @@ Analyze can be placed in Sketch or embedded in a Labbook entry, drawn by the sam
 - Check with the PI or institution whether a specific notebook is required for compliance or
   patents before treating this as the official record.
 
+## Molecular biology tool
+
+Its own tool, in the spirit of Benchling's molecular-biology side, linked to the notebook by URL
+(a guide, an oligo or a clone in an entry points at its sequence). The pure logic is a package,
+`@biosketch/seq` (`packages/seq`), begun 27 November 2026 with sequence import.
+
+Sequence import (done, v1): a sequence is a `SeqRecord` (bases, linear or circular, features with
+0-based positions), read from GenBank or FASTA text, or fetched from the public databases a browser
+can reach. What is reachable was tested from a browser's origin (the CORS header):
+
+- NCBI E-utilities (`eutils.ncbi.nlm.nih.gov`): any accession as GenBank (`fetchRecord`). CORS `*`.
+- NCBI Datasets (`api.ncbi.nlm.nih.gov`): a gene by symbol (`findGene`), and its RefSeq mRNA
+  transcripts by E-utilities esearch/esummary (`geneTranscripts`). CORS present.
+- Ensembl (`rest.ensembl.org`): serves FASTA and gene models with CORS `*`; not called directly yet.
+- Addgene (`www.addgene.org`): sends NO CORS header, so a browser cannot fetch it (this is why
+  Benchling imports Addgene server-side). A plasmid from Addgene is brought in by downloading its
+  GenBank or SnapGene file and dropping it; `readSequences` reads pasted or dropped GenBank/FASTA.
+
+Still to build: the sequence viewer and editor (embed Open Vector Editor or SeqViz, both MIT),
+annotation, primer design, alignment (for clone validation: Sanger traces against the reference),
+and a page/app to use it.
+
+CRISPR design (decided, not built): guide finding (scan the target for PAM sites) and simple
+metrics (GC, poly-T) run in the browser on the sequence in hand. On-target scoring is Azimuth /
+Rule Set 2 (Doench–Fusi 2016; BSD-3 but Python 2 and abandoned) — port the model or use a simpler
+published rule. Off-target **scoring** is the CFD score (Doench 2016), a small position×mismatch
+lookup table, reimplementable in TypeScript. Off-target **search** (finding the sites genome-wide)
+needs a genome index and cannot run in the browser for a 3 Gb genome, nor be hosted on GitHub
+(the index is tens of GB); for human/mouse it links out to CRISPOR. Small genomes (yeast, microbes,
+a plasmid) can be indexed and searched in the browser. Elevation was ruled out: Python 2, abandoned,
+needs pickled models plus a separate genome index, and its hosted API is retired.
+
 ## Linking to Claude, in order of effort
 
 1. Claude Code on the monorepo: a root `CLAUDE.md` plus one per package.
