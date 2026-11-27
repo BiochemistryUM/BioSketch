@@ -61,11 +61,18 @@ export interface Entry {
   /** When the entry was made and last changed, as ISO times. */
   created: string
   updated: string
+  /** The project it is filed under, a heading in the list; absent = none. */
+  project?: string
+  /** Free labels for finding it across projects (a gene, a technique, a cell line). */
+  tags?: string[]
   values: Record<string, Value>
   plots: Plot[]
 }
 
 export const TITLE_MAX = 200
+export const PROJECT_MAX = 80
+export const TAG_MAX = 40
+export const TAGS_MAX = 20
 export const TEXT_MAX = 40000
 export const CELL_MAX = 2000
 export const ROWS_MAX = 300
@@ -79,6 +86,21 @@ const isDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{
 const isTime = (v: unknown): v is string => typeof v === 'string' && v.length <= 40 && !Number.isNaN(Date.parse(v))
 const text = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '')
 const oneLine = (v: unknown, max: number): string => text(v, max * 2).replace(/\s+/g, ' ').trim().slice(0, max)
+
+/** A project name as it is kept: one line, trimmed; '' when nothing is left. */
+export const tidyProject = (v: unknown): string => oneLine(v, PROJECT_MAX)
+
+/** Tags as kept: each one line, blanks dropped, the same tag not twice (case ignored), at most a few. */
+export function tidyTags(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  const out: string[] = []
+  for (const raw of v) {
+    const t = oneLine(raw, TAG_MAX)
+    if (t && !out.some((o) => o.toLowerCase() === t.toLowerCase())) out.push(t)
+    if (out.length >= TAGS_MAX) break
+  }
+  return out
+}
 const record = (v: unknown): Record<string, unknown> | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null)
 
 const OLIGOS: Column[] = [
@@ -92,6 +114,11 @@ const OLIGOS: Column[] = [
 export const DEFAULT_TEMPLATE: Template = {
   version: 1,
   kinds: [
+    {
+      id: 'note',
+      name: 'Note',
+      fields: [{ id: 'thought', label: 'Thought', type: 'long', hint: 'A quick idea, observation or question. Add a project or tags to find it later.' }],
+    },
     {
       id: 'experiment',
       name: 'Experiment',
@@ -242,6 +269,8 @@ export function readEntry(data: unknown): Entry | null {
     const chart = readChart(record(p)?.chart)
     if (chart) plots.push({ title: oneLine(record(p)?.title, TITLE_MAX), chart })
   }
+  const project = tidyProject(r.project)
+  const tags = tidyTags(r.tags)
   return {
     version: 1,
     id: r.id,
@@ -250,6 +279,8 @@ export function readEntry(data: unknown): Entry | null {
     date: isDate(r.date) ? r.date : created.slice(0, 10),
     created,
     updated: isTime(r.updated) ? r.updated : created,
+    ...(project ? { project } : {}),
+    ...(tags.length ? { tags } : {}),
     values,
     plots,
   }
@@ -280,9 +311,37 @@ export function setValue(entry: Entry, field: string, value: Value): Entry {
 /** Newest first: by the day of the experiment, then by the last change. */
 export const sortEntries = (entries: Entry[]): Entry[] => [...entries].sort((a, b) => b.date.localeCompare(a.date) || b.updated.localeCompare(a.updated))
 
+/** The entries grouped by project for the list: named projects first (A→Z, case ignored), then the ones with none. Each group is sorted newest first. */
+export function byProject(entries: Entry[]): { project: string; entries: Entry[] }[] {
+  const groups = new Map<string, Entry[]>()
+  for (const e of entries) {
+    const key = e.project ?? ''
+    ;(groups.get(key) ?? groups.set(key, []).get(key)!).push(e)
+  }
+  const named = [...groups.keys()].filter((k) => k).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
+  const order = groups.has('') ? [...named, ''] : named
+  return order.map((project) => ({ project, entries: sortEntries(groups.get(project)!) }))
+}
+
+/** Every project name in use, A→Z. */
+export const projectsOf = (entries: Entry[]): string[] => [...new Set(entries.map((e) => e.project).filter((p): p is string => !!p))].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
+
+/** Every tag in use with how many entries carry it, most-used first then A→Z. */
+export function allTags(entries: Entry[]): { tag: string; count: number }[] {
+  const counts = new Map<string, { tag: string; count: number }>()
+  for (const e of entries)
+    for (const tag of e.tags ?? []) {
+      const key = tag.toLowerCase()
+      const at = counts.get(key)
+      if (at) at.count++
+      else counts.set(key, { tag, count: 1 })
+    }
+  return [...counts.values()].sort((a, b) => b.count - a.count || a.tag.toLowerCase().localeCompare(b.tag.toLowerCase()))
+}
+
 /** Everything typed into an entry, for searching: title, day, fields, cells of rows, plot titles. */
 export function entryWords(entry: Entry): string {
-  const parts = [entry.title, entry.date]
+  const parts = [entry.title, entry.date, entry.project ?? '', ...(entry.tags ?? [])]
   for (const v of Object.values(entry.values)) {
     if (typeof v === 'string') parts.push(v)
     else for (const row of v) parts.push(...Object.values(row))
@@ -339,6 +398,10 @@ function rowsTable(columns: Column[], rows: Row[]): string {
 export function entryMarkdown(entry: Entry, template: Template): string {
   const kind = kindOf(template, entry.kind)
   const out: string[] = [`# ${entry.title || 'Untitled entry'}`, '', `${entry.date} · ${kind?.name ?? entry.kind}`]
+  const meta: string[] = []
+  if (entry.project) meta.push(`Project: ${entry.project}`)
+  if (entry.tags?.length) meta.push(`Tags: ${entry.tags.join(', ')}`)
+  if (meta.length) out.push('', meta.join(' · '))
   const known = kind?.fields ?? []
   // Fields of the template in its order, then whatever else the entry holds (fields of an older template).
   const left: Field[] = Object.keys(entry.values)

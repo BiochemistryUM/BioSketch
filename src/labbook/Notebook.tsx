@@ -18,6 +18,9 @@ import {
   searchEntries,
   setValue,
   sortEntries,
+  byProject,
+  projectsOf,
+  allTags,
   type Column,
   type Entry,
   type Field,
@@ -192,7 +195,42 @@ function PlotCard({ plot, onChange, onRemove }: { plot: Plot; onChange: (plot: P
   )
 }
 
-function EntryEditor({ entry, template, onChange, onDelete }: { entry: Entry; template: Template; onChange: (entry: Entry) => void; onDelete: () => void }) {
+function TagsInput({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
+  const [text, setText] = useState('')
+  const add = (raw: string) => {
+    const t = raw.trim()
+    if (t && !tags.some((x) => x.toLowerCase() === t.toLowerCase())) onChange([...tags, t])
+    setText('')
+  }
+  return (
+    <div className="lb-tags">
+      {tags.map((t) => (
+        <span key={t} className="lb-tag">
+          {t}
+          <button aria-label={`Remove the tag ${t}`} onClick={() => onChange(tags.filter((x) => x !== t))}>
+            ×
+          </button>
+        </span>
+      ))}
+      <input
+        className="lb-tag-input"
+        aria-label="Add a tag"
+        placeholder={tags.length ? 'Add a tag' : 'Add tags: a gene, a technique…'}
+        value={text}
+        onChange={(e) => (/[,\n]/.test(e.target.value) ? add(e.target.value.replace(/[,\n]/g, '')) : setText(e.target.value))}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            add(text)
+          } else if (e.key === 'Backspace' && !text && tags.length) onChange(tags.slice(0, -1))
+        }}
+        onBlur={() => add(text)}
+      />
+    </div>
+  )
+}
+
+function EntryEditor({ entry, template, projects, onChange, onDelete }: { entry: Entry; template: Template; projects: string[]; onChange: (entry: Entry) => void; onDelete: () => void }) {
   const kind = kindOf(template, entry.kind)
   // Fields the entry holds that its kind no longer names (an older template) are still shown, so nothing typed is hidden.
   const extra: Field[] = Object.entries(entry.values)
@@ -206,6 +244,22 @@ function EntryEditor({ entry, template, onChange, onDelete }: { entry: Entry; te
         <div className="lb-meta">
           <input className="text-line lb-date" type="date" aria-label="Day of the experiment" value={entry.date} onChange={(e) => e.target.value && onChange({ ...entry, date: e.target.value })} />
           <span className="lb-kind">{kind?.name ?? entry.kind}</span>
+        </div>
+        <div className="lb-meta2">
+          <input
+            className="text-line lb-project"
+            list="lb-projects"
+            aria-label="Project"
+            placeholder="Project (optional)"
+            value={entry.project ?? ''}
+            onChange={(e) => onChange({ ...entry, project: e.target.value || undefined })}
+          />
+          <datalist id="lb-projects">
+            {projects.map((p) => (
+              <option key={p} value={p} />
+            ))}
+          </datalist>
+          <TagsInput tags={entry.tags ?? []} onChange={(tags) => onChange({ ...entry, tags: tags.length ? tags : undefined })} />
         </div>
       </div>
       {[...(kind?.fields ?? []), ...extra].map((f) => (
@@ -242,6 +296,8 @@ export function Notebook({ browserStore }: { browserStore: NotebookStore }) {
   const [template, setTemplate] = useState<Template | null>(null)
   const [entries, setEntries] = useState<Entry[]>([])
   const [openId, setOpenId] = useState<string | null>(null)
+  const [projectFilter, setProjectFilter] = useState<string | null>(null)
+  const [activeTags, setActiveTags] = useState<string[]>([])
   const [query, setQuery] = useState('')
   const [saved, setSaved] = useState<Saved>('saved')
   const [message, setMessage] = useState('')
@@ -336,7 +392,8 @@ export function Notebook({ browserStore }: { browserStore: NotebookStore }) {
   }
 
   const add = (kind: string) => {
-    const entry = newEntry(kind)
+    const base = newEntry(kind)
+    const entry = projectFilter ? { ...base, project: projectFilter } : base
     setEntries((list) => [entry, ...list])
     setOpenId(entry.id)
     setQuery('')
@@ -370,7 +427,18 @@ export function Notebook({ browserStore }: { browserStore: NotebookStore }) {
     setMessage(`${read.length} ${read.length === 1 ? 'entry' : 'entries'} read${unread ? `; ${unread} ${unread === 1 ? 'file is' : 'files are'} not an entry of the notebook` : ''}.`)
   }
 
-  const shown = useMemo(() => searchEntries(sortEntries(entries), query), [entries, query])
+  const shown = useMemo(() => {
+    let list = entries
+    if (projectFilter !== null) list = list.filter((e) => (e.project ?? '') === projectFilter)
+    if (activeTags.length) list = list.filter((e) => activeTags.every((t) => (e.tags ?? []).some((x) => x.toLowerCase() === t.toLowerCase())))
+    return searchEntries(sortEntries(list), query)
+  }, [entries, projectFilter, activeTags, query])
+  // When no project is chosen, the list is grouped by project; otherwise it is one flat group.
+  const groups = useMemo(() => (projectFilter === null ? byProject(shown) : [{ project: projectFilter, entries: shown }]), [shown, projectFilter])
+  const projects = useMemo(() => projectsOf(entries), [entries])
+  const tags = useMemo(() => allTags(entries), [entries])
+  const hasNoProject = useMemo(() => entries.some((e) => !e.project), [entries])
+  const toggleTag = (t: string) => setActiveTags((ts) => (ts.some((x) => x.toLowerCase() === t.toLowerCase()) ? ts.filter((x) => x.toLowerCase() !== t.toLowerCase()) : [...ts, t]))
   const open = entries.find((e) => e.id === openId) ?? null
 
   if (!template) return <div className="lb lb-wait">Opening the lab notebook…</div>
@@ -396,19 +464,67 @@ export function Notebook({ browserStore }: { browserStore: NotebookStore }) {
             ))}
           </div>
           <input className="text-line" type="search" placeholder="Search every entry: a gene, a guide, an oligo…" aria-label="Search the entries" value={query} onChange={(e) => setQuery(e.target.value)} />
-          <ul className="lb-list">
-            {shown.map((e) => (
-              <li key={e.id}>
-                <button className={e.id === openId ? 'lb-item on' : 'lb-item'} onClick={() => setOpenId(e.id)}>
-                  <strong>{e.title || 'Untitled entry'}</strong>
-                  <span>
-                    {e.date} · {kindOf(template, e.kind)?.name ?? e.kind}
-                  </span>
+          {(projects.length > 0 || hasNoProject) && (
+            <select
+              className="lb-filter"
+              aria-label="Show a project"
+              value={projectFilter === null ? '*all' : projectFilter === '' ? '*none' : projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value === '*all' ? null : e.target.value === '*none' ? '' : e.target.value)}
+            >
+              <option value="*all">All projects</option>
+              {projects.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+              {hasNoProject && <option value="*none">No project</option>}
+            </select>
+          )}
+          {tags.length > 0 && (
+            <div className="lb-tagbar">
+              {tags.map(({ tag, count }) => (
+                <button
+                  key={tag}
+                  className={activeTags.some((x) => x.toLowerCase() === tag.toLowerCase()) ? 'lb-tagchip on' : 'lb-tagchip'}
+                  onClick={() => toggleTag(tag)}
+                >
+                  {tag} <em>{count}</em>
                 </button>
-              </li>
+              ))}
+              {activeTags.length > 0 && (
+                <button className="lb-tagchip clear" onClick={() => setActiveTags([])}>
+                  Clear
+                </button>
+              )}
+            </div>
+          )}
+          <div className="lb-groups">
+            {groups.map((g) => (
+              <div key={g.project || '*none'} className="lb-group">
+                {projectFilter === null && g.entries.length > 0 && <div className="lb-group-head">{g.project || 'No project'}</div>}
+                <ul className="lb-list">
+                  {g.entries.map((e) => (
+                    <li key={e.id}>
+                      <button className={e.id === openId ? 'lb-item on' : 'lb-item'} onClick={() => setOpenId(e.id)}>
+                        <strong>{e.title || 'Untitled entry'}</strong>
+                        <span>
+                          {e.date} · {kindOf(template, e.kind)?.name ?? e.kind}
+                        </span>
+                        {e.tags && e.tags.length > 0 && (
+                          <span className="lb-item-tags">
+                            {e.tags.map((t) => (
+                              <em key={t}>{t}</em>
+                            ))}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
-          {entries.length > 0 && shown.length === 0 && <p className="lb-hint">No entry holds these words.</p>}
+          </div>
+          {entries.length > 0 && shown.length === 0 && <p className="lb-hint">No entry matches.</p>}
           <div className="lb-sidefoot">
             <button className="btn" onClick={() => fileInput.current?.click()}>
               Open entry files…
@@ -457,7 +573,7 @@ export function Notebook({ browserStore }: { browserStore: NotebookStore }) {
               <button className="btn lb-back" onClick={() => setOpenId(null)}>
                 ‹ All entries
               </button>
-              <EntryEditor key={open.id} entry={open} template={template} onChange={change} onDelete={() => remove(open)} />
+              <EntryEditor key={open.id} entry={open} template={template} projects={projects} onChange={change} onDelete={() => remove(open)} />
             </>
           ) : (
             <div className="lb-empty">

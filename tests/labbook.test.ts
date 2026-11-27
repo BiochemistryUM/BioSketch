@@ -10,6 +10,10 @@ import {
   readEntry,
   readEntryFile,
   readTemplate,
+  byProject,
+  projectsOf,
+  allTags,
+  tidyTags,
   searchEntries,
   setValue,
   sortEntries,
@@ -34,6 +38,7 @@ function editing(): Entry {
 describe('the template', () => {
   it('survives being read back, and the one a notebook starts with is usable as it is', () => {
     expect(readTemplate(JSON.parse(JSON.stringify(DEFAULT_TEMPLATE)))).toEqual(DEFAULT_TEMPLATE)
+    expect(DEFAULT_TEMPLATE.kinds[0].id).toBe('note') // quick capture first
     expect(kindOf(DEFAULT_TEMPLATE, 'clones')?.fields.find((f) => f.id === 'clones')?.columns?.length).toBe(5)
   })
 
@@ -115,6 +120,44 @@ describe('finding entries', () => {
     expect(searchEntries([a, b, c], '2026-11-25').map((e) => e.id)).toEqual(['eB', 'eC'])
     expect(searchEntries([a, b, c], '  ')).toHaveLength(3)
     expect(searchEntries([a, b, c], 'nothing-like-this')).toEqual([])
+  })
+})
+
+describe('projects and tags', () => {
+  const a = { ...newEntry('experiment', at, 'eA'), title: 'A', project: 'TP53 iPSC', tags: ['crispr', 'HEK293'] }
+  const b = { ...newEntry('experiment', at, 'eB'), title: 'B', project: 'Ferroptosis', tags: ['crispr'] }
+  const c = { ...newEntry('note', at, 'eC'), title: 'C' } // no project, no tags
+
+  it('keeps the project and tidies tags, and leaves them out when empty (clean round trip)', () => {
+    expect(tidyTags(['CRISPR', 'crispr', ' HEK293 ', '', 7])).toEqual(['CRISPR', 'HEK293'])
+    const read = readEntry(JSON.parse(JSON.stringify(a)))!
+    expect(read.project).toBe('TP53 iPSC')
+    expect(read.tags).toEqual(['crispr', 'HEK293'])
+    expect('project' in readEntry({ id: 'eZ', kind: 'note', created: a.created })!).toBe(false)
+    expect('tags' in readEntry({ id: 'eZ', kind: 'note', created: a.created })!).toBe(false)
+  })
+
+  it('groups by project (named A→Z, then none last), each newest first', () => {
+    const groups = byProject([a, b, c])
+    expect(groups.map((g) => g.project)).toEqual(['Ferroptosis', 'TP53 iPSC', ''])
+    expect(projectsOf([a, b, c])).toEqual(['Ferroptosis', 'TP53 iPSC'])
+  })
+
+  it('counts the tags in use, most used first', () => {
+    expect(allTags([a, b, c])).toEqual([
+      { tag: 'crispr', count: 2 },
+      { tag: 'HEK293', count: 1 },
+    ])
+  })
+
+  it('finds an entry by its project or a tag', () => {
+    expect(searchEntries([a, b, c], 'ferroptosis').map((e) => e.id)).toEqual(['eB'])
+    expect(searchEntries([a, b, c], 'hek293').map((e) => e.id)).toEqual(['eA'])
+  })
+
+  it('writes the project and tags into the readable file', () => {
+    const md = entryMarkdown(a, DEFAULT_TEMPLATE)
+    expect(md).toContain('Project: TP53 iPSC · Tags: crispr, HEK293')
   })
 })
 

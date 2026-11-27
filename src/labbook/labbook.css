@@ -291,3 +291,117 @@
   gap: 8px;
   margin-top: 4px;
 }
+
+/* Projects, tags and filters */
+.lb-filter {
+  width: 100%;
+}
+.lb-tagbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.lb-tagchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--field);
+  font-size: 12px;
+}
+.lb-tagchip em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 11px;
+}
+.lb-tagchip.on {
+  background: var(--accent-weak);
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+.lb-tagchip.on em {
+  color: var(--accent-strong);
+}
+.lb-tagchip.clear {
+  color: var(--muted);
+}
+.lb-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.lb-group-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 6px 10px 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.lb-item-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+.lb-item-tags em {
+  font-style: normal;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--muted);
+}
+.lb-meta2 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+.lb .lb-project {
+  width: auto;
+  min-width: 180px;
+  flex: 0 1 240px;
+}
+.lb-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 220px;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--field);
+  min-height: 40px;
+}
+.lb-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 10px;
+  border-radius: 999px;
+  background: var(--accent-weak);
+  color: var(--accent-strong);
+  font-size: 12px;
+}
+.lb-tag button {
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.lb-tag-input {
+  flex: 1;
+  min-width: 100px;
+  border: 0;
+  background: none;
+  outline: none;
+  height: 28px;
+}
