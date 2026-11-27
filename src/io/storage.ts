@@ -85,7 +85,7 @@ export async function kvSet(key: string, value: string): Promise<boolean> {
   }
 }
 
-async function kvDel(key: string): Promise<void> {
+export async function kvDel(key: string): Promise<void> {
   try {
     await idb('readwrite', (s) => s.delete(key))
   } catch {
