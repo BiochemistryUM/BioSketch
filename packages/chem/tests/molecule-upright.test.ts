@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { moleculeSvg, readMolfile, uprightStructure } from '../src/model/molecule'
-import { writeMolfile } from '../src/model/sketch'
+import { moleculeSvg, readMolfile, uprightStructure } from '../src/molecule'
+import { writeMolfile } from '../src/sketch'
 import glycine from './fixtures/pubchem-glycine.sdf?raw'
 
 const m = readMolfile(glycine)

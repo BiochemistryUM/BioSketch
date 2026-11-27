@@ -1,6 +1,6 @@
 // Export: SVG, PNG and the attribution text for the icons used.
 
-import { structureCredit } from '../model/structure'
+import { structureCredit } from '@biosketch/chem'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { getIcon, isPublicDomain } from '../icons/library'

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { attributionText } from '../src/io/export'
 import { validateDoc } from '../src/io/files'
 import { emptyDoc } from '../src/model/doc'
-import { chainsFrom, plddtColour, rainbow, readMarks, residuesLeftOut, structureCredit, structureExtent, structureLayout, STRUCTURE_RESIDUES_MAX } from '../src/model/structure'
+import { chainsFrom, plddtColour, rainbow, readMarks, residuesLeftOut, structureCredit, structureExtent, structureLayout, STRUCTURE_RESIDUES_MAX } from '@biosketch/chem'
 import type { StructureNode } from '../src/model/types'
 
 /** An α-helix: 1.5 Å rise and 100° per residue on a radius of 2.3 Å, so neighbours are 3.8 Å apart. */

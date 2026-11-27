@@ -16,10 +16,10 @@ import {
   readRcsbSearch,
   readStructure,
   searchPdb,
-} from '../src/io/structures'
+} from '../src/structures'
 // Real files, fetched in November 2026: an AlphaFold model (CC BY 4.0) and an RCSB entry (CC0, trimmed
 // to the backbone atoms and the haem groups; the haem groups must be left out of the trace).
-import { chainsFrom } from '../src/model/structure'
+import { chainsFrom } from '../src/structure'
 import afPdb from './fixtures/AF-P69905.pdb?raw'
 import afCif from './fixtures/AF-P69905.cif?raw'
 import afInfo from './fixtures/alphafold-P69905.json'

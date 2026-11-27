@@ -1,7 +1,7 @@
 // Editor commands. Menus, buttons and keyboard shortcuts all call these.
 
-import type { Trace } from './io/structures'
-import { chainsFrom, residuesLeftOut, STRUCTURE_RESIDUES_MAX } from './model/structure'
+import type { Trace } from '@biosketch/chem'
+import { chainsFrom, residuesLeftOut, STRUCTURE_RESIDUES_MAX } from '@biosketch/chem'
 import { keepFavourites, keepRecent, toggleId, usedId } from './icons/favourites'
 import { getIcon } from './icons/library'
 import { finishReshape } from './icons/reshape'

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { attachedHydrogens, molecularFormula, readMolfile } from '../src/model/molecule'
-import { withoutHydrogens } from '../src/model/sketch'
-import { addRing, atomAt, bondAt, bondFrom, cycleBond, emptySketch, freeDirection, joinAtoms, normalise, placeAtom, removeAtom, removeBond, setBond, setElement, shiftCharge, writeMolfile } from '../src/model/sketch'
-import type { Molecule } from '../src/model/molecule'
+import { attachedHydrogens, molecularFormula, readMolfile } from '../src/molecule'
+import { withoutHydrogens } from '../src/sketch'
+import { addRing, atomAt, bondAt, bondFrom, cycleBond, emptySketch, freeDirection, joinAtoms, normalise, placeAtom, removeAtom, removeBond, setBond, setElement, shiftCharge, writeMolfile } from '../src/sketch'
+import type { Molecule } from '../src/molecule'
 
 const bondLengths = (m: Molecule) => m.bonds.map((b) => Math.hypot(m.atoms[b.from].x - m.atoms[b.to].x, m.atoms[b.from].y - m.atoms[b.to].y))
 const deg = (a: number) => Math.round((a * 180) / Math.PI)

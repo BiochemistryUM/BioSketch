@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compoundName, lookupCompound, pubchemUrl, readCompound } from '../src/io/pubchem'
+import { compoundName, lookupCompound, pubchemUrl, readCompound } from '../src/pubchem'
 
 // An answer as PubChem gave it on 20 November 2026.
 const TRIS = { PropertyTable: { Properties: [{ CID: 6503, MolecularFormula: 'C4H11NO3', MolecularWeight: '121.14', Title: 'Tris(hydroxymethyl)aminomethane', SMILES: 'C(C(CO)(CO)N)O' }] } }

@@ -1,5 +1,11 @@
 // The figure document. Everything the editor draws, saves and exports is described here.
 
+import type { StructureChain, StructureColour, StructureData, StructureMark } from '@biosketch/chem'
+
+// The parts of a protein structure are described by the chemistry package; they are named here too,
+// so that the rest of the editor finds every part of a figure in this file.
+export type { StructureChain, StructureColour, StructureMark }
+
 export interface Point {
   x: number
   y: number
@@ -572,54 +578,19 @@ export interface TableNode extends NodeBase {
   color?: string
 }
 
-/** One chain of a protein structure: the Cα atom of every residue. See `src/model/structure.ts`. */
-export interface StructureChain {
-  id: string
-  /** Residue numbers, one per residue. */
-  nums: number[]
-  /** Cα coordinates in ångström, three numbers per residue (x, y, z). */
-  ca: number[]
-  /** B-factor of every residue; for an AlphaFold model, the confidence (pLDDT, 0 to 100). */
-  b: number[]
-  /** The residues in one-letter code, one letter per residue ('X' when unknown). */
-  seq: string
-}
-
-/** A residue marked with a dot and a few words. */
-export interface StructureMark {
-  chain: string
-  n: number
-  label: string
-}
-
-export type StructureColour = 'chain' | 'rainbow' | 'plddt' | 'single'
-
 /**
  * A protein structure drawn as a smooth tube through its Cα atoms, seen from a chosen side. It is
  * drawn as SVG by BioSketch itself, so it is exported like everything else and can turn while
- * the slides are presented.
+ * the slides are presented. Its chains, view, colours, marks and source are `StructureData` in
+ * `packages/chem/src/structure.ts`.
  */
-export interface StructureNode extends NodeBase {
+export interface StructureNode extends NodeBase, StructureData {
   type: 'structure'
   x: number
   y: number
-  w: number
-  h: number
   rotation: number
-  chains: StructureChain[]
-  /** The side it is seen from: a turn about the upright axis, then a tilt, in degrees. */
-  view: [number, number]
-  /** How it is coloured. Absent = by chain. */
-  colour?: StructureColour
-  /** The colour of a structure coloured with one colour. */
-  color?: string
-  /** Thickness of the tube, in ångström. Absent = 1.5 (`TUBE`). */
-  tube?: number
-  marks?: StructureMark[]
   /** Turns slowly while the slides are presented. */
   spin?: boolean
-  /** Where it came from, for the credit: an AlphaFold DB model (UniProt accession), a PDB entry, or a file. */
-  source: { kind: 'alphafold' | 'pdb' | 'file'; id: string }
   /** The protein's name, as its source gives it. */
   title?: string
 }

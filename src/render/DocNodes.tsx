@@ -10,13 +10,13 @@ import { BAR_WIDTH, connectorShape, fadeStops } from '../model/connector'
 import { dashArray, hasDots } from '../model/dash'
 import { round } from '../model/geometry'
 import { membraneShape } from '../model/membrane'
-import { uprightStructure } from '../model/molecule'
+import { uprightStructure } from '@biosketch/chem'
 import { connectorLabelNode, fontStack, resolveConnector, shapeLabelNode, textLayout, type ResolvedConnector } from '../model/nodes'
 import { SCRIPT_SCALE, SCRIPT_SHIFT, parseRich } from '../model/richtext'
 import { isOpenShape, shapePath } from '../model/shapes'
 import { TABLE_LINE, tableLayout } from '../model/table'
 import { scaleBarMarks } from '../model/scaleBar'
-import { structureLayout } from '../model/structure'
+import { structureLayout } from '@biosketch/chem'
 import {
   FONT_FAMILY,
   LINE_HEIGHT,

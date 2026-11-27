@@ -139,7 +139,7 @@ import type {
   MeltSettings,
   FacetSettings,
 } from '../model/types'
-import { STRUCTURE_COLOURS, TUBE, marksText, readMarks } from '../model/structure'
+import { STRUCTURE_COLOURS, TUBE, marksText, readMarks } from '@biosketch/chem'
 import { IGNORE, STANDARD_MODELS, STANDARD_ROLES, readStandardText, standardGroups, standardTableText, withDilution, type StandardTable } from '../model/standardTable'
 import { readPlates } from '../model/tableRoles'
 import { QPCR_ROLES, qpcrGroups, qpcrTableText, readQpcrText, withConditions } from '../model/qpcrTable'
