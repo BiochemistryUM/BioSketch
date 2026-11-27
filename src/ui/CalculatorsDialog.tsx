@@ -20,7 +20,7 @@ import {
   type MolarityUnknown,
   type Unit,
 } from '../model/calc'
-import { lookupCompound, type Compound } from '../io/pubchem'
+import { lookupCompound, type Compound } from '@biosketch/chem'
 import { useEditor } from '../store'
 import { Modal } from './Dialogs'
 import { Tabs } from './Tabs'

@@ -4,7 +4,7 @@
 
 import { useRef, useState } from 'react'
 import { addStructure, addToFigure } from '../actions'
-import { fetchStructure, lookupAlphafold, lookupPdbEntry, pdbFileUrl, readStructure, searchPdb, cleanPdbId, type PdbEntry } from '../io/structures'
+import { fetchStructure, lookupAlphafold, lookupPdbEntry, pdbFileUrl, readStructure, searchPdb, cleanPdbId, type PdbEntry } from '@biosketch/chem'
 import { domainDiagram, lookupUniprot, parseMutations, searchUniprot, uniprotCredit, type ProteinHit } from '../io/uniprot'
 import { emptyDoc } from '../model/doc'
 import type { TextNode } from '../model/types'

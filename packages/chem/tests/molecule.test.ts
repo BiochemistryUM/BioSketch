@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { attachedHydrogens, findRings, molecularFormula, moleculeSvg, readMolfile, type Molecule } from '../src/model/molecule'
+import { attachedHydrogens, findRings, molecularFormula, moleculeSvg, readMolfile, type Molecule } from '../src/molecule'
 // 2D structures as PubChem gives them (public domain), fetched on 20 November 2026 from
 // https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/<name>/SDF?record_type=2d
 import atpText from './fixtures/pubchem-atp.sdf?raw'

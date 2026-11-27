@@ -1,15 +1,15 @@
 // "Chemical structure": a compound found in PubChem by name or SMILES, drawn by BioSketch as a
-// skeletal formula (src/model/molecule.ts) and placed as an icon, so it moves, resizes and
+// skeletal formula (packages/chem/src/molecule.ts) and placed as an icon, so it moves, resizes and
 // recolours like any other. PubChem is public domain: the icon needs no credit.
 
 import { useEffect, useState } from 'react'
 import { addCustomIcon, addIcon, addToFigure } from '../actions'
 import { parseSvgFile } from '../icons/svg'
-import { compoundName, fetchStructureRecord, findCompound, type Compound } from '../io/pubchem'
+import { compoundName, fetchStructureRecord, findCompound, type Compound } from '@biosketch/chem'
 import { emptyDoc, uid } from '../model/doc'
 import { reactionNodes, splitSpecies } from '../model/reaction'
-import { moleculeSvg, readMolfile } from '../model/molecule'
-import { writeMolfile } from '../model/sketch'
+import { moleculeSvg, readMolfile } from '@biosketch/chem'
+import { writeMolfile } from '@biosketch/chem'
 import { toast, useEditor } from '../store'
 import { Modal } from './Dialogs'
 

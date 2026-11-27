@@ -4,7 +4,49 @@
 // parts cover those behind them and the far side fades a little. The page, every export and
 // the presenter draw the same list.
 
-import type { StructureChain, StructureColour, StructureMark, StructureNode } from './types'
+/** One chain of a protein structure: the Cα atom of every residue. */
+export interface StructureChain {
+  id: string
+  /** Residue numbers, one per residue. */
+  nums: number[]
+  /** Cα coordinates in ångström, three numbers per residue (x, y, z). */
+  ca: number[]
+  /** B-factor of every residue; for an AlphaFold model, the confidence (pLDDT, 0 to 100). */
+  b: number[]
+  /** The residues in one-letter code, one letter per residue ('X' when unknown). */
+  seq: string
+}
+
+/** A residue marked with a dot and a few words. */
+export interface StructureMark {
+  chain: string
+  n: number
+  label: string
+}
+
+export type StructureColour = 'chain' | 'rainbow' | 'plddt' | 'single'
+
+/**
+ * What a drawing of a protein structure is made from: its chains, the side it is seen from, its
+ * colours and marks, and the box it is drawn in. A figure's structure object (`StructureNode` in
+ * BioSketch) is this plus its place on the page.
+ */
+export interface StructureData {
+  w: number
+  h: number
+  chains: StructureChain[]
+  /** The side it is seen from: a turn about the upright axis, then a tilt, in degrees. */
+  view: [number, number]
+  /** How it is coloured. Absent = by chain. */
+  colour?: StructureColour
+  /** The colour of a structure coloured with one colour. */
+  color?: string
+  /** Thickness of the tube, in ångström. Absent = 1.5 (`TUBE`). */
+  tube?: number
+  marks?: StructureMark[]
+  /** Where it came from, for the credit: an AlphaFold DB model (UniProt accession), a PDB entry, or a file. */
+  source: { kind: 'alphafold' | 'pdb' | 'file'; id: string }
+}
 
 /** At most this many residues are kept in one structure (all chains together). */
 export const STRUCTURE_RESIDUES_MAX = 6000
@@ -94,7 +136,7 @@ const round2 = (v: number): number => Math.round(v * 100) / 100
  * Lay out a structure in its box (at 0,0, `w` by `h`): seen from `view` (turned by `yaw` about
  * the upright axis, then tilted by `pitch`), scaled so that it fits from every side.
  */
-export function structureLayout(node: StructureNode, yawExtra = 0): StructureLayout {
+export function structureLayout(node: StructureData, yawExtra = 0): StructureLayout {
   const { cx, cy, cz, r } = structureExtent(node.chains)
   const margin = 4
   const scale = Math.max(0.01, (Math.min(node.w, node.h) / 2 - margin) / (r + (node.tube ?? TUBE) / 2))
@@ -258,7 +300,7 @@ export const STRUCTURE_COLOURS: { value: StructureColour; label: string }[] = [
 ]
 
 /** The credit line a structure needs in a figure's credits. */
-export function structureCredit(node: StructureNode): string {
+export function structureCredit(node: StructureData): string {
   const s = node.source
   if (s.kind === 'alphafold') return `Structure: AlphaFold DB model of UniProt ${s.id} (CC BY 4.0). Jumper et al., Nature 2021; Varadi et al., Nucleic Acids Res. 2024.`
   if (s.kind === 'pdb') return `Structure: PDB ${s.id}, from the RCSB PDB (rcsb.org).`

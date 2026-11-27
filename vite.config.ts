@@ -9,5 +9,5 @@ export default defineConfig({
   // after the editor is on screen (src/ui/lazyDialogs.tsx), so the app is fully available offline
   // after the first visit.
   build: { chunkSizeWarningLimit: 800 },
-  test: { environment: 'jsdom', include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'] },
+  test: { environment: 'jsdom', include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx', 'packages/*/tests/**/*.test.ts'] },
 })

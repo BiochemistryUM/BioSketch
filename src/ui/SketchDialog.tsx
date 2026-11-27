@@ -1,6 +1,6 @@
 // "Draw a structure": a small structure editor in the manner of ChemDraw. Bonds, rings, elements
 // and charges are drawn with a mouse, a pen or a finger; the editing is done by the pure functions
-// of src/model/sketch.ts and the picture by the same drawing as a structure from PubChem
+// of packages/chem/src/sketch.ts and the picture by the same drawing as a structure from PubChem
 // (`moleculeSvg`), so what is seen here is what is placed. The structure goes on the page as an
 // icon that keeps its molfile, so it can be opened here again (Edit the structure, in the panel).
 
@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { addCustomIcon, addIcon, replaceCustomIcon } from '../actions'
 import { parseSvgFile } from '../icons/svg'
 import { uid } from '../model/doc'
-import { molecularFormula, moleculeSvg, readMolfile, type MolBond, type Molecule } from '../model/molecule'
+import { molecularFormula, moleculeSvg, readMolfile, type MolBond, type Molecule } from '@biosketch/chem'
 import {
   addRing,
   atomAt,
@@ -29,7 +29,7 @@ import {
   withoutHydrogens,
   writeMolfile,
   type P,
-} from '../model/sketch'
+} from '@biosketch/chem'
 import { toast, useEditor } from '../store'
 import { Modal } from './Dialogs'
 

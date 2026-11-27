@@ -1,0 +1,12 @@
+{
+  "name": "@biosketch/chem",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Chemistry for BioSketch: small molecules and protein structures as plain functions",
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

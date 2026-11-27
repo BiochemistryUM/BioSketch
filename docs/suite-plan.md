@@ -1,6 +1,9 @@
 # Suite plan: splitting BioSketch into a set of tools
 
-Status: proposal, agreed in outline with the owner on 27 November 2026. Nothing has been moved yet.
+Status: agreed with the owner on 27 November 2026; this repository is restructured in place.
+Done so far: step 1, the chemistry package (`packages/chem`, imported as `@biosketch/chem`). The app
+itself still lives at the top of the repository (`src/`); it moves to `apps/sketch` when a second
+app exists.
 Paste this file as the first message of a new session, or keep it in `docs/` so every session reads it.
 
 ## Goal
@@ -20,7 +23,8 @@ serves canvas and export.
 packages/
   core/      types, doc model, richtext, palettes, geometry
   render/    the single SVG renderer (src/render/DocNodes.tsx)
-  chem/      molecule.ts, reaction.ts, structure.ts, io/pubchem.ts, io/structures.ts
+  chem/      molecule.ts, sketch.ts, structure.ts, pubchem.ts, structures.ts (done; reaction.ts
+             stays with the app until `core` exists, because it builds figure objects)
   charts/    chart.ts, chartCommands, chartParts, chartSamples, heatmap, venn
   analysis/  qpcr*, kinetics*, binding*, standardCurve/standard*, melt, plate*, survival, blot,
              chartTests, chartStats, distributions, nls, twoWay, statsReport, journalCheck
@@ -76,8 +80,6 @@ Analyze can be placed in Sketch or embedded in a Labbook entry, drawn by the sam
 
 ## Open questions for the owner
 
-- Restructure this repository in place (keeps history and the GitHub Pages URL), or start a new
-  suite repository and move BioSketch in?
 - Name of the suite.
 - Separate topic, undecided: tracking iPSC lines for the facility (Benchling paid plan with
   Registry and Inventory, or eLabFTW alongside free Benchling). A draft schema for an iPSC line

@@ -4,7 +4,7 @@
 // no cookies, no address of this page. A structure file is as untrusted as any other file: size
 // limits come first, every number is checked, and only the trace is kept.
 
-import { isModifiedAminoAcid } from '../model/structure'
+import { isModifiedAminoAcid } from './structure'
 
 export interface Residue {
   /** Residue number as the file writes it. */
