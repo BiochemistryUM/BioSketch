@@ -284,3 +284,10 @@
     display: inline-flex;
   }
 }
+
+.lb-where {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}

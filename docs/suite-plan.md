@@ -5,7 +5,8 @@ Done so far: step 1, the chemistry package (`packages/chem`, imported as `@biosk
 itself still lives at the top of the repository (`src/`); it moves to `apps/sketch` when a second
 app exists.
 The lab notebook has a first version as a second page of the same build (`labbook/index.html`,
-`src/labbook/`), with entries kept in the browser; storage in a repository comes next. Splitting the
+`src/labbook/`), with entries kept in the browser or in a folder on the computer (the owner's choice for now);
+storage in a repository comes later. Splitting the
 charts and analyses into packages is postponed until a separate analysis tool is wanted: the
 notebook uses them where they are.
 Paste this file as the first message of a new session, or keep it in `docs/` so every session reads it.

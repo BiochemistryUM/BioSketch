@@ -25,6 +25,7 @@ import {
   type Row,
   type Template,
 } from './model'
+import { canUseFolder, folderReady, folderStore, forgetFolder, pickFolder, recallFolder, rememberFolder } from './folder'
 import { plotChoices, plotFrom } from './plots'
 import type { NotebookStore } from './store'
 
@@ -235,7 +236,9 @@ function EntryEditor({ entry, template, onChange, onDelete }: { entry: Entry; te
   )
 }
 
-export function Notebook({ store }: { store: NotebookStore }) {
+export function Notebook({ browserStore }: { browserStore: NotebookStore }) {
+  const [store, setStore] = useState<NotebookStore>(browserStore)
+  const [folder, setFolder] = useState<string | null>(null)
   const [template, setTemplate] = useState<Template | null>(null)
   const [entries, setEntries] = useState<Entry[]>([])
   const [openId, setOpenId] = useState<string | null>(null)
@@ -259,6 +262,22 @@ export function Notebook({ store }: { store: NotebookStore }) {
       alive = false
     }
   }, [store])
+
+  // On start, open the folder from last time again when it is still allowed without asking.
+  useEffect(() => {
+    if (!canUseFolder) return
+    let alive = true
+    void (async () => {
+      const handle = await recallFolder()
+      if (alive && handle && (await folderReady(handle, false))) {
+        setStore(folderStore(handle))
+        setFolder(handle.name)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
 
   // A change that could not be written stays pending and is tried again with the next one.
   const flush = useCallback(async () => {
@@ -290,6 +309,25 @@ export function Notebook({ store }: { store: NotebookStore }) {
     window.addEventListener('pagehide', leave)
     return () => window.removeEventListener('pagehide', leave)
   }, [flush])
+
+  const useFolder = async () => {
+    const handle = await pickFolder()
+    if (!handle || !(await folderReady(handle, true))) return
+    if (pending.current.size) await flush()
+    await rememberFolder(handle)
+    pending.current.clear()
+    setFolder(handle.name)
+    setStore(() => folderStore(handle))
+  }
+
+  const useBrowser = async () => {
+    if (store === browserStore) return
+    if (pending.current.size) await flush()
+    await forgetFolder()
+    pending.current.clear()
+    setFolder(null)
+    setStore(() => browserStore)
+  }
 
   const change = (entry: Entry) => {
     const next = { ...entry, updated: new Date().toISOString() }
@@ -345,7 +383,7 @@ export function Notebook({ store }: { store: NotebookStore }) {
         </a>
         <strong>Lab notebook</strong>
         <span className={`lb-saved lb-${saved}`} role="status">
-          {saved === 'saved' ? 'Saved in this browser' : saved === 'saving' ? 'Saving…' : 'Could not save: the storage of this browser is full or closed'}
+          {saved === 'saved' ? 'Saved' : saved === 'saving' ? 'Saving…' : folder ? 'Could not save to the folder: check it is still there and permitted' : 'Could not save: the storage of this browser is full or closed'}
         </span>
       </header>
       <div className="lb-body">
@@ -387,7 +425,30 @@ export function Notebook({ store }: { store: NotebookStore }) {
               }}
             />
             {message && <p className="lb-hint">{message}</p>}
-            <p className="lb-hint">Entries are kept in this browser only. Save the ones that matter as files until the notebook can keep them in a repository.</p>
+            <div className="lb-where">
+              <p className="lb-hint">
+                {folder ? (
+                  <>
+                    Kept in the folder <strong>{folder}</strong> on this computer, one file per entry.
+                  </>
+                ) : (
+                  'Kept in this browser. Clearing the browser’s data would lose them.'
+                )}
+              </p>
+              {canUseFolder ? (
+                folder ? (
+                  <button className="btn" onClick={() => void useBrowser()}>
+                    Keep in this browser instead
+                  </button>
+                ) : (
+                  <button className="btn" onClick={() => void useFolder()}>
+                    Keep in a folder on this computer…
+                  </button>
+                )
+              ) : (
+                <p className="lb-hint">Save the entries that matter as files; this browser cannot open a folder (try Chrome or Edge).</p>
+              )}
+            </div>
           </div>
         </nav>
         <main className="lb-main">
